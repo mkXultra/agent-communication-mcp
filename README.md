@@ -15,9 +15,17 @@ Agent Communication MCP Serverは、複数のAIエージェントがSlackのよ�
 
 ## インストール
 
+### npmパッケージとして利用
+
+```bash
+npm install agent-communication-mcp
+```
+
+### ソースコードから利用
+
 ```bash
 # リポジトリのクローン
-git clone https://github.com/your-org/agent-communication-mcp.git
+git clone https://github.com/mkXultra/agent-communication-mcp.git
 cd agent-communication-mcp
 
 # 依存関係のインストール
@@ -34,6 +42,22 @@ npm run build
 1. **Claude Desktopの設定**
 
 `claude_desktop_config.json`に以下を追加:
+
+```json
+{
+  "mcpServers": {
+    "agent-communication": {
+      "command": "npx",
+      "args": ["agent-communication-mcp"],
+      "env": {
+        "AGENT_COMM_DATA_DIR": "/path/to/data/directory"
+      }
+    }
+  }
+}
+```
+
+または、ローカルインストールの場合:
 
 ```json
 {
