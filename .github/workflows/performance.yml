@@ -1,0 +1,170 @@
+name: Performance Tests
+
+on:
+  schedule:
+    # Run every night at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  performance-test:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Build project
+      run: npm run build
+    
+    - name: Run performance tests
+      run: |
+        # Create performance test script
+        cat > perf-test.js << 'EOF'
+        const { spawn } = require('child_process');
+        const fs = require('fs');
+        const path = require('path');
+
+        async function runPerformanceTest() {
+          console.log('Starting MCP Server Performance Test...\n');
+          
+          // Start server
+          const server = spawn('node', ['dist/index.js'], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env, AGENT_COMM_DATA_DIR: './perf-test-data' }
+          });
+          
+          const results = {
+            startTime: Date.now(),
+            requests: [],
+            errors: []
+          };
+          
+          // Wait for server to start
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Test scenarios
+          const scenarios = [
+            // Create 100 rooms
+            ...Array(100).fill(0).map((_, i) => ({
+              id: `create-room-${i}`,
+              method: 'tools/call',
+              params: {
+                name: 'agent_communication/create_room',
+                arguments: { roomName: `perf-room-${i}`, description: 'Performance test room' }
+              }
+            })),
+            
+            // 10 agents join 10 rooms each
+            ...Array(10).fill(0).flatMap((_, agentIdx) =>
+              Array(10).fill(0).map((_, roomIdx) => ({
+                id: `agent-${agentIdx}-join-${roomIdx}`,
+                method: 'tools/call',
+                params: {
+                  name: 'agent_communication/enter_room',
+                  arguments: { agentName: `perf-agent-${agentIdx}`, roomName: `perf-room-${roomIdx}` }
+                }
+              }))
+            ),
+            
+            // Send 1000 messages
+            ...Array(1000).fill(0).map((_, i) => ({
+              id: `message-${i}`,
+              method: 'tools/call',
+              params: {
+                name: 'agent_communication/send_message',
+                arguments: {
+                  agentName: `perf-agent-${i % 10}`,
+                  roomName: `perf-room-${i % 100}`,
+                  message: `Performance test message ${i} @perf-agent-${(i + 1) % 10}`
+                }
+              }
+            }))
+          ];
+          
+          // Execute scenarios
+          for (const scenario of scenarios) {
+            const startTime = Date.now();
+            
+            const request = JSON.stringify({
+              jsonrpc: '2.0',
+              ...scenario
+            }) + '\n';
+            
+            server.stdin.write(request);
+            
+            // Wait for response (simplified)
+            await new Promise(resolve => setTimeout(resolve, 10));
+            
+            results.requests.push({
+              id: scenario.id,
+              duration: Date.now() - startTime
+            });
+          }
+          
+          // Get final status
+          const statusRequest = JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'final-status',
+            method: 'tools/call',
+            params: {
+              name: 'agent_communication/get_status',
+              arguments: {}
+            }
+          }) + '\n';
+          
+          server.stdin.write(statusRequest);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Kill server
+          server.kill();
+          
+          // Calculate metrics
+          const durations = results.requests.map(r => r.duration);
+          const metrics = {
+            totalRequests: durations.length,
+            totalTime: Date.now() - results.startTime,
+            avgResponseTime: durations.reduce((a, b) => a + b, 0) / durations.length,
+            minResponseTime: Math.min(...durations),
+            maxResponseTime: Math.max(...durations),
+            p95ResponseTime: durations.sort((a, b) => a - b)[Math.floor(durations.length * 0.95)],
+            p99ResponseTime: durations.sort((a, b) => a - b)[Math.floor(durations.length * 0.99)]
+          };
+          
+          console.log('Performance Test Results:');
+          console.log(JSON.stringify(metrics, null, 2));
+          
+          // Check performance criteria
+          if (metrics.avgResponseTime > 100) {
+            console.error('FAIL: Average response time exceeds 100ms');
+            process.exit(1);
+          }
+          
+          if (metrics.p99ResponseTime > 1000) {
+            console.error('FAIL: P99 response time exceeds 1000ms');
+            process.exit(1);
+          }
+          
+          console.log('\nPerformance test PASSED');
+        }
+
+        runPerformanceTest().catch(console.error);
+        EOF
+        
+        node perf-test.js
+    
+    - name: Upload performance results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-results
+        path: perf-test-data/

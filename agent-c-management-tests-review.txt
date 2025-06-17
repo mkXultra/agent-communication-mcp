@@ -1,0 +1,40 @@
+COMPLETED
+
+All management functionality tests have been successfully created:
+
+✓ tests/management/unit/ManagementService.test.ts
+  - getStatus tests for system-wide and room-specific statistics
+  - clearRoomMessages tests with confirm requirement
+  - Error handling for RoomNotFoundError and StorageError
+  - Missing file handling (presence.json/messages.jsonl)
+  - Performance tests for large scale operations
+
+✓ tests/management/unit/StatsCollector.test.ts
+  - collectSystemStats for overall statistics
+  - collectRoomStats for detailed room statistics
+  - Message counting by agent functionality
+  - Most active room identification
+  - Streaming support for large files
+  - Malformed JSON handling
+
+✓ tests/management/unit/DataScanner.test.ts
+  - scanRoomDirectory for individual room scanning
+  - scanAllRooms for comprehensive scanning
+  - File size calculation
+  - Line counting with streaming
+  - Online user counting
+  - Missing file handling (returns 0)
+  - Concurrent processing tests
+
+✓ tests/management/integration/stats-accuracy.test.ts
+  - Cross-service consistency verification
+  - Message count accuracy testing
+  - Online user count accuracy
+  - Storage size calculations
+  - Data integrity after operations
+  - Performance under concurrent load
+  - Edge case handling (corrupted files, malformed JSON)
+
+✓ package.json includes test:management script configured correctly
+
+All tests use memfs for memory-based filesystem testing and cover all requirements from spec.md lines 151-180.

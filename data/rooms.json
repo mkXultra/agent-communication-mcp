@@ -1,0 +1,10 @@
+{
+  "rooms": {
+    "bug-fix-verified": {
+      "description": "Testing bug fix verification",
+      "createdAt": "2025-06-17T15:51:01.271Z",
+      "messageCount": 0,
+      "userCount": 1
+    }
+  }
+}

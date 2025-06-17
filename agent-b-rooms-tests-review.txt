@@ -1,0 +1,27 @@
+COMPLETED
+
+すべてのルーム・プレゼンス機能のテストが作成済みです：
+
+✅ ユニットテスト (tests/rooms/unit/)
+- RoomService.test.ts: createRoom, listRooms, roomExists, deleteRoom, updateRoomStats の全テストケース作成済み
+- RoomStorage.test.ts: readRooms, writeRooms, roomExists, getRoom, updateRoom, deleteRoom, getRoomCount の全テストケース作成済み
+- PresenceService.test.ts: enterRoom（プロフィール付き）, leaveRoom, listRoomUsers（オンライン数カウント）, isAgentInRoom, updateAgentStatus, cleanupOfflineUsers の全テストケース作成済み
+- PresenceStorage.test.ts: readPresence, writePresence, addAgent, removeAgent, isAgentInRoom, updateAgentStatus, getOnlineCount, incrementMessageCount の全テストケース作成済み
+
+✅ 統合テスト (tests/rooms/integration/)
+- room-lifecycle.test.ts: 完全なルームライフサイクル、複数エージェント同時処理、プロフィール更新、並行処理、エラーハンドリング統合の全テストケース作成済み
+
+✅ 負荷テスト (tests/rooms/load/)
+- multi-room.test.ts: 100ルーム作成、5000エージェント（100ルーム×50ユーザー）入室、並行リクエスト、大量退室、メモリリーク検証、データ整合性検証の全テストケース作成済み
+
+✅ package.json
+- test:rooms スクリプトが正しく追加されている ("test:rooms": "vitest run tests/rooms")
+
+✅ 仕様カバレッジ
+- spec.md行29-108のすべての仕様がテストでカバーされている：
+  - list_rooms: フィルタリング、isJoined判定
+  - create_room: 正常系、既存ルームエラー、バリデーション
+  - enter_room: プロフィール付き入室、既入室エラー
+  - leave_room: 正常系、未入室エラー
+  - list_room_users: オンライン数カウント、プロフィール表示
+  - データ構造: rooms.json、presence.jsonの正しい形式
