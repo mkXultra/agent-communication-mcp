@@ -1,6 +1,6 @@
 {
   "name": "agent-communication-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server enabling room-based messaging between multiple agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -34,7 +34,13 @@
     "typecheck": "tsc --noEmit",
     "validate": "npm run typecheck && tsx src/examples/interface-usage.ts"
   },
-  "keywords": ["mcp", "model-context-protocol", "agent", "communication", "messaging"],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agent",
+    "communication",
+    "messaging"
+  ],
   "author": "miyagi",
   "license": "MIT",
   "repository": {
