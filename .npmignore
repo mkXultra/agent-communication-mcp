@@ -1,0 +1,40 @@
+# Source files
+src/
+tests/
+
+# Config files
+.github/
+.vscode/
+vitest.config.ts
+tsconfig.json
+.eslintrc.json
+
+# Development files
+coverage/
+data/
+backup/
+*.log
+*.txt
+*.md
+!README.md
+
+# Agent prompts and scripts
+agent-prompts/
+run-*.sh
+tasks
+
+# Test files
+test-*.ts
+validate-*.ts
+
+# Build artifacts
+.DS_Store
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.idea/
+*.swp
+*.swo

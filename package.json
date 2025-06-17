@@ -1,0 +1,65 @@
+{
+  "name": "agent-communication-mcp",
+  "version": "0.1.0",
+  "description": "MCP server enabling room-based messaging between multiple agents",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "agent-communication-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "prepublishOnly": "npm run build",
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "test:messaging": "vitest run tests/messaging",
+    "test:rooms": "vitest run tests/rooms",
+    "test:management": "vitest run tests/management",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "vitest run tests/e2e",
+    "test:watch": "vitest watch",
+    "test:all": "npm run test:coverage",
+    "lint": "eslint src/**/*.ts",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run typecheck && tsx src/examples/interface-usage.ts"
+  },
+  "keywords": ["mcp", "model-context-protocol", "agent", "communication", "messaging"],
+  "author": "miyagi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/miyagi/agent-communication-mcp.git"
+  },
+  "homepage": "https://github.com/miyagi/agent-communication-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/miyagi/agent-communication-mcp/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.3",
+    "@vitest/coverage-v8": "^3.2.3",
+    "@vitest/ui": "^3.2.3",
+    "memfs": "^4.17.2",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.3",
+    "proper-lockfile": "^4.1.2",
+    "zod": "^3.25.64"
+  }
+}
