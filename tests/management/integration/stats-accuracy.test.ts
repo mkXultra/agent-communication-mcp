@@ -168,7 +168,7 @@ describe('Management Statistics Accuracy Integration Tests', () => {
       // Get stats from all three services
       const [systemStats, scanResults, collectorStats] = await Promise.all([
         managementService.getSystemStatus(),
-        dataScanner.scanAllRooms(),
+        dataScanner.getAllRooms(),
         statsCollector.collectSystemStats()
       ]);
 
@@ -198,7 +198,7 @@ describe('Management Statistics Accuracy Integration Tests', () => {
       const [roomStats, scanResult, collectorRoom] = await Promise.all([
         managementService.getRoomStatistics(roomName),
         dataScanner.scanRoomDirectory(roomName),
-        statsCollector.collectRoomStats(roomName)
+        statsCollector.getRoomStatistics(roomName)
       ]);
 
       // All services should report the same room data
@@ -241,7 +241,7 @@ describe('Management Statistics Accuracy Integration Tests', () => {
     });
 
     it('should accurately count messages by agent', async () => {
-      const roomStats = await statsCollector.collectRoomStats('marketing-team');
+      const roomStats = await statsCollector.getRoomStatistics('marketing-team');
       
       // Each of 6 agents should have roughly equal messages (245 / 6 ≈ 40-41 each)
       const messagesByAgent = roomStats.messagesByAgent;
@@ -374,7 +374,7 @@ describe('Management Statistics Accuracy Integration Tests', () => {
       const [systemStats, scanResult, collectorStats] = await Promise.all([
         managementService.getSystemStatus(),
         dataScanner.scanRoomDirectory('project-alpha'),
-        statsCollector.collectRoomStats('project-alpha')
+        statsCollector.getRoomStatistics('project-alpha')
       ]);
       
       expect(systemStats.totalMessages).toBe(959); // 957 + 2
@@ -388,12 +388,12 @@ describe('Management Statistics Accuracy Integration Tests', () => {
       // Simulate concurrent requests to different services
       const concurrentPromises = [
         managementService.getSystemStatus(),
-        dataScanner.scanAllRooms(),
+        dataScanner.getAllRooms(),
         statsCollector.collectSystemStats(),
         managementService.getRoomStatistics('general-chat'),
         managementService.getRoomStatistics('marketing-team'),
         dataScanner.scanRoomDirectory('dev-squad'),
-        statsCollector.collectRoomStats('project-alpha'),
+        statsCollector.getRoomStatistics('project-alpha'),
         statsCollector.collectMostActiveRoom()
       ];
       
@@ -442,7 +442,7 @@ describe('Management Statistics Accuracy Integration Tests', () => {
       
       fs.writeFileSync('data/rooms/project-alpha/messages.jsonl', messagesWithErrors);
       
-      const roomStats = await statsCollector.collectRoomStats('project-alpha');
+      const roomStats = await statsCollector.getRoomStatistics('project-alpha');
       
       // Should count only valid JSON lines (76 original + 1 new valid = 77)
       expect(roomStats.totalMessages).toBe(77);

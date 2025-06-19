@@ -286,14 +286,12 @@ describe('PresenceStorage', () => {
 
   describe('error handling', () => {
     it('should handle file system errors gracefully', async () => {
-      // ファイルシステムエラーをシミュレート - writeFile でエラーを発生させる
-      const originalWriteFile = vol.promises.writeFile;
-      vol.promises.writeFile = vi.fn().mockRejectedValue(new Error('Filesystem error'));
+      // ファイルシステムエラーをシミュレート - JSON.parse でエラーを発生させる
+      vol.fromJSON({
+        'test-data/rooms/error-room/presence.json': '{"invalid": json}' // Invalid JSON
+      });
 
       await expect(presenceStorage.readPresence('error-room')).rejects.toThrow(StorageError);
-
-      // 元の関数を復元
-      vol.promises.writeFile = originalWriteFile;
     });
 
     it('should handle JSON parse errors', async () => {
