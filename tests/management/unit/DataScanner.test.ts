@@ -77,8 +77,8 @@ describe('DataScanner', () => {
       // Note: presence.json is intentionally missing for partial-files-room
     });
 
-    // Mock the DataScanner
-    const { DataScanner } = require('../../../src/features/management/DataScanner');
+    // Import DataScanner using ES modules
+    const { DataScanner } = await import('../../../src/features/management/DataScanner');
     dataScanner = new DataScanner();
   });
 

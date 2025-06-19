@@ -182,7 +182,8 @@ describe('Schema Validation Tests', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.limit).toBe(50); // default value
-        expect(result.data.includeMetadata).toBe(false); // default value
+        expect(result.data.offset).toBe(0); // default value
+        expect(result.data.mentionsOnly).toBe(false); // default value
       }
     });
 

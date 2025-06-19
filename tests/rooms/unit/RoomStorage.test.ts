@@ -221,7 +221,7 @@ describe('RoomStorage', () => {
     it('should handle file system errors gracefully', async () => {
       // ファイルシステムエラーをシミュレート - JSON.parse でエラーを発生させる
       vol.fromJSON({
-        'test-data/rooms.json': '{"invalid": json}' // Invalid JSON
+        [`${testDataDir}/rooms.json`]: '{"invalid": json}' // Invalid JSON
       });
 
       await expect(roomStorage.readRooms()).rejects.toThrow(StorageError);

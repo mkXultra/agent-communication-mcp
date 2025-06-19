@@ -288,7 +288,7 @@ describe('PresenceStorage', () => {
     it('should handle file system errors gracefully', async () => {
       // ファイルシステムエラーをシミュレート - JSON.parse でエラーを発生させる
       vol.fromJSON({
-        'test-data/rooms/error-room/presence.json': '{"invalid": json}' // Invalid JSON
+        [`${testDataDir}/rooms/error-room/presence.json`]: '{"invalid": json}' // Invalid JSON
       });
 
       await expect(presenceStorage.readPresence('error-room')).rejects.toThrow(StorageError);

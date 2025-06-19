@@ -8,8 +8,13 @@ describe('Integration: Concurrent Access Test', () => {
   let lockService: LockService;
   let messagingAdapter: MessagingAdapter;
   let roomsAdapter: RoomsAdapter;
+  const testDataDir = process.env.AGENT_COMM_DATA_DIR || './test-data';
 
   beforeEach(async () => {
+    // Ensure test data directory exists
+    const fs = await import('fs/promises');
+    await fs.mkdir(testDataDir, { recursive: true });
+    
     lockService = new LockService();
     messagingAdapter = new MessagingAdapter(lockService);
     roomsAdapter = new RoomsAdapter(lockService);

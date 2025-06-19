@@ -30,7 +30,11 @@ describe('Messaging Integration Tests', () => {
       ];
 
       const sendResults = [];
-      for (const msg of messages) {
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        // Add small delay to ensure different timestamps
+        if (i > 0) await new Promise(resolve => setTimeout(resolve, 10));
+        
         const result = await messagingAPI.sendMessage({
           ...msg,
           roomName: 'integration-test',

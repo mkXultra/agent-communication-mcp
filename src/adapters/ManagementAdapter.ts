@@ -41,9 +41,9 @@ export class ManagementAdapter {
         // Convert to expected format
         return {
           rooms: systemStatus.rooms.map((room: any) => ({
-            name: room.roomName,
+            name: room.name,
             onlineUsers: room.onlineUsers,
-            totalMessages: room.messageCount,
+            totalMessages: room.totalMessages,
             storageSize: room.storageSize
           })),
           totalRooms: systemStatus.totalRooms,
