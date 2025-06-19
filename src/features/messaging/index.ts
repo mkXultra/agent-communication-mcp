@@ -53,5 +53,5 @@ export { MessageValidator } from './MessageValidator';
 // Export MCP tools
 export { messagingTools, MessagingToolHandlers, messagingToolHandlers } from './tools/messaging.tools';
 
-// Export default API instance
-export const messagingAPI = new MessagingAPI();
+// Export default API class for instantiation
+export default MessagingAPI;

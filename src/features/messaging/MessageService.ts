@@ -2,6 +2,7 @@ import { MessageStorage } from './MessageStorage';
 import { MessageValidator } from './MessageValidator';
 import { MessageCache } from './MessageCache';
 import { generateUUID } from './utils';
+import { getDataDirectory } from '../../utils/dataDir';
 import {
   SendMessageParams,
   SendMessageResponse,
@@ -15,7 +16,7 @@ export class MessageService {
   private readonly cache: MessageCache;
 
   constructor(dataDir?: string, cacheCapacity?: number) {
-    this.storage = new MessageStorage(dataDir);
+    this.storage = new MessageStorage(dataDir || getDataDirectory());
     this.cache = new MessageCache(cacheCapacity);
   }
 
