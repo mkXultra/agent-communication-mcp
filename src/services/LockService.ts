@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { AppError } from '../errors/index.js';
+import { getDataDirectory } from '../utils/dataDir.js';
 
 export class LockTimeoutError extends AppError {
   constructor(filePath: string, timeout: number) {
@@ -15,7 +16,7 @@ export class LockService {
   private activeLocks = new Map<string, Promise<void>>();
   
   constructor(
-    private readonly dataDir: string = process.env.AGENT_COMM_DATA_DIR || './data',
+    private readonly dataDir: string = getDataDirectory(),
     private readonly lockTimeout: number = parseInt(process.env.AGENT_COMM_LOCK_TIMEOUT || '5000')
   ) {}
   

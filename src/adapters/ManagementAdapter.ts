@@ -1,6 +1,7 @@
 import { LockService } from '../services/LockService.js';
 import { RoomNotFoundError } from '../errors/index.js';
 import type { IManagementAPI, SystemStatus, RoomStats } from '../features/management/index.js';
+import { getDataDirectory } from '../utils/dataDir.js';
 
 export class ManagementAdapter {
   private api?: IManagementAPI;
@@ -22,7 +23,7 @@ export class ManagementAdapter {
   async initialize(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const { ManagementAPI } = await import('../features/management/index.js');
-    const dataDir = process.env.AGENT_COMM_DATA_DIR || './data';
+    const dataDir = getDataDirectory();
     this.api = new ManagementAPI(dataDir);
   }
   

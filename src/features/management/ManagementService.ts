@@ -8,12 +8,13 @@ import {
   StorageError,
   ConfirmationRequiredError
 } from '../../errors/AppError';
+import { getDataDirectory } from '../../utils/dataDir';
 
 export class ManagementService {
   private statsCollector: StatsCollector;
   private dataDir: string;
 
-  constructor(dataDir: string = './data') {
+  constructor(dataDir: string = getDataDirectory()) {
     this.dataDir = dataDir;
     this.statsCollector = new StatsCollector(dataDir);
   }

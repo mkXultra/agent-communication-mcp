@@ -2,6 +2,7 @@ import { LockService } from '../services/LockService.js';
 import { RoomNotFoundError, AgentNotInRoomError } from '../errors/index.js';
 import { Message } from '../types/index.js';
 import type { IMessagingAPI } from '../features/messaging/index.js';
+import { getDataDirectory } from '../utils/dataDir.js';
 
 export class MessagingAdapter {
   private api?: IMessagingAPI;
@@ -18,7 +19,7 @@ export class MessagingAdapter {
   async initialize(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const { MessagingAPI } = await import('../features/messaging/index.js');
-    const dataDir = process.env.AGENT_COMM_DATA_DIR || './data';
+    const dataDir = getDataDirectory();
     this.api = new MessagingAPI(dataDir);
   }
   

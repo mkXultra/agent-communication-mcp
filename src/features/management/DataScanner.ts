@@ -1,11 +1,12 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { RoomScanResult, FileStats, PresenceData } from './types/management.types';
+import { getDataDirectory } from '../../utils/dataDir';
 
 export class DataScanner {
   private dataDir: string;
 
-  constructor(dataDir: string = './data') {
+  constructor(dataDir: string = getDataDirectory()) {
     this.dataDir = dataDir;
   }
 

@@ -5,12 +5,13 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { IRoomStorage, RoomsData, RoomData } from '../types/rooms.types';
 import { StorageError, FileNotFoundError } from '../../../errors';
+import { getDataDirectory } from '../../../utils/dataDir';
 
 export class RoomStorage implements IRoomStorage {
   private readonly dataDir: string;
   private readonly roomsFilePath: string;
 
-  constructor(dataDir: string = './data') {
+  constructor(dataDir: string = getDataDirectory()) {
     this.dataDir = dataDir;
     this.roomsFilePath = path.join(dataDir, 'rooms.json');
   }

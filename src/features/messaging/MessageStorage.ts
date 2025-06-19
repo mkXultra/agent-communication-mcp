@@ -2,11 +2,12 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { StorageError } from '../../errors/AppError';
 import { Message, MessageStorageData, GetMessagesParams } from './types/messaging.types';
+import { getDataDirectory } from '../../utils/dataDir';
 
 export class MessageStorage {
   private readonly dataDir: string;
 
-  constructor(dataDir: string = './data') {
+  constructor(dataDir: string = getDataDirectory()) {
     this.dataDir = dataDir;
   }
 

@@ -5,12 +5,13 @@ import { IRoomService, IRoomStorage, IPresenceStorage, CreateRoomResult, ListRoo
 import { RoomStorage } from './RoomStorage';
 import { PresenceStorage } from '../presence/PresenceStorage';
 import { RoomAlreadyExistsError, RoomNotFoundError, ValidationError } from '../../../errors';
+import { getDataDirectory } from '../../../utils/dataDir';
 
 export class RoomService implements IRoomService {
   private roomStorage: IRoomStorage;
   private presenceStorage: IPresenceStorage;
 
-  constructor(dataDir: string = './data') {
+  constructor(dataDir: string = getDataDirectory()) {
     this.roomStorage = new RoomStorage(dataDir);
     this.presenceStorage = new PresenceStorage(dataDir);
   }

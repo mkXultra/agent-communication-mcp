@@ -6,12 +6,13 @@ import { AgentProfile } from '../../../types/entities';
 import { RoomStorage } from '../room/RoomStorage';
 import { PresenceStorage } from './PresenceStorage';
 import { RoomNotFoundError, AgentAlreadyInRoomError, AgentNotInRoomError, ValidationError } from '../../../errors';
+import { getDataDirectory } from '../../../utils/dataDir';
 
 export class PresenceService implements IPresenceService {
   private roomStorage: IRoomStorage;
   private presenceStorage: IPresenceStorage;
 
-  constructor(dataDir: string = './data') {
+  constructor(dataDir: string = getDataDirectory()) {
     this.roomStorage = new RoomStorage(dataDir);
     this.presenceStorage = new PresenceStorage(dataDir);
   }

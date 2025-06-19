@@ -6,11 +6,12 @@ import * as path from 'path';
 import { IPresenceStorage, PresenceData, PresenceUser } from '../types/rooms.types';
 import { AgentProfile } from '../../../types/entities';
 import { StorageError, FileNotFoundError } from '../../../errors';
+import { getDataDirectory } from '../../../utils/dataDir';
 
 export class PresenceStorage implements IPresenceStorage {
   private readonly dataDir: string;
 
-  constructor(dataDir: string = './data') {
+  constructor(dataDir: string = getDataDirectory()) {
     this.dataDir = dataDir;
   }
 

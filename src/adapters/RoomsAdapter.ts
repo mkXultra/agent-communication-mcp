@@ -2,6 +2,7 @@ import { LockService } from '../services/LockService.js';
 import { RoomNotFoundError, RoomAlreadyExistsError, AgentNotInRoomError } from '../errors/index.js';
 import { Room } from '../types/index.js';
 import type { IRoomsAPI } from '../features/rooms/index.js';
+import { getDataDirectory } from '../utils/dataDir.js';
 
 export class RoomsAdapter {
   private api?: IRoomsAPI;
@@ -18,7 +19,7 @@ export class RoomsAdapter {
   async initialize(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const { RoomsAPI } = await import('../features/rooms/index.js');
-    const dataDir = process.env.AGENT_COMM_DATA_DIR || './data';
+    const dataDir = getDataDirectory();
     this.api = new RoomsAPI(dataDir);
   }
   

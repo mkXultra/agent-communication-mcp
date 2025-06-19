@@ -4,6 +4,7 @@
 import { RoomService } from './room/RoomService';
 import { PresenceService } from './presence/PresenceService';
 import { AgentProfile } from '../../types/entities';
+import { getDataDirectory } from '../../utils/dataDir';
 import {
   CreateRoomResult,
   ListRoomsResult,
@@ -42,7 +43,7 @@ export class RoomsAPI implements IRoomsAPI {
   private roomService: RoomService;
   private presenceService: PresenceService;
 
-  constructor(dataDir: string = './data') {
+  constructor(dataDir: string = getDataDirectory()) {
     this.roomService = new RoomService(dataDir);
     this.presenceService = new PresenceService(dataDir);
   }
