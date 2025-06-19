@@ -167,9 +167,30 @@ export class MessagingToolHandlers {
   }
 }
 
-// Default instance
-export const messagingToolHandlers = new MessagingToolHandlers();
+// Factory function for creating handlers
+export function createMessagingToolHandlers(dataDir?: string, cacheCapacity?: number): MessagingToolHandlers {
+  return new MessagingToolHandlers(dataDir, cacheCapacity);
+}
 
-// Export individual handlers for convenience
-export const sendMessageHandler = messagingToolHandlers.handleSendMessage.bind(messagingToolHandlers);
-export const getMessagesHandler = messagingToolHandlers.handleGetMessages.bind(messagingToolHandlers);
+// Default instance - lazy initialization
+let _defaultHandlers: MessagingToolHandlers | null = null;
+export function getMessagingToolHandlers(): MessagingToolHandlers {
+  if (!_defaultHandlers) {
+    _defaultHandlers = new MessagingToolHandlers();
+  }
+  return _defaultHandlers;
+}
+
+// Export individual handlers for convenience - these will be functions that create handlers when called
+export const sendMessageHandler = (dataDir?: string) => {
+  const handlers = new MessagingToolHandlers(dataDir);
+  return handlers.handleSendMessage.bind(handlers);
+};
+
+export const getMessagesHandler = (dataDir?: string) => {
+  const handlers = new MessagingToolHandlers(dataDir);  
+  return handlers.handleGetMessages.bind(handlers);
+};
+
+// Export factory function - no default instance to avoid module loading issues
+export const messagingToolHandlers = createMessagingToolHandlers;
