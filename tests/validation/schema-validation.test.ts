@@ -190,7 +190,7 @@ describe('Schema Validation Tests', () => {
     it('should reject invalid limit values', () => {
       const invalidInputs = [
         { roomName: 'test-room', limit: 0 }, // too small
-        { roomName: 'test-room', limit: 101 }, // too large
+        { roomName: 'test-room', limit: 1001 }, // too large
         { roomName: 'test-room', limit: -1 }, // negative
       ];
 
@@ -239,14 +239,13 @@ describe('Schema Validation Tests', () => {
     it('should validate clear_room_messages input schema', () => {
       const validInput = {
         roomName: 'test-room',
-        olderThan: '2023-01-01T00:00:00Z',
-        dryRun: true,
+        confirm: true,
       };
 
       const result = clearRoomMessagesInputSchema.safeParse(validInput);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.dryRun).toBe(true);
+        expect(result.data.confirm).toBe(true);
       }
     });
 

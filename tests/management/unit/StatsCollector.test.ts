@@ -64,7 +64,7 @@ describe('StatsCollector', () => {
     });
 
     // Mock the StatsCollector
-    const { StatsCollector } = require('../../../src/features/management/StatsCollector');
+    const { StatsCollector } = await import('../../../src/features/management/StatsCollector');
     statsCollector = new StatsCollector();
   });
 

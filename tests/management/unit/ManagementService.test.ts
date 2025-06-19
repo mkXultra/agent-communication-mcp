@@ -42,8 +42,8 @@ describe('ManagementService', () => {
       })
     });
 
-    // Mock the ManagementService (it doesn't exist yet)
-    const { ManagementService } = require('../../../src/features/management');
+    // Import ManagementService using ES modules
+    const { ManagementService } = await import('../../../src/features/management');
     managementService = new ManagementService();
   });
 
