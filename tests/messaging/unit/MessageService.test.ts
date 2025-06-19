@@ -5,7 +5,14 @@ import { RoomNotFoundError, ValidationError } from '../../../src/errors/AppError
 describe('MessageService', () => {
   let messageService: MessageService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Clean up test data directory before each test
+    const fs = await import('fs/promises');
+    try {
+      await fs.rm('./test-data', { recursive: true, force: true });
+    } catch {
+      // Ignore if doesn't exist
+    }
     messageService = new MessageService('./test-data');
   });
 

@@ -10,7 +10,7 @@ describe('Management Statistics Accuracy Integration Tests', () => {
   let dataScanner: any;
   let statsCollector: any;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Reset the virtual file system
     vol.reset();
     
@@ -149,10 +149,10 @@ describe('Management Statistics Accuracy Integration Tests', () => {
       })
     });
 
-    // Mock the services (they don't exist yet)
-    const { ManagementService } = require('../../../src/features/management');
-    const { DataScanner } = require('../../../src/features/management/services/DataScanner');
-    const { StatsCollector } = require('../../../src/features/management/services/StatsCollector');
+    // Import the services using ES modules
+    const { ManagementService } = await import('../../../src/features/management');
+    const { DataScanner } = await import('../../../src/features/management/DataScanner');
+    const { StatsCollector } = await import('../../../src/features/management/StatsCollector');
     
     managementService = new ManagementService();
     dataScanner = new DataScanner();

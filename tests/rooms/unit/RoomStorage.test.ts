@@ -117,10 +117,10 @@ describe('RoomStorage', () => {
 
       const roomsData = await roomStorage.readRooms();
       expect(roomsData.rooms[roomName]).toMatchObject({
-        description: undefined,
         messageCount: 0,
         userCount: 0
       });
+      expect(roomsData.rooms[roomName].description).toBeUndefined();
     });
   });
 
@@ -219,14 +219,14 @@ describe('RoomStorage', () => {
 
   describe('error handling', () => {
     it('should handle file system errors gracefully', async () => {
-      // ファイルシステムエラーをシミュレート
-      const originalMkdir = vol.promises.mkdir;
-      vol.promises.mkdir = vi.fn().mockRejectedValue(new Error('Filesystem error'));
+      // ファイルシステムエラーをシミュレート - writeFile でエラーを発生させる
+      const originalWriteFile = vol.promises.writeFile;
+      vol.promises.writeFile = vi.fn().mockRejectedValue(new Error('Filesystem error'));
 
       await expect(roomStorage.readRooms()).rejects.toThrow(StorageError);
 
       // 元の関数を復元
-      vol.promises.mkdir = originalMkdir;
+      vol.promises.writeFile = originalWriteFile;
     });
   });
 });

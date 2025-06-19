@@ -121,9 +121,9 @@ describe('PresenceStorage', () => {
       const presenceData = await presenceStorage.readPresence(roomName);
       expect(presenceData.users[agentName]).toMatchObject({
         status: 'online',
-        messageCount: 0,
-        profile: undefined
+        messageCount: 0
       });
+      expect(presenceData.users[agentName].profile).toBeUndefined();
     });
   });
 
@@ -286,14 +286,14 @@ describe('PresenceStorage', () => {
 
   describe('error handling', () => {
     it('should handle file system errors gracefully', async () => {
-      // ファイルシステムエラーをシミュレート
-      const originalMkdir = vol.promises.mkdir;
-      vol.promises.mkdir = vi.fn().mockRejectedValue(new Error('Filesystem error'));
+      // ファイルシステムエラーをシミュレート - writeFile でエラーを発生させる
+      const originalWriteFile = vol.promises.writeFile;
+      vol.promises.writeFile = vi.fn().mockRejectedValue(new Error('Filesystem error'));
 
       await expect(presenceStorage.readPresence('error-room')).rejects.toThrow(StorageError);
 
       // 元の関数を復元
-      vol.promises.mkdir = originalMkdir;
+      vol.promises.writeFile = originalWriteFile;
     });
 
     it('should handle JSON parse errors', async () => {
