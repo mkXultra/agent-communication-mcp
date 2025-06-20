@@ -30,7 +30,7 @@ export class MockToolRegistry {
     server.setRequestHandler(listToolsRequestSchema, async (request) => ({
       tools: [
         {
-          name: 'agent_communication/list_rooms',
+          name: 'agent_communication_list_rooms',
           description: 'List all available rooms',
           inputSchema: {
             type: 'object',
@@ -39,7 +39,7 @@ export class MockToolRegistry {
           }
         },
         {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           description: 'Create a new room',
           inputSchema: {
             type: 'object',
@@ -52,7 +52,7 @@ export class MockToolRegistry {
           }
         },
         {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           description: 'Enter a room',
           inputSchema: {
             type: 'object',
@@ -65,7 +65,7 @@ export class MockToolRegistry {
           }
         },
         {
-          name: 'agent_communication/leave_room',
+          name: 'agent_communication_leave_room',
           description: 'Leave a room',
           inputSchema: {
             type: 'object',
@@ -78,7 +78,7 @@ export class MockToolRegistry {
           }
         },
         {
-          name: 'agent_communication/list_room_users',
+          name: 'agent_communication_list_room_users',
           description: 'List users in a room',
           inputSchema: {
             type: 'object',
@@ -90,7 +90,7 @@ export class MockToolRegistry {
           }
         },
         {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           description: 'Send a message to a room',
           inputSchema: {
             type: 'object',
@@ -104,7 +104,7 @@ export class MockToolRegistry {
           }
         },
         {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           description: 'Get messages from a room',
           inputSchema: {
             type: 'object',
@@ -119,7 +119,7 @@ export class MockToolRegistry {
           }
         },
         {
-          name: 'agent_communication/get_status',
+          name: 'agent_communication_get_status',
           description: 'Get server status',
           inputSchema: {
             type: 'object',
@@ -128,7 +128,7 @@ export class MockToolRegistry {
           }
         },
         {
-          name: 'agent_communication/clear_room_messages',
+          name: 'agent_communication_clear_room_messages',
           description: 'Clear all messages in a room',
           inputSchema: {
             type: 'object',
@@ -147,10 +147,10 @@ export class MockToolRegistry {
       
       try {
         switch (name) {
-          case 'agent_communication/list_rooms':
+          case 'agent_communication_list_rooms':
             return { content: [{ type: 'text', text: JSON.stringify({ rooms: this.dataLayer.getAllRooms() }) }] };
           
-          case 'agent_communication/create_room':
+          case 'agent_communication_create_room':
             if (this.dataLayer.roomExists(args.roomName)) {
               throw new RoomAlreadyExistsError(args.roomName);
             }
@@ -163,14 +163,14 @@ export class MockToolRegistry {
             this.dataLayer.createRoom(room);
             return { content: [{ type: 'text', text: JSON.stringify({ success: true, roomName: args.roomName }) }] };
           
-          case 'agent_communication/enter_room':
+          case 'agent_communication_enter_room':
             if (!this.dataLayer.roomExists(args.roomName)) {
               throw new RoomNotFoundError(args.roomName);
             }
             this.dataLayer.addAgentToRoom(args.roomName, args.agentName);
             return { content: [{ type: 'text', text: JSON.stringify({ success: true }) }] };
           
-          case 'agent_communication/leave_room':
+          case 'agent_communication_leave_room':
             if (!this.dataLayer.roomExists(args.roomName)) {
               throw new RoomNotFoundError(args.roomName);
             }
@@ -181,14 +181,14 @@ export class MockToolRegistry {
             this.dataLayer.removeAgentFromRoom(args.roomName, args.agentName);
             return { content: [{ type: 'text', text: JSON.stringify({ success: true }) }] };
           
-          case 'agent_communication/list_room_users':
+          case 'agent_communication_list_room_users':
             if (!this.dataLayer.roomExists(args.roomName)) {
               throw new RoomNotFoundError(args.roomName);
             }
             const agents = this.dataLayer.getRoomAgents(args.roomName);
             return { content: [{ type: 'text', text: JSON.stringify({ agents }) }] };
           
-          case 'agent_communication/send_message':
+          case 'agent_communication_send_message':
             if (!this.dataLayer.roomExists(args.roomName)) {
               throw new RoomNotFoundError(args.roomName);
             }
@@ -212,7 +212,7 @@ export class MockToolRegistry {
             this.dataLayer.addMessage(args.roomName, message);
             return { content: [{ type: 'text', text: JSON.stringify({ success: true, messageId: message.id, mentions }) }] };
           
-          case 'agent_communication/get_messages':
+          case 'agent_communication_get_messages':
             if (!this.dataLayer.roomExists(args.roomName)) {
               throw new RoomNotFoundError(args.roomName);
             }
@@ -224,7 +224,7 @@ export class MockToolRegistry {
             const messages = this.dataLayer.getMessages(args.roomName, args.limit, args.before);
             return { content: [{ type: 'text', text: JSON.stringify({ messages }) }] };
           
-          case 'agent_communication/get_status':
+          case 'agent_communication_get_status':
             const stats = this.dataLayer.getSystemStats();
             const rooms = this.dataLayer.getAllRooms().map(room => {
               const roomStats = this.dataLayer.getRoomStats(room.name);
@@ -247,7 +247,7 @@ export class MockToolRegistry {
             };
             return { content: [{ type: 'text', text: JSON.stringify(fullStats) }] };
           
-          case 'agent_communication/clear_room_messages':
+          case 'agent_communication_clear_room_messages':
             if (!this.dataLayer.roomExists(args.roomName)) {
               throw new RoomNotFoundError(args.roomName);
             }

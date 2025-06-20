@@ -52,15 +52,15 @@ describe('MCP Tools E2E Tests', () => {
       expect(tools).toHaveLength(9);
       
       const expectedTools = [
-        'agent_communication/list_rooms',
-        'agent_communication/create_room',
-        'agent_communication/enter_room',
-        'agent_communication/leave_room',
-        'agent_communication/list_room_users',
-        'agent_communication/send_message',
-        'agent_communication/get_messages',
-        'agent_communication/get_status',
-        'agent_communication/clear_room_messages'
+        'agent_communication_list_rooms',
+        'agent_communication_create_room',
+        'agent_communication_enter_room',
+        'agent_communication_leave_room',
+        'agent_communication_list_room_users',
+        'agent_communication_send_message',
+        'agent_communication_get_messages',
+        'agent_communication_get_status',
+        'agent_communication_clear_room_messages'
       ];
       
       const toolNames = tools.map((tool: any) => tool.name);
@@ -80,20 +80,20 @@ describe('MCP Tools E2E Tests', () => {
       const tools = listToolsResponse.result!.tools;
       
       // Check create_room schema
-      const createRoomTool = tools.find((t: any) => t.name === 'agent_communication/create_room');
+      const createRoomTool = tools.find((t: any) => t.name === 'agent_communication_create_room');
       expect(createRoomTool.inputSchema.properties).toHaveProperty('roomName');
       expect(createRoomTool.inputSchema.properties).toHaveProperty('description');
       expect(createRoomTool.inputSchema.required).toContain('roomName');
       
       // Check send_message schema
-      const sendMessageTool = tools.find((t: any) => t.name === 'agent_communication/send_message');
+      const sendMessageTool = tools.find((t: any) => t.name === 'agent_communication_send_message');
       expect(sendMessageTool.inputSchema.properties).toHaveProperty('agentName');
       expect(sendMessageTool.inputSchema.properties).toHaveProperty('roomName');
       expect(sendMessageTool.inputSchema.properties).toHaveProperty('message');
       expect(sendMessageTool.inputSchema.required).toEqual(['agentName', 'roomName', 'message']);
       
       // Check get_messages schema
-      const getMessagesTool = tools.find((t: any) => t.name === 'agent_communication/get_messages');
+      const getMessagesTool = tools.find((t: any) => t.name === 'agent_communication_get_messages');
       expect(getMessagesTool.inputSchema.properties).toHaveProperty('agentName');
       expect(getMessagesTool.inputSchema.properties).toHaveProperty('roomName');
       expect(getMessagesTool.inputSchema.properties).toHaveProperty('limit');
@@ -110,7 +110,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/list_rooms',
+            name: 'agent_communication_list_rooms',
             arguments: {}
           }
         });
@@ -127,7 +127,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'room1',
               description: 'First room'
@@ -140,7 +140,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 2,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'room2',
               description: 'Second room'
@@ -153,7 +153,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 3,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/list_rooms',
+            name: 'agent_communication_list_rooms',
             arguments: {}
           }
         });
@@ -176,7 +176,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'test-room'
             }
@@ -195,7 +195,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'described-room',
               description: 'A room with description'
@@ -215,7 +215,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'duplicate-test'
             }
@@ -228,7 +228,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 2,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'duplicate-test'
             }
@@ -248,7 +248,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'test-room'
             }
@@ -262,7 +262,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/enter_room',
+            name: 'agent_communication_enter_room',
             arguments: {
               agentName: 'agent1',
               roomName: 'test-room'
@@ -281,7 +281,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/enter_room',
+            name: 'agent_communication_enter_room',
             arguments: {
               agentName: 'agent1',
               roomName: 'non-existent'
@@ -302,7 +302,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'test-room'
             }
@@ -314,7 +314,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 2,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/enter_room',
+            name: 'agent_communication_enter_room',
             arguments: {
               agentName: 'agent1',
               roomName: 'test-room'
@@ -329,7 +329,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/leave_room',
+            name: 'agent_communication_leave_room',
             arguments: {
               agentName: 'agent1',
               roomName: 'test-room'
@@ -348,7 +348,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/leave_room',
+            name: 'agent_communication_leave_room',
             arguments: {
               agentName: 'agent2',
               roomName: 'test-room'
@@ -369,7 +369,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'test-room'
             }
@@ -383,7 +383,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/list_room_users',
+            name: 'agent_communication_list_room_users',
             arguments: {
               roomName: 'test-room'
             }
@@ -402,7 +402,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/enter_room',
+            name: 'agent_communication_enter_room',
             arguments: {
               agentName: 'agent1',
               roomName: 'test-room'
@@ -415,7 +415,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 2,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/enter_room',
+            name: 'agent_communication_enter_room',
             arguments: {
               agentName: 'agent2',
               roomName: 'test-room'
@@ -428,7 +428,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 3,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/list_room_users',
+            name: 'agent_communication_list_room_users',
             arguments: {
               roomName: 'test-room'
             }
@@ -448,7 +448,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/list_room_users',
+            name: 'agent_communication_list_room_users',
             arguments: {
               roomName: 'non-existent'
             }
@@ -469,7 +469,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'messaging-room'
           }
@@ -481,7 +481,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'agent1',
             roomName: 'messaging-room'
@@ -497,7 +497,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'agent1',
               roomName: 'messaging-room',
@@ -519,7 +519,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'agent1',
               roomName: 'messaging-room',
@@ -539,7 +539,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'agent2',
               roomName: 'messaging-room',
@@ -558,7 +558,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'agent1',
               roomName: 'non-existent',
@@ -581,7 +581,7 @@ describe('MCP Tools E2E Tests', () => {
             id: i,
             method: 'tools/call',
             params: {
-              name: 'agent_communication/send_message',
+              name: 'agent_communication_send_message',
               arguments: {
                 agentName: 'agent1',
                 roomName: 'messaging-room',
@@ -598,7 +598,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_messages',
+            name: 'agent_communication_get_messages',
             arguments: {
               agentName: 'agent1',
               roomName: 'messaging-room'
@@ -619,7 +619,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_messages',
+            name: 'agent_communication_get_messages',
             arguments: {
               agentName: 'agent1',
               roomName: 'messaging-room',
@@ -640,7 +640,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_messages',
+            name: 'agent_communication_get_messages',
             arguments: {
               agentName: 'agent1',
               roomName: 'messaging-room',
@@ -658,7 +658,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 2,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_messages',
+            name: 'agent_communication_get_messages',
             arguments: {
               agentName: 'agent1',
               roomName: 'messaging-room',
@@ -679,7 +679,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_messages',
+            name: 'agent_communication_get_messages',
             arguments: {
               agentName: 'agent2',
               roomName: 'messaging-room'
@@ -701,7 +701,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_status',
+            name: 'agent_communication_get_status',
             arguments: {}
           }
         });
@@ -723,7 +723,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'status-room1'
             }
@@ -735,7 +735,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 2,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'status-room2'
             }
@@ -748,7 +748,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 3,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/enter_room',
+            name: 'agent_communication_enter_room',
             arguments: {
               agentName: 'agent1',
               roomName: 'status-room1'
@@ -761,7 +761,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 4,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'agent1',
               roomName: 'status-room1',
@@ -775,7 +775,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 5,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_status',
+            name: 'agent_communication_get_status',
             arguments: {}
           }
         });
@@ -801,7 +801,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: {
               roomName: 'clear-room'
             }
@@ -813,7 +813,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 2,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/enter_room',
+            name: 'agent_communication_enter_room',
             arguments: {
               agentName: 'agent1',
               roomName: 'clear-room'
@@ -828,7 +828,7 @@ describe('MCP Tools E2E Tests', () => {
             id: i + 10,
             method: 'tools/call',
             params: {
-              name: 'agent_communication/send_message',
+              name: 'agent_communication_send_message',
               arguments: {
                 agentName: 'agent1',
                 roomName: 'clear-room',
@@ -845,7 +845,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/clear_room_messages',
+            name: 'agent_communication_clear_room_messages',
             arguments: {
               roomName: 'clear-room'
             }
@@ -863,7 +863,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 2,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_messages',
+            name: 'agent_communication_get_messages',
             arguments: {
               agentName: 'agent1',
               roomName: 'clear-room'
@@ -882,7 +882,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/clear_room_messages',
+            name: 'agent_communication_clear_room_messages',
             arguments: {
               roomName: 'clear-room'
             }
@@ -894,7 +894,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 2,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/clear_room_messages',
+            name: 'agent_communication_clear_room_messages',
             arguments: {
               roomName: 'clear-room'
             }
@@ -913,7 +913,7 @@ describe('MCP Tools E2E Tests', () => {
           id: 1,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/clear_room_messages',
+            name: 'agent_communication_clear_room_messages',
             arguments: {
               roomName: 'non-existent'
             }
@@ -933,7 +933,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/unknown_tool',
+          name: 'agent_communication_unknown_tool',
           arguments: {}
         }
       });
@@ -948,7 +948,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             invalidParam: 'invalid'
           }
@@ -968,7 +968,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'integration-test',
             description: 'Integration test room'
@@ -983,7 +983,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_rooms',
+          name: 'agent_communication_list_rooms',
           arguments: {}
         }
       });
@@ -997,7 +997,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 3,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'test-agent',
             roomName: 'integration-test'
@@ -1011,7 +1011,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 4,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_room_users',
+          name: 'agent_communication_list_room_users',
           arguments: {
             roomName: 'integration-test'
           }
@@ -1027,7 +1027,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 5,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'test-agent',
             roomName: 'integration-test',
@@ -1041,7 +1041,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 6,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'test-agent',
             roomName: 'integration-test'
@@ -1059,7 +1059,7 @@ describe('MCP Tools E2E Tests', () => {
         id: 7,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_status',
+          name: 'agent_communication_get_status',
           arguments: {}
         }
       });

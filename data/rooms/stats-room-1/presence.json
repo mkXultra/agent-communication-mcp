@@ -1,0 +1,10 @@
+{
+  "roomName": "stats-room-1",
+  "users": {
+    "stats-agent-1": {
+      "status": "online",
+      "messageCount": 0,
+      "joinedAt": "2025-06-20T16:21:42.577Z"
+    }
+  }
+}

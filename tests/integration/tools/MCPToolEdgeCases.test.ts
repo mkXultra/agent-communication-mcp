@@ -31,7 +31,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_rooms',
+          name: 'agent_communication_list_rooms',
           arguments: {}
         }
       });
@@ -60,7 +60,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: Math.random(),
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: { roomName }
           }
         });
@@ -71,7 +71,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_rooms',
+          name: 'agent_communication_list_rooms',
           arguments: {}
         }
       });
@@ -94,7 +94,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: i,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: { roomName: `room-${i}` }
           }
         });
@@ -105,7 +105,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: roomCount + 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_rooms',
+          name: 'agent_communication_list_rooms',
           arguments: {}
         }
       });
@@ -131,7 +131,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: Math.random(),
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: { roomName: invalidName }
           }
         });
@@ -151,7 +151,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: longName }
         }
       });
@@ -168,7 +168,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { 
             roomName: 'test-room',
             description: longDescription
@@ -188,7 +188,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: i,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: { roomName }
           }
         })
@@ -212,7 +212,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'test-room' }
         }
       });
@@ -233,7 +233,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: Math.random(),
           method: 'tools/call',
           params: {
-            name: 'agent_communication/enter_room',
+            name: 'agent_communication_enter_room',
             arguments: { agentName, roomName: 'test-room' }
           }
         });
@@ -252,7 +252,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: { agentName, roomName: 'test-room' }
         }
       });
@@ -265,7 +265,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: { agentName, roomName: 'test-room' }
         }
       });
@@ -281,7 +281,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: { agentName: longAgentName, roomName: 'test-room' }
         }
       });
@@ -297,7 +297,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'test-room' }
         }
       });
@@ -307,7 +307,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: { agentName: 'test-agent', roomName: 'test-room' }
         }
       });
@@ -319,7 +319,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'test-agent',
             roomName: 'test-room',
@@ -340,7 +340,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'test-agent',
             roomName: 'test-room',
@@ -369,7 +369,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: Math.random(),
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'test-agent',
               roomName: 'test-room',
@@ -405,7 +405,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: Math.random(),
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'test-agent',
               roomName: 'test-room',
@@ -426,7 +426,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'test-room' }
         }
       });
@@ -436,7 +436,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: { agentName: 'test-agent', roomName: 'test-room' }
         }
       });
@@ -451,7 +451,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: Math.random(),
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_messages',
+            name: 'agent_communication_get_messages',
             arguments: {
               agentName: 'test-agent',
               roomName: 'test-room',
@@ -481,7 +481,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: Math.random(),
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_messages',
+            name: 'agent_communication_get_messages',
             arguments: {
               agentName: 'test-agent',
               roomName: 'test-room',
@@ -503,7 +503,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: i + 100,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'test-agent',
               roomName: 'test-room',
@@ -528,7 +528,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: Math.random(),
           method: 'tools/call',
           params: {
-            name: 'agent_communication/get_messages',
+            name: 'agent_communication_get_messages',
             arguments: {
               agentName: 'test-agent',
               roomName: 'test-room',
@@ -549,7 +549,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_status',
+          name: 'agent_communication_get_status',
           arguments: {}
         }
       });
@@ -571,7 +571,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_status',
+          name: 'agent_communication_get_status',
           arguments: {
             unexpectedParam: 'should be ignored',
             anotherParam: 123
@@ -590,7 +590,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: i,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: { roomName: `room-${i}` }
           }
         });
@@ -600,7 +600,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: i + 1000,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/enter_room',
+            name: 'agent_communication_enter_room',
             arguments: { agentName: `agent-${i}`, roomName: `room-${i}` }
           }
         });
@@ -612,7 +612,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
             id: i * 1000 + j + 2000,
             method: 'tools/call',
             params: {
-              name: 'agent_communication/send_message',
+              name: 'agent_communication_send_message',
               arguments: {
                 agentName: `agent-${i}`,
                 roomName: `room-${i}`,
@@ -628,7 +628,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 999999,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_status',
+          name: 'agent_communication_get_status',
           arguments: {}
         }
       });
@@ -650,7 +650,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/clear_room_messages',
+          name: 'agent_communication_clear_room_messages',
           arguments: { roomName: 'non-existent-room' }
         }
       });
@@ -665,7 +665,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'empty-room' }
         }
       });
@@ -675,7 +675,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/clear_room_messages',
+          name: 'agent_communication_clear_room_messages',
           arguments: { roomName: 'empty-room' }
         }
       });
@@ -692,7 +692,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'big-room' }
         }
       });
@@ -702,7 +702,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: { agentName: 'test-agent', roomName: 'big-room' }
         }
       });
@@ -715,7 +715,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: i + 100,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'test-agent',
               roomName: 'big-room',
@@ -730,7 +730,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 99999,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/clear_room_messages',
+          name: 'agent_communication_clear_room_messages',
           arguments: { roomName: 'big-room' }
         }
       });
@@ -747,7 +747,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'concurrent-clear' }
         }
       });
@@ -757,7 +757,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: { agentName: 'test-agent', roomName: 'concurrent-clear' }
         }
       });
@@ -769,7 +769,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: i + 100,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'test-agent',
               roomName: 'concurrent-clear',
@@ -786,7 +786,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           id: i + 1000,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/clear_room_messages',
+            name: 'agent_communication_clear_room_messages',
             arguments: { roomName: 'concurrent-clear' }
           }
         })
@@ -814,15 +814,15 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
     it('should handle missing required parameters', async () => {
       const testCases = [
         {
-          tool: 'agent_communication/create_room',
+          tool: 'agent_communication_create_room',
           args: {} // Missing roomName
         },
         {
-          tool: 'agent_communication/enter_room',
+          tool: 'agent_communication_enter_room',
           args: { agentName: 'test' } // Missing roomName
         },
         {
-          tool: 'agent_communication/send_message',
+          tool: 'agent_communication_send_message',
           args: { agentName: 'test', roomName: 'test' } // Missing message
         }
       ];
@@ -849,7 +849,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'test-room',
             description: 'valid param',
@@ -866,11 +866,11 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
     it('should handle parameter type mismatches', async () => {
       const typeMismatchCases = [
         {
-          tool: 'agent_communication/create_room',
+          tool: 'agent_communication_create_room',
           args: { roomName: 123 } // Number instead of string
         },
         {
-          tool: 'agent_communication/get_messages',
+          tool: 'agent_communication_get_messages',
           args: { 
             agentName: 'test',
             roomName: 'test',
@@ -908,7 +908,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
             id: i,
             method: 'tools/call',
             params: {
-              name: 'agent_communication/create_room',
+              name: 'agent_communication_create_room',
               arguments: { roomName: `rapid-room-${i}` }
             }
           })
@@ -931,7 +931,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'stress-test-room' }
         }
       });
@@ -947,7 +947,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
             id: i + 100,
             method: 'tools/call',
             params: {
-              name: 'agent_communication/enter_room',
+              name: 'agent_communication_enter_room',
               arguments: { 
                 agentName: `stress-agent-${i}`,
                 roomName: 'stress-test-room'
@@ -965,7 +965,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
             id: i + 200,
             method: 'tools/call',
             params: {
-              name: 'agent_communication/send_message',
+              name: 'agent_communication_send_message',
               arguments: {
                 agentName: `stress-agent-${i % 20}`,
                 roomName: 'stress-test-room',

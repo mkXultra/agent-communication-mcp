@@ -122,15 +122,15 @@ describe('E2E: MCP Server', () => {
       expect(result.tools).toHaveLength(9);
       
       const toolNames = result.tools.map((t: any) => t.name);
-      expect(toolNames).toContain('agent_communication/list_rooms');
-      expect(toolNames).toContain('agent_communication/create_room');
-      expect(toolNames).toContain('agent_communication/enter_room');
-      expect(toolNames).toContain('agent_communication/leave_room');
-      expect(toolNames).toContain('agent_communication/list_room_users');
-      expect(toolNames).toContain('agent_communication/send_message');
-      expect(toolNames).toContain('agent_communication/get_messages');
-      expect(toolNames).toContain('agent_communication/get_status');
-      expect(toolNames).toContain('agent_communication/clear_room_messages');
+      expect(toolNames).toContain('agent_communication_list_rooms');
+      expect(toolNames).toContain('agent_communication_create_room');
+      expect(toolNames).toContain('agent_communication_enter_room');
+      expect(toolNames).toContain('agent_communication_leave_room');
+      expect(toolNames).toContain('agent_communication_list_room_users');
+      expect(toolNames).toContain('agent_communication_send_message');
+      expect(toolNames).toContain('agent_communication_get_messages');
+      expect(toolNames).toContain('agent_communication_get_status');
+      expect(toolNames).toContain('agent_communication_clear_room_messages');
     });
   });
 
@@ -141,7 +141,7 @@ describe('E2E: MCP Server', () => {
     it('should complete full room lifecycle', async () => {
       // 1. Create room
       const createResult = await sendRequest('tools/call', {
-        name: 'agent_communication/create_room',
+        name: 'agent_communication_create_room',
         arguments: {
           roomName: testRoomName,
           description: 'E2E test room'
@@ -153,7 +153,7 @@ describe('E2E: MCP Server', () => {
 
       // 2. List rooms
       const listResult = await sendRequest('tools/call', {
-        name: 'agent_communication/list_rooms',
+        name: 'agent_communication_list_rooms',
         arguments: {}
       });
       
@@ -163,7 +163,7 @@ describe('E2E: MCP Server', () => {
 
       // 3. Enter room
       const enterResult = await sendRequest('tools/call', {
-        name: 'agent_communication/enter_room',
+        name: 'agent_communication_enter_room',
         arguments: {
           agentName: testAgentName,
           roomName: testRoomName
@@ -174,7 +174,7 @@ describe('E2E: MCP Server', () => {
 
       // 4. List room users
       const usersResult = await sendRequest('tools/call', {
-        name: 'agent_communication/list_room_users',
+        name: 'agent_communication_list_room_users',
         arguments: {
           roomName: testRoomName
         }
@@ -186,7 +186,7 @@ describe('E2E: MCP Server', () => {
 
       // 5. Send message
       const sendResult = await sendRequest('tools/call', {
-        name: 'agent_communication/send_message',
+        name: 'agent_communication_send_message',
         arguments: {
           agentName: testAgentName,
           roomName: testRoomName,
@@ -200,7 +200,7 @@ describe('E2E: MCP Server', () => {
 
       // 6. Get messages
       const messagesResult = await sendRequest('tools/call', {
-        name: 'agent_communication/get_messages',
+        name: 'agent_communication_get_messages',
         arguments: {
           roomName: testRoomName
         }
@@ -212,7 +212,7 @@ describe('E2E: MCP Server', () => {
 
       // 7. Get status
       const statusResult = await sendRequest('tools/call', {
-        name: 'agent_communication/get_status',
+        name: 'agent_communication_get_status',
         arguments: {}
       });
       
@@ -222,7 +222,7 @@ describe('E2E: MCP Server', () => {
 
       // 8. Leave room
       const leaveResult = await sendRequest('tools/call', {
-        name: 'agent_communication/leave_room',
+        name: 'agent_communication_leave_room',
         arguments: {
           agentName: testAgentName,
           roomName: testRoomName
@@ -233,7 +233,7 @@ describe('E2E: MCP Server', () => {
 
       // 9. Clear messages
       const clearResult = await sendRequest('tools/call', {
-        name: 'agent_communication/clear_room_messages',
+        name: 'agent_communication_clear_room_messages',
         arguments: {
           roomName: testRoomName,
           confirm: true
@@ -250,7 +250,7 @@ describe('E2E: MCP Server', () => {
     it('should handle invalid tool calls', async () => {
       await expect(
         sendRequest('tools/call', {
-          name: 'agent_communication/invalid_tool',
+          name: 'agent_communication_invalid_tool',
           arguments: {}
         })
       ).rejects.toThrow(/Unknown tool/);
@@ -259,7 +259,7 @@ describe('E2E: MCP Server', () => {
     it('should handle validation errors', async () => {
       await expect(
         sendRequest('tools/call', {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'invalid room name!', // Contains invalid characters
             description: 'Test'

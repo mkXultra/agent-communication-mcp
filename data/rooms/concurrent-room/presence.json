@@ -1,0 +1,30 @@
+{
+  "roomName": "concurrent-room",
+  "users": {
+    "concurrent-agent-1": {
+      "status": "online",
+      "messageCount": 0,
+      "joinedAt": "2025-06-20T16:21:42.245Z"
+    },
+    "concurrent-agent-2": {
+      "status": "online",
+      "messageCount": 0,
+      "joinedAt": "2025-06-20T16:21:42.260Z"
+    },
+    "concurrent-agent-3": {
+      "status": "online",
+      "messageCount": 0,
+      "joinedAt": "2025-06-20T16:21:42.328Z"
+    },
+    "concurrent-agent-4": {
+      "status": "online",
+      "messageCount": 0,
+      "joinedAt": "2025-06-20T16:21:42.387Z"
+    },
+    "concurrent-agent-5": {
+      "status": "online",
+      "messageCount": 0,
+      "joinedAt": "2025-06-20T16:21:42.441Z"
+    }
+  }
+}

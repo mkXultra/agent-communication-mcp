@@ -76,15 +76,15 @@ describe('Real MCP Server E2E Tests', () => {
       expect(tools).toHaveLength(9);
       
       const expectedTools = [
-        'agent_communication/list_rooms',
-        'agent_communication/create_room',
-        'agent_communication/enter_room',
-        'agent_communication/leave_room',
-        'agent_communication/list_room_users',
-        'agent_communication/send_message',
-        'agent_communication/get_messages',
-        'agent_communication/get_status',
-        'agent_communication/clear_room_messages'
+        'agent_communication_list_rooms',
+        'agent_communication_create_room',
+        'agent_communication_enter_room',
+        'agent_communication_leave_room',
+        'agent_communication_list_room_users',
+        'agent_communication_send_message',
+        'agent_communication_get_messages',
+        'agent_communication_get_status',
+        'agent_communication_clear_room_messages'
       ];
       
       const toolNames = tools.map((tool: any) => tool.name);
@@ -102,7 +102,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'real-test-room',
             description: 'A real test room'
@@ -121,7 +121,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_rooms',
+          name: 'agent_communication_list_rooms',
           arguments: {}
         }
       });
@@ -138,7 +138,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 3,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'real-agent-1',
             roomName: 'real-test-room'
@@ -156,7 +156,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 4,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_room_users',
+          name: 'agent_communication_list_room_users',
           arguments: {
             roomName: 'real-test-room'
           }
@@ -173,7 +173,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 5,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'real-agent-1',
             roomName: 'real-test-room',
@@ -193,7 +193,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 6,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'real-agent-1',
             roomName: 'real-test-room'
@@ -213,7 +213,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 7,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_status',
+          name: 'agent_communication_get_status',
           arguments: {}
         }
       });
@@ -233,7 +233,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'persistent-room' }
         }
       });
@@ -243,7 +243,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: { agentName: 'persistent-agent', roomName: 'persistent-room' }
         }
       });
@@ -253,7 +253,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 3,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'persistent-agent',
             roomName: 'persistent-room',
@@ -292,7 +292,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'test-agent',
             roomName: 'non-existent-room'
@@ -313,7 +313,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'restricted-room' }
         }
       });
@@ -324,7 +324,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'unauthorized-agent',
             roomName: 'restricted-room',
@@ -345,7 +345,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'duplicate-room' }
         }
       });
@@ -356,7 +356,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'duplicate-room' }
         }
       });
@@ -375,7 +375,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'concurrent-room' }
         }
       });
@@ -389,7 +389,7 @@ describe('Real MCP Server E2E Tests', () => {
             id: i + 10,
             method: 'tools/call',
             params: {
-              name: 'agent_communication/enter_room',
+              name: 'agent_communication_enter_room',
               arguments: {
                 agentName: `concurrent-agent-${i}`,
                 roomName: 'concurrent-room'
@@ -413,7 +413,7 @@ describe('Real MCP Server E2E Tests', () => {
             id: i + 20,
             method: 'tools/call',
             params: {
-              name: 'agent_communication/send_message',
+              name: 'agent_communication_send_message',
               arguments: {
                 agentName: `concurrent-agent-${i}`,
                 roomName: 'concurrent-room',
@@ -435,7 +435,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 30,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_room_users',
+          name: 'agent_communication_list_room_users',
           arguments: { roomName: 'concurrent-room' }
         }
       });
@@ -448,7 +448,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 31,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'concurrent-agent-1',
             roomName: 'concurrent-room'
@@ -469,7 +469,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'stats-room-1' }
         }
       });
@@ -479,7 +479,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'stats-room-2' }
         }
       });
@@ -490,7 +490,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 3,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: { agentName: 'stats-agent-1', roomName: 'stats-room-1' }
         }
       });
@@ -500,7 +500,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 4,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'stats-agent-1',
             roomName: 'stats-room-1',
@@ -514,7 +514,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 5,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_status',
+          name: 'agent_communication_get_status',
           arguments: {}
         }
       });
@@ -535,7 +535,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: { roomName: 'clear-test-room' }
         }
       });
@@ -545,7 +545,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: { agentName: 'clear-agent', roomName: 'clear-test-room' }
         }
       });
@@ -557,7 +557,7 @@ describe('Real MCP Server E2E Tests', () => {
           id: i + 10,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'clear-agent',
               roomName: 'clear-test-room',
@@ -573,7 +573,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 20,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'clear-agent',
             roomName: 'clear-test-room'
@@ -590,7 +590,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 21,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/clear_room_messages',
+          name: 'agent_communication_clear_room_messages',
           arguments: { roomName: 'clear-test-room' }
         }
       });
@@ -606,7 +606,7 @@ describe('Real MCP Server E2E Tests', () => {
         id: 22,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'clear-agent',
             roomName: 'clear-test-room'

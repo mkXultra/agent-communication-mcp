@@ -1,13 +1,15 @@
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { JSONRPCRequest, JSONRPCResponse, JSONRPCNotification } from '@modelcontextprotocol/sdk/types.js';
+import { JSONRPCRequest, JSONRPCResponse, JSONRPCNotification, JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 export class MemoryTransport implements Transport {
-  private handlers = new Map<string, (request: JSONRPCRequest) => Promise<JSONRPCResponse>>();
-  private notificationHandlers = new Map<string, (notification: JSONRPCNotification) => void>();
-  private onCloseHandler?: () => void;
-  private onErrorHandler?: (error: Error) => void;
+  private pendingRequests = new Map<number | string, (response: JSONRPCResponse) => void>();
   private connected = false;
   private _isClosed = false;
+  
+  // Properties that the MCP SDK sets
+  onmessage?: (message: JSONRPCMessage) => void;
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
   
   async start(): Promise<void> {
     this.connected = true;
@@ -25,67 +27,49 @@ export class MemoryTransport implements Transport {
     this.connected = false;
     this._isClosed = true;
     
-    if (this.onCloseHandler) {
-      this.onCloseHandler();
+    if (this.onclose) {
+      this.onclose();
     }
   }
   
-  async send(message: JSONRPCRequest): Promise<JSONRPCResponse> {
+  async send(message: JSONRPCMessage): Promise<void> {
     if (!this.connected) {
       throw new Error('Transport is not connected');
     }
     
-    const handler = this.handlers.get(message.method);
-    if (!handler) {
-      return {
-        jsonrpc: '2.0',
-        id: message.id,
-        error: {
-          code: -32601,
-          message: `Method not found: ${message.method}`
-        }
-      };
-    }
-    
-    try {
-      return await handler(message);
-    } catch (error) {
-      return {
-        jsonrpc: '2.0',
-        id: message.id,
-        error: {
-          code: -32603,
-          message: error instanceof Error ? error.message : 'Internal error'
-        }
-      };
+    // The server sends responses through this method
+    // We'll capture them for our tests
+    if ('result' in message || 'error' in message) {
+      const response = message as JSONRPCResponse;
+      const resolver = this.pendingRequests.get(response.id!);
+      if (resolver) {
+        resolver(response);
+        this.pendingRequests.delete(response.id!);
+      }
     }
   }
   
-  onMessage(handler: (message: JSONRPCRequest) => Promise<JSONRPCResponse>): void {
-    // This is used by the server to handle incoming requests
-    this.defaultHandler = handler;
-  }
-  
-  private defaultHandler?: (message: JSONRPCRequest) => Promise<JSONRPCResponse>;
   
   // For testing: simulate sending a request to the server
   async simulateRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
-    if (!this.defaultHandler) {
+    if (!this.onmessage) {
       throw new Error('No message handler registered');
     }
-    return this.defaultHandler(request);
-  }
-  
-  // Additional method for notification handling
-  onNotification(handler: (notification: JSONRPCNotification) => void): void {
-    // Handle notification registration
-  }
-  
-  onClose(handler: () => void): void {
-    this.onCloseHandler = handler;
-  }
-  
-  onError(handler: (error: Error) => void): void {
-    this.onErrorHandler = handler;
+    
+    return new Promise<JSONRPCResponse>((resolve, reject) => {
+      // Store the resolver for this request
+      this.pendingRequests.set(request.id!, resolve);
+      
+      // Send the request to the server
+      this.onmessage(request);
+      
+      // Set a timeout to avoid hanging tests
+      setTimeout(() => {
+        if (this.pendingRequests.has(request.id!)) {
+          this.pendingRequests.delete(request.id!);
+          reject(new Error('Request timeout'));
+        }
+      }, 5000);
+    });
   }
 }
