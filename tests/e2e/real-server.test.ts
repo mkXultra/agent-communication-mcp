@@ -20,6 +20,10 @@ describe('Real MCP Server E2E Tests', () => {
     server = new Server({
       name: 'agent-communication',
       version: '1.0.0'
+    }, {
+      capabilities: {
+        tools: {}  // Enable tool support
+      }
     });
     
     transport = new MemoryTransport();

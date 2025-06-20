@@ -88,9 +88,4 @@ export class MemoryTransport implements Transport {
   onError(handler: (error: Error) => void): void {
     this.onErrorHandler = handler;
   }
-  
-  // Required by Transport interface
-  async start(): Promise<void> {
-    // No-op for memory transport
-  }
 }
