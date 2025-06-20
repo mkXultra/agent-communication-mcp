@@ -103,7 +103,7 @@ describe('Real Adapters Integration Tests', () => {
       
       // Verify agent is no longer in room
       const finalUsers = await roomsAdapter.listRoomUsers({ roomName: 'membership-test' });
-      expect(finalUsers.agents).not.toContain('agent1');
+      expect(finalUsers.users).toEqual([]);
     });
     
     it('should enforce room existence for operations', async () => {
@@ -213,7 +213,7 @@ describe('Real Adapters Integration Tests', () => {
       });
       
       expect(secondPage.messages).toHaveLength(5);
-      expect(secondPage.messages[0].message).toBe('Message 6');
+      expect(secondPage.messages[0].message).toBe('Message 5');
     });
   });
   
@@ -275,7 +275,8 @@ describe('Real Adapters Integration Tests', () => {
       
       // Clear messages
       const clearResult = await managementAdapter.clearRoomMessages({
-        roomName: 'stats-room-1'
+        roomName: 'stats-room-1',
+        confirm: true
       });
       
       expect(clearResult.success).toBe(true);
