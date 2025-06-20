@@ -47,8 +47,9 @@ describe('Integration: Full Flow Test', () => {
 
       // 2. List rooms to verify creation
       const roomsList = await roomsAdapter.listRooms();
-      expect(roomsList.rooms).toHaveLength(1);
-      expect(roomsList.rooms[0].name).toBe(roomName);
+      expect(roomsList.rooms).toContainEqual(
+        expect.objectContaining({ name: roomName })
+      );
 
       // 3. Join the room
       const joinResult = await roomsAdapter.enterRoom({

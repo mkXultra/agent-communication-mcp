@@ -92,7 +92,7 @@ describe('Real Adapters Integration Tests', () => {
       
       // Verify agent is in room
       const users = await roomsAdapter.listRoomUsers({ roomName: 'membership-test' });
-      expect(users.agents).toContain('agent1');
+      expect(users.users.map(u => u.name)).toContain('agent1');
       
       // Agent leaves room
       const leaveResult = await roomsAdapter.leaveRoom({
