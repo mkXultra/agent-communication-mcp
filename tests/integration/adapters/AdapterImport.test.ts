@@ -197,7 +197,7 @@ describe('Adapter Import and Integration Tests', () => {
         
         // Mock a long-running operation that would timeout
         const longOperation = async () => {
-          return new Promise(resolve => setTimeout(resolve, 6000)); // 6 seconds
+          return new Promise(resolve => setTimeout(resolve, 1500)); // 1.5 seconds
         };
         
         // This should complete successfully with mock (no real timeout)

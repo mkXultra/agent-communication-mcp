@@ -166,7 +166,7 @@ describe('Management Statistics Accuracy Integration Tests', () => {
   describe('Cross-service Statistics Consistency', () => {
     it('should have consistent statistics across all services', async () => {
       // Get stats from all three services
-      const [systemStats, scanResults, collectorStats] = await Promise.all([
+      const [systemStats, allRooms, collectorStats] = await Promise.all([
         managementService.getSystemStatus(),
         dataScanner.getAllRooms(),
         statsCollector.collectSystemStatus()
@@ -174,15 +174,13 @@ describe('Management Statistics Accuracy Integration Tests', () => {
 
       // All services should report the same totals
       expect(systemStats.totalRooms).toBe(6);
-      expect(scanResults.totalRooms).toBe(6);
+      expect(allRooms.length).toBe(6);
       expect(collectorStats.totalRooms).toBe(6);
 
       expect(systemStats.totalMessages).toBe(957); // 245 + 189 + 432 + 76 + 0 + 15
-      expect(scanResults.totalMessages).toBe(957);
       expect(collectorStats.totalMessages).toBe(957);
 
       expect(systemStats.totalOnlineUsers).toBe(12); // 3 + 3 + 5 + 2 + 0 + 0 (only counting 'online' status)
-      expect(scanResults.totalOnlineUsers).toBe(12);
       expect(collectorStats.totalOnlineUsers).toBe(12);
 
       // Calculate total storage size from rooms

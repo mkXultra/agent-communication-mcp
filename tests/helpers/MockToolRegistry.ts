@@ -9,7 +9,7 @@ export class MockToolRegistry {
   
   async registerAll(server: Server): Promise<void> {
     // Register all 9 tools from spec.md
-    server.setRequestHandler('tools/list', async () => ({
+    server.setRequestHandler('tools/list', async (request) => ({
       tools: [
         {
           name: 'agent_communication/list_rooms',

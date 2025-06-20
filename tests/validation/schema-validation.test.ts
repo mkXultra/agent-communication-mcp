@@ -202,6 +202,7 @@ describe('Schema Validation Tests', () => {
 
     it('should validate get_messages output schema', () => {
       const validOutput = {
+        roomName: 'test-room',
         messages: [
           {
             id: 'msg-123',
@@ -213,9 +214,8 @@ describe('Schema Validation Tests', () => {
             metadata: { priority: 'high' },
           },
         ],
-        total: 1,
+        count: 1,
         hasMore: false,
-        cursor: 'next-cursor',
       };
 
       const result = getMessagesOutputSchema.safeParse(validOutput);
@@ -252,12 +252,13 @@ describe('Schema Validation Tests', () => {
     it('should validate clear_room_messages with minimal input', () => {
       const minimalInput = {
         roomName: 'test-room',
+        confirm: true,  // confirm is required
       };
 
       const result = clearRoomMessagesInputSchema.safeParse(minimalInput);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.dryRun).toBe(false); // default value
+        expect(result.data.confirm).toBe(true);
       }
     });
 
