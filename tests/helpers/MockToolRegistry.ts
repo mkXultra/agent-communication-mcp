@@ -3,7 +3,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { JSONRPCRequest, JSONRPCResponse } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { MockDataLayer } from './MockDataLayer.js';
-import { RoomNotFoundError, AgentNotInRoomError, RoomAlreadyExistsError } from '../../src/errors/index.js';
+import { AppError, RoomNotFoundError, AgentNotInRoomError, RoomAlreadyExistsError, toMCPError } from '../../src/errors/index.js';
 
 export class MockToolRegistry {
   constructor(private dataLayer: MockDataLayer) {}
@@ -258,12 +258,8 @@ export class MockToolRegistry {
             throw new Error(`Unknown tool: ${name}`);
         }
       } catch (error) {
-        if (error instanceof RoomNotFoundError || error instanceof AgentNotInRoomError || error instanceof RoomAlreadyExistsError) {
-          throw {
-            code: error.statusCode,
-            message: error.message,
-            data: { errorCode: error.code }
-          };
+        if (error instanceof AppError) {
+          throw toMCPError(error);
         }
         throw error;
       }

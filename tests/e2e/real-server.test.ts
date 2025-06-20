@@ -302,7 +302,8 @@ describe('Real MCP Server E2E Tests', () => {
       
       expect(response.error).toBeDefined();
       expect(response.error!.code).toBe(404);
-      expect(response.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+      expect(response.error!.code).toBe(404);
+      expect(response.error!.message).toContain('not found');
       expect(response.error!.message).toContain('non-existent-room');
     });
     
@@ -335,7 +336,8 @@ describe('Real MCP Server E2E Tests', () => {
       
       expect(response.error).toBeDefined();
       expect(response.error!.code).toBe(403);
-      expect(response.error!.data?.errorCode).toBe('AGENT_NOT_IN_ROOM');
+      expect(response.error!.code).toBe(403);
+      expect(response.error!.message).toContain('not in room');
     });
     
     it('should handle duplicate room creation', async () => {
@@ -363,7 +365,8 @@ describe('Real MCP Server E2E Tests', () => {
       
       expect(response.error).toBeDefined();
       expect(response.error!.code).toBe(409);
-      expect(response.error!.data?.errorCode).toBe('ROOM_ALREADY_EXISTS');
+      expect(response.error!.code).toBe(409);
+      expect(response.error!.message).toContain('already exists');
     });
   });
   

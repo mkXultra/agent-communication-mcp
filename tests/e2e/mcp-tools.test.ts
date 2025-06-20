@@ -236,7 +236,8 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.data?.errorCode).toBe('ROOM_ALREADY_EXISTS');
+        expect(response.error!.code).toBe(409);
+        expect(response.error!.message).toContain('already exists');
       });
     });
     
@@ -290,7 +291,8 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+        expect(response.error!.code).toBe(404);
+        expect(response.error!.message).toContain('not found');
       });
     });
     
@@ -357,7 +359,8 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.data?.errorCode).toBe('AGENT_NOT_IN_ROOM');
+        expect(response.error!.code).toBe(403);
+        expect(response.error!.message).toContain('not in room');
       });
     });
     
@@ -456,7 +459,8 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+        expect(response.error!.code).toBe(404);
+        expect(response.error!.message).toContain('not found');
       });
     });
   });
@@ -549,7 +553,8 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.data?.errorCode).toBe('AGENT_NOT_IN_ROOM');
+        expect(response.error!.code).toBe(403);
+        expect(response.error!.message).toContain('not in room');
       });
       
       it('should reject message to non-existent room', async () => {
@@ -568,7 +573,8 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+        expect(response.error!.code).toBe(404);
+        expect(response.error!.message).toContain('not found');
       });
     });
     
@@ -688,7 +694,8 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.data?.errorCode).toBe('AGENT_NOT_IN_ROOM');
+        expect(response.error!.code).toBe(403);
+        expect(response.error!.message).toContain('not in room');
       });
     });
   });
@@ -921,7 +928,8 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+        expect(response.error!.code).toBe(404);
+        expect(response.error!.message).toContain('not found');
       });
     });
   });

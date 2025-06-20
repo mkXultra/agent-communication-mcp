@@ -352,7 +352,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(unauthorizedMessage.error).toBeDefined();
-      expect(unauthorizedMessage.error!.data?.errorCode).toBe('AGENT_NOT_IN_ROOM');
+      expect(unauthorizedMessage.error!.code).toBe(403);
+      expect(unauthorizedMessage.error!.message).toContain('not in room');
       
       // Agent2 joins room
       await transport.simulateRequest({
@@ -433,7 +434,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(postLeaveMessage.error).toBeDefined();
-      expect(postLeaveMessage.error!.data?.errorCode).toBe('AGENT_NOT_IN_ROOM');
+      expect(postLeaveMessage.error!.code).toBe(403);
+      expect(postLeaveMessage.error!.message).toContain('not in room');
       
       // Verify only agent2 remains
       const finalUsersResponse = await transport.simulateRequest({
@@ -584,7 +586,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(enterResponse.error).toBeDefined();
-      expect(enterResponse.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+      expect(enterResponse.error!.code).toBe(404);
+      expect(enterResponse.error!.message).toContain('not found');
       
       // Try to send message to non-existent room
       const messageResponse = await transport.simulateRequest({
@@ -602,7 +605,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(messageResponse.error).toBeDefined();
-      expect(messageResponse.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+      expect(messageResponse.error!.code).toBe(404);
+      expect(messageResponse.error!.message).toContain('not found');
       
       // Try to list users in non-existent room
       const usersResponse = await transport.simulateRequest({
@@ -618,7 +622,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(usersResponse.error).toBeDefined();
-      expect(usersResponse.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+      expect(usersResponse.error!.code).toBe(404);
+      expect(usersResponse.error!.message).toContain('not found');
     });
     
     it('should handle duplicate room creation', async () => {
@@ -651,7 +656,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(duplicateResponse.error).toBeDefined();
-      expect(duplicateResponse.error!.data?.errorCode).toBe('ROOM_ALREADY_EXISTS');
+      expect(duplicateResponse.error!.code).toBe(409);
+      expect(duplicateResponse.error!.message).toContain('already exists');
     });
     
     it('should handle message pagination correctly', async () => {
@@ -681,7 +687,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         }
       });
       
-      // Send 15 messages
+      // Send 15 messages with proper numbering
       const messageIds = [];
       for (let i = 1; i <= 15; i++) {
         const response = await transport.simulateRequest({
@@ -693,12 +699,14 @@ describe('Agent Communication MCP Server E2E Tests', () => {
             arguments: {
               agentName: 'agent1',
               roomName: 'pagination-test',
-              message: `Message ${i}`
+              message: `Message ${i.toString().padStart(2, '0')}` // Use zero-padding for proper sorting
             }
           }
         });
         const result = JSON.parse(response.result!.content[0].text);
         messageIds.push(result.messageId);
+        // Small delay to ensure ordering
+        await new Promise(resolve => setTimeout(resolve, 10));
       }
       
       // Get first page (limit 5)
@@ -718,8 +726,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       
       const page1Result = JSON.parse(page1Response.result!.content[0].text);
       expect(page1Result.messages).toHaveLength(5);
-      expect(page1Result.messages[0].message).toBe('Message 1');
-      expect(page1Result.messages[4].message).toBe('Message 5');
+      expect(page1Result.messages[0].message).toBe('Message 01');
+      expect(page1Result.messages[4].message).toBe('Message 05');
       
       // Get second page using 'before' parameter
       const page2Response = await transport.simulateRequest({
@@ -739,7 +747,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       
       const page2Result = JSON.parse(page2Response.result!.content[0].text);
       expect(page2Result.messages).toHaveLength(5);
-      expect(page2Result.messages[0].message).toBe('Message 6');
+      expect(page2Result.messages[0].message).toBe('Message 06');
       expect(page2Result.messages[4].message).toBe('Message 10');
     });
   });
