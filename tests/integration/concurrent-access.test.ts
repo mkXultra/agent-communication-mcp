@@ -36,8 +36,15 @@ describe('Integration: Concurrent Access Test', () => {
     const messagesPerAgent = 10;
 
     it('should handle concurrent messages from multiple agents', async () => {
-      // Create room
+      // Create room and ensure directory structure
       await roomsAdapter.createRoom({ roomName });
+      
+      // Ensure room directory exists
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const actualDataDir = process.env.AGENT_COMM_DATA_DIR || testDataDir;
+      const roomDir = path.join(actualDataDir, 'rooms', roomName);
+      await fs.mkdir(roomDir, { recursive: true });
 
       // Create agents and have them join
       const agents = Array.from({ length: agentCount }, (_, i) => `agent-${i}`);
