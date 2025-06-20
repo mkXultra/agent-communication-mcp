@@ -215,6 +215,7 @@ describe('Real Adapters Integration Tests', () => {
       
       expect(secondPage.messages).toHaveLength(5);
       expect(secondPage.messages[0].message).toBe('Message 5');
+      expect(secondPage.messages[4].message).toBe('Message 1');
     });
   });
   
@@ -281,7 +282,7 @@ describe('Real Adapters Integration Tests', () => {
       });
       
       expect(clearResult.success).toBe(true);
-      expect(clearResult.clearedMessages).toBe(2);
+      expect(clearResult.clearedCount).toBe(2);
       
       // Verify messages are gone
       const afterClear = await messagingAdapter.getMessages({
@@ -325,8 +326,9 @@ describe('Real Adapters Integration Tests', () => {
       
       // Verify through rooms adapter
       const users = await roomsAdapter.listRoomUsers({ roomName: 'integration-room' });
-      expect(users.agents).toContain('alice');
-      expect(users.agents).toContain('bob');
+      const userNames = users.users.map(u => u.name);
+      expect(userNames).toContain('alice');
+      expect(userNames).toContain('bob');
       
       // Verify through messaging adapter
       const messages = await messagingAdapter.getMessages({
