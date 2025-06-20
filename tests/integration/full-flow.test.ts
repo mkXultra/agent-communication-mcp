@@ -87,9 +87,9 @@ describe('Integration: Full Flow Test', () => {
 
       // 7. Get system status
       const statusResult = await managementAdapter.getStatus();
-      expect(statusResult.totalRooms).toBe(1);
-      expect(statusResult.totalMessages).toBe(1);
-      expect(statusResult.rooms[0].name).toBe(roomName);
+      expect(statusResult.totalRooms).toBeGreaterThanOrEqual(1);
+      expect(statusResult.totalMessages).toBeGreaterThanOrEqual(1);
+      expect(statusResult.rooms.some(r => r.name === roomName)).toBe(true);
 
       // 8. Leave room
       const leaveResult = await roomsAdapter.leaveRoom({

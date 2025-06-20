@@ -13,7 +13,10 @@ describe('Integration: Concurrent Access Test', () => {
   beforeEach(async () => {
     // Ensure test data directory exists
     const fs = await import('fs/promises');
-    await fs.mkdir(testDataDir, { recursive: true });
+    const path = await import('path');
+    const actualDataDir = process.env.AGENT_COMM_DATA_DIR || testDataDir;
+    await fs.mkdir(actualDataDir, { recursive: true });
+    await fs.mkdir(path.join(actualDataDir, 'rooms'), { recursive: true });
     
     lockService = new LockService();
     messagingAdapter = new MessagingAdapter(lockService);
