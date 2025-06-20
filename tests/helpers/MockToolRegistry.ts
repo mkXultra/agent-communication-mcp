@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { JSONRPCRequest, JSONRPCResponse } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import { MockDataLayer } from './MockDataLayer.js';
 import { RoomNotFoundError, AgentNotInRoomError, RoomAlreadyExistsError } from '../../src/errors/index.js';
 
@@ -8,8 +9,25 @@ export class MockToolRegistry {
   constructor(private dataLayer: MockDataLayer) {}
   
   async registerAll(server: Server): Promise<void> {
+    // Define the request schemas
+    const listToolsRequestSchema = z.object({
+      method: z.literal('tools/list'),
+      params: z.object({
+        _meta: z.optional(z.object({}))
+      }).optional()
+    });
+    
+    const callToolRequestSchema = z.object({
+      method: z.literal('tools/call'),
+      params: z.object({
+        name: z.string(),
+        arguments: z.any(),
+        _meta: z.optional(z.object({}))
+      })
+    });
+    
     // Register all 9 tools from spec.md
-    server.setRequestHandler('tools/list', async (request) => ({
+    server.setRequestHandler(listToolsRequestSchema, async (request) => ({
       tools: [
         {
           name: 'agent_communication/list_rooms',
@@ -124,8 +142,8 @@ export class MockToolRegistry {
       ]
     }));
     
-    server.setRequestHandler('tools/call', async (request) => {
-      const { name, arguments: args } = request.params as { name: string; arguments: any };
+    server.setRequestHandler(callToolRequestSchema, async (request) => {
+      const { name, arguments: args } = request.params;
       
       try {
         switch (name) {

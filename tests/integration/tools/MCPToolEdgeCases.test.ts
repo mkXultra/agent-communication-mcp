@@ -13,11 +13,15 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
   beforeEach(async () => {
     dataLayer = new MockDataLayer();
     toolRegistry = new MockToolRegistry(dataLayer);
-    server = new Server({ name: 'test-server', version: '1.0.0' });
+    server = new Server({ name: 'test-server', version: '1.0.0' }, {
+      capabilities: {
+        tools: {}  // Enable tool support
+      }
+    });
     transport = new MemoryTransport();
     
-    await toolRegistry.registerAll(server);
     await server.connect(transport);
+    await toolRegistry.registerAll(server);
   });
   
   describe('list_rooms Edge Cases', () => {

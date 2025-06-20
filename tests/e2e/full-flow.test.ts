@@ -21,11 +21,11 @@ describe('Agent Communication MCP Server E2E Tests', () => {
     dataLayer = new MockDataLayer();
     toolRegistry = new MockToolRegistry(dataLayer);
     
-    // Register all MCP tools
-    await toolRegistry.registerAll(server);
-    
     // Connect server to transport
     await server.connect(transport);
+    
+    // Register all MCP tools
+    await toolRegistry.registerAll(server);
   });
   
   afterAll(async () => {

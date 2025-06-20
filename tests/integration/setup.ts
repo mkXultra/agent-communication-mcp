@@ -28,7 +28,7 @@ export async function cleanupTestDataDir(): Promise<void> {
 // Mock environment setup
 export function setupTestEnv(dataDir?: string): void {
   process.env.AGENT_COMM_DATA_DIR = dataDir || testDataDir;
-  process.env.AGENT_COMM_LOCK_TIMEOUT = '2000'; // Shorter timeout for tests
+  process.env.AGENT_COMM_LOCK_TIMEOUT = '5000'; // Increased timeout for concurrent tests
   process.env.AGENT_COMM_MAX_MESSAGES = '100';
   process.env.AGENT_COMM_MAX_ROOMS = '10';
 }

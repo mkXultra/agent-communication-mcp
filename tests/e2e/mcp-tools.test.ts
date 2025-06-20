@@ -20,8 +20,8 @@ describe('MCP Tools E2E Tests', () => {
     dataLayer = new MockDataLayer();
     toolRegistry = new MockToolRegistry(dataLayer);
     
-    await toolRegistry.registerAll(server);
     await server.connect(transport);
+    await toolRegistry.registerAll(server);
   });
   
   afterAll(async () => {

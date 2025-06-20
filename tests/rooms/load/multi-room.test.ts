@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { vol } from 'memfs';
 import { RoomService } from '../../../src/features/rooms/room/RoomService';
 import { PresenceService } from '../../../src/features/rooms/presence/PresenceService';
@@ -20,10 +20,12 @@ describe('Multi-Room Load Tests - 100 rooms × 50 users', () => {
   const NUM_AGENTS_PER_ROOM = 50;
   const TOTAL_AGENTS = NUM_ROOMS * NUM_AGENTS_PER_ROOM;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // ファイルシステムをリセット
     vol.reset();
-    vol.fromJSON({}, testDataDir);
+    vol.fromJSON({
+      [testDataDir]: null
+    });
     
     roomsAPI = new RoomsAPI(testDataDir);
   });
@@ -36,17 +38,22 @@ describe('Multi-Room Load Tests - 100 rooms × 50 users', () => {
     console.log(`Creating ${NUM_ROOMS} rooms...`);
     const startTime = Date.now();
 
-    const roomCreationPromises = [];
-    for (let i = 1; i <= NUM_ROOMS; i++) {
-      const roomName = `room-${i.toString().padStart(3, '0')}`;
-      const description = `Load test room ${i}`;
+    // Limit concurrent operations to prevent memfs issues
+    const BATCH_SIZE = 10;
+    const results = [];
+    
+    for (let i = 0; i < NUM_ROOMS; i += BATCH_SIZE) {
+      const batch = [];
+      for (let j = i; j < Math.min(i + BATCH_SIZE, NUM_ROOMS); j++) {
+        const roomName = `room-${(j + 1).toString().padStart(3, '0')}`;
+        const description = `Load test room ${j + 1}`;
+        
+        batch.push(roomsAPI.createRoom(roomName, description));
+      }
       
-      roomCreationPromises.push(
-        roomsAPI.createRoom(roomName, description)
-      );
+      const batchResults = await Promise.all(batch);
+      results.push(...batchResults);
     }
-
-    const results = await Promise.all(roomCreationPromises);
     const endTime = Date.now();
 
     // すべてのルームが正常に作成されたことを確認

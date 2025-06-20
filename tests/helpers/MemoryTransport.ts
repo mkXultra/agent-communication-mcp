@@ -9,6 +9,11 @@ export class MemoryTransport implements Transport {
   private connected = false;
   private _isClosed = false;
   
+  async start(): Promise<void> {
+    this.connected = true;
+    this._isClosed = false;
+  }
+
   async connect(): Promise<void> {
     this.connected = true;
     this._isClosed = false;
@@ -71,11 +76,21 @@ export class MemoryTransport implements Transport {
     return this.defaultHandler(request);
   }
   
+  // Additional method for notification handling
+  onNotification(handler: (notification: JSONRPCNotification) => void): void {
+    // Handle notification registration
+  }
+  
   onClose(handler: () => void): void {
     this.onCloseHandler = handler;
   }
   
   onError(handler: (error: Error) => void): void {
     this.onErrorHandler = handler;
+  }
+  
+  // Required by Transport interface
+  async start(): Promise<void> {
+    // No-op for memory transport
   }
 }

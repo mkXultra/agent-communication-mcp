@@ -25,11 +25,11 @@ describe('Real MCP Server E2E Tests', () => {
     transport = new MemoryTransport();
     toolRegistry = new ToolRegistry(testDataDir);
     
-    // Register all real tools
-    await toolRegistry.registerAll(server);
-    
     // Connect server to transport
     await server.connect(transport);
+    
+    // Register all real tools
+    await toolRegistry.registerAll(server);
   });
   
   afterAll(async () => {
