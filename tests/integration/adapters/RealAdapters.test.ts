@@ -19,6 +19,9 @@ describe('Real Adapters Integration Tests', () => {
     testDataDir = path.join(process.cwd(), 'test-data-' + Date.now());
     await fs.mkdir(testDataDir, { recursive: true });
     
+    // Set environment variable to use our test directory
+    process.env.AGENT_COMM_DATA_DIR = testDataDir;
+    
     // Initialize services
     lockService = new LockService(testDataDir);
     messagingAdapter = new MessagingAdapter(lockService);
@@ -45,6 +48,9 @@ describe('Real Adapters Integration Tests', () => {
     } catch (error) {
       // Ignore cleanup errors
     }
+    
+    // Clean up environment variable
+    delete process.env.AGENT_COMM_DATA_DIR;
   });
   
   describe('Rooms Adapter with Real Implementation', () => {
