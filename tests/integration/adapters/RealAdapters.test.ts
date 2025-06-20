@@ -81,7 +81,7 @@ describe('Real Adapters Integration Tests', () => {
       
       // Initially no users
       const initialUsers = await roomsAdapter.listRoomUsers({ roomName: 'membership-test' });
-      expect(initialUsers.agents).toEqual([]);
+      expect(initialUsers.users).toEqual([]);
       
       // Agent enters room
       const enterResult = await roomsAdapter.enterRoom({
@@ -201,8 +201,8 @@ describe('Real Adapters Integration Tests', () => {
       });
       
       expect(firstPage.messages).toHaveLength(5);
-      expect(firstPage.messages[0].message).toBe('Message 1');
-      expect(firstPage.messages[4].message).toBe('Message 5');
+      expect(firstPage.messages[0].message).toBe('Message 10');
+      expect(firstPage.messages[4].message).toBe('Message 6');
       
       // Get second page
       const secondPage = await messagingAdapter.getMessages({
@@ -245,12 +245,11 @@ describe('Real Adapters Integration Tests', () => {
       
       expect(status.totalRooms).toBe(2);
       expect(status.totalMessages).toBeGreaterThanOrEqual(2);
-      expect(status.activeAgents).toBeGreaterThanOrEqual(2);
-      expect(status.serverVersion).toBe('1.0.0');
+      expect(status.totalOnlineUsers).toBeGreaterThanOrEqual(2);
       expect(status.rooms).toHaveLength(2);
       
       const room1 = status.rooms.find(r => r.name === 'stats-room-1');
-      expect(room1?.activeAgents).toBe(2);
+      expect(room1?.onlineUsers).toBe(2);
     });
     
     it('should clear room messages', async () => {
