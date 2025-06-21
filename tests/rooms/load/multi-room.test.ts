@@ -18,7 +18,7 @@ describe('Multi-Room Load Tests', () => {
   // 負荷テスト設定
   const MAX_ROOMS = parseInt(process.env.AGENT_COMM_MAX_ROOMS || '10', 10);
   const NUM_ROOMS = Math.min(100, MAX_ROOMS); // Respect environment limit
-  const NUM_AGENTS_PER_ROOM = 50;
+  const NUM_AGENTS_PER_ROOM = Math.min(50, Math.floor(5000 / NUM_ROOMS)); // Adjust agents based on room limit
   const TOTAL_AGENTS = NUM_ROOMS * NUM_AGENTS_PER_ROOM;
 
   beforeEach(async () => {
@@ -82,7 +82,7 @@ describe('Multi-Room Load Tests', () => {
     console.log('Setting up rooms for agent entry test...');
     
     // まず10個のルームを作成（全部だと時間がかかりすぎるため）
-    const testRooms = 10;
+    const testRooms = Math.min(10, NUM_ROOMS);
     for (let i = 1; i <= testRooms; i++) {
       await roomsAPI.createRoom(`test-room-${i}`, `Test room ${i}`);
     }
@@ -178,14 +178,14 @@ describe('Multi-Room Load Tests', () => {
 
     // 最終的なルーム数確認
     const finalCount = await roomsAPI.getRoomCount();
-    expect(finalCount).toBe(20);
+    expect(finalCount).toBe(Math.min(20, MAX_ROOMS));
   }, 30000);
 
   it('should maintain data consistency under load', async () => {
     console.log('Testing data consistency under load...');
 
     // 複数のルームを作成
-    const testRooms = 5;
+    const testRooms = Math.min(5, MAX_ROOMS);
     for (let i = 1; i <= testRooms; i++) {
       await roomsAPI.createRoom(`consistency-room-${i}`, `Consistency test room ${i}`);
     }

@@ -180,8 +180,8 @@ describe('Management Statistics Accuracy Integration Tests', () => {
       expect(systemStats.totalMessages).toBe(957); // 245 + 189 + 432 + 76 + 0 + 15
       expect(collectorStats.totalMessages).toBe(957);
 
-      expect(systemStats.totalOnlineUsers).toBe(12); // 3 + 3 + 5 + 2 + 0 + 0 (only counting 'online' status)
-      expect(collectorStats.totalOnlineUsers).toBe(12);
+      expect(systemStats.totalOnlineUsers).toBe(13); // 3 + 3 + 5 + 2 + 0 + 0 (only counting 'online' status)
+      expect(collectorStats.totalOnlineUsers).toBe(13);
 
       // Calculate total storage size from rooms
       const totalStorageSize = systemStats.rooms.reduce((sum, room) => sum + room.storageSize, 0);

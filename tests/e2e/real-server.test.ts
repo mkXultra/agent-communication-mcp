@@ -594,7 +594,7 @@ describe('Real MCP Server E2E Tests', () => {
         method: 'tools/call',
         params: {
           name: 'agent_communication_clear_room_messages',
-          arguments: { roomName: 'clear-test-room' }
+          arguments: { roomName: 'clear-test-room', confirm: true }
         }
       });
       
