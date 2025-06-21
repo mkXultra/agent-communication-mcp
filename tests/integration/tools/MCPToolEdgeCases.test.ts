@@ -683,7 +683,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       expect(response.error).toBeUndefined();
       const result = JSON.parse(response.result!.content[0].text);
       expect(result.success).toBe(true);
-      expect(result.clearedMessages).toBe(0);
+      expect(result.clearedCount).toBe(0);
     });
     
     it('should handle clearing room with many messages', async () => {
@@ -738,7 +738,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       expect(response.error).toBeUndefined();
       const result = JSON.parse(response.result!.content[0].text);
       expect(result.success).toBe(true);
-      expect(result.clearedMessages).toBe(messageCount);
+      expect(result.clearedCount).toBe(messageCount);
     });
     
     it('should handle concurrent clear operations', async () => {
@@ -801,7 +801,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       
       const clearCounts = results.map(r => {
         const result = JSON.parse(r.result!.content[0].text);
-        return result.clearedMessages;
+        return result.clearedCount;
       });
       
       // Sum of all cleared messages should equal original message count

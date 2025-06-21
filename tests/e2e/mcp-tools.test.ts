@@ -862,7 +862,7 @@ describe('MCP Tools E2E Tests', () => {
         expect(response.error).toBeUndefined();
         const result = JSON.parse(response.result!.content[0].text);
         expect(result.success).toBe(true);
-        expect(result.clearedMessages).toBe(3);
+        expect(result.clearedCount).toBe(3);
         
         // Verify messages are cleared
         const messagesResponse = await transport.simulateRequest({
@@ -911,7 +911,7 @@ describe('MCP Tools E2E Tests', () => {
         expect(response.error).toBeUndefined();
         const result = JSON.parse(response.result!.content[0].text);
         expect(result.success).toBe(true);
-        expect(result.clearedMessages).toBe(0);
+        expect(result.clearedCount).toBe(0);
       });
       
       it('should reject clearing non-existent room', async () => {

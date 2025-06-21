@@ -601,7 +601,7 @@ describe('Real MCP Server E2E Tests', () => {
       expect(clearResponse.error).toBeUndefined();
       const clearResult = JSON.parse(clearResponse.result!.content[0].text);
       expect(clearResult.success).toBe(true);
-      expect(clearResult.clearedMessages).toBe(5);
+      expect(clearResult.clearedCount).toBe(5);
       
       // Verify messages are gone
       const afterClear = await transport.simulateRequest({

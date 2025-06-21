@@ -39,7 +39,7 @@ class MockManagementAdapter {
     
     return {
       success: true,
-      clearedMessages: messagesBefore
+      clearedCount: messagesBefore
     };
   }
   
@@ -207,7 +207,7 @@ describe('ManagementAdapter Integration Tests', () => {
       const result = await adapter.clearRoomMessages({ roomName: 'test-room' });
       
       expect(result.success).toBe(true);
-      expect(result.clearedMessages).toBe(5);
+      expect(result.clearedCount).toBe(5);
       
       // Verify messages are cleared
       const messages = dataLayer.getMessages('test-room');
@@ -218,7 +218,7 @@ describe('ManagementAdapter Integration Tests', () => {
       const result = await adapter.clearRoomMessages({ roomName: 'test-room' });
       
       expect(result.success).toBe(true);
-      expect(result.clearedMessages).toBe(0);
+      expect(result.clearedCount).toBe(0);
     });
     
     it('should throw RoomNotFoundError for non-existent room', async () => {

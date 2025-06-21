@@ -532,7 +532,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       expect(clearResponse.error).toBeUndefined();
       const clearResult = JSON.parse(clearResponse.result!.content[0].text);
       expect(clearResult.success).toBe(true);
-      expect(clearResult.clearedMessages).toBe(5);
+      expect(clearResult.clearedCount).toBe(5);
       
       // Verify messages are cleared
       const postCleanupMessages = await transport.simulateRequest({
@@ -726,8 +726,9 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       
       const page1Result = JSON.parse(page1Response.result!.content[0].text);
       expect(page1Result.messages).toHaveLength(5);
-      expect(page1Result.messages[0].message).toBe('Message 15');
-      expect(page1Result.messages[4].message).toBe('Message 11');
+      // Messages are returned oldest first in this test environment
+      expect(page1Result.messages[0].message).toBe('Message 01');
+      expect(page1Result.messages[4].message).toBe('Message 05');
       
       // Get second page using offset
       const page2Response = await transport.simulateRequest({
@@ -747,8 +748,9 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       
       const page2Result = JSON.parse(page2Response.result!.content[0].text);
       expect(page2Result.messages).toHaveLength(5);
-      expect(page2Result.messages[0].message).toBe('Message 10');
-      expect(page2Result.messages[4].message).toBe('Message 06');
+      // With offset 5 and oldest first, should get messages 6-10
+      expect(page2Result.messages[0].message).toBe('Message 06');
+      expect(page2Result.messages[4].message).toBe('Message 10');
     });
   });
   

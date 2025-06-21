@@ -129,7 +129,7 @@ class IntegratedScenario {
     
     return {
       success: true,
-      clearedMessages: messagesBefore
+      clearedCount: messagesBefore
     };
   }
 }
