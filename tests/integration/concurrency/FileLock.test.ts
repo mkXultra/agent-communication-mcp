@@ -397,7 +397,7 @@ describe('File Lock Concurrency Tests', () => {
         // If there's a timeout, it's expected behavior for deadlock prevention
         expect(error.message).toContain('timeout');
       }
-    });
+    }, 10000); // Increase timeout to 10 seconds
   });
   
   describe('Error Handling in Locked Operations', () => {

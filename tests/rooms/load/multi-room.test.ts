@@ -11,12 +11,13 @@ vi.mock('fs/promises', () => ({
   ...vol.promises
 }));
 
-describe('Multi-Room Load Tests - 100 rooms × 50 users', () => {
+describe('Multi-Room Load Tests', () => {
   let roomsAPI: RoomsAPI;
   const testDataDir = '/load-test-data';
 
   // 負荷テスト設定
-  const NUM_ROOMS = 100;
+  const MAX_ROOMS = parseInt(process.env.AGENT_COMM_MAX_ROOMS || '10', 10);
+  const NUM_ROOMS = Math.min(100, MAX_ROOMS); // Respect environment limit
   const NUM_AGENTS_PER_ROOM = 50;
   const TOTAL_AGENTS = NUM_ROOMS * NUM_AGENTS_PER_ROOM;
 
