@@ -23,7 +23,8 @@ export class ManagementAdapter {
   async initialize(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const { ManagementAPI } = await import('../features/management/index.js');
-    const dataDir = getDataDirectory();
+    // Use the dataDir from lockService instead of getDataDirectory()
+    const dataDir = (this.lockService as any).dataDir;
     this.api = new ManagementAPI(dataDir);
   }
   

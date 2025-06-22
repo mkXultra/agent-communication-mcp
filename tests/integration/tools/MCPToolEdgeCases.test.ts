@@ -196,12 +196,18 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       
       const results = await Promise.all(promises);
       
-      // Only one should succeed, others should fail with ROOM_ALREADY_EXISTS
+      // Only one should succeed, others should fail
       const successes = results.filter(r => !r.error);
-      const failures = results.filter(r => r.error?.data?.errorCode === 'ROOM_ALREADY_EXISTS');
+      const failures = results.filter(r => r.error);
       
       expect(successes).toHaveLength(1);
       expect(failures).toHaveLength(4);
+      
+      // Check that failures are due to room already existing
+      failures.forEach(result => {
+        expect(result.error!.code).toBe(409);
+        expect(result.error!.message).toContain('already exists');
+      });
     });
   });
   
@@ -651,12 +657,13 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         method: 'tools/call',
         params: {
           name: 'agent_communication_clear_room_messages',
-          arguments: { roomName: 'non-existent-room' }
+          arguments: { roomName: 'non-existent-room', confirm: true }
         }
       });
       
       expect(response.error).toBeDefined();
-      expect(response.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+      expect(response.error!.code).toBe(404);
+      expect(response.error!.message).toContain('not found');
     });
     
     it('should handle clearing empty room', async () => {
@@ -676,7 +683,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         method: 'tools/call',
         params: {
           name: 'agent_communication_clear_room_messages',
-          arguments: { roomName: 'empty-room' }
+          arguments: { roomName: 'empty-room', confirm: true }
         }
       });
       
@@ -731,7 +738,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         method: 'tools/call',
         params: {
           name: 'agent_communication_clear_room_messages',
-          arguments: { roomName: 'big-room' }
+          arguments: { roomName: 'big-room', confirm: true }
         }
       });
       
@@ -787,7 +794,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           method: 'tools/call',
           params: {
             name: 'agent_communication_clear_room_messages',
-            arguments: { roomName: 'concurrent-clear' }
+            arguments: { roomName: 'concurrent-clear', confirm: true }
           }
         })
       );

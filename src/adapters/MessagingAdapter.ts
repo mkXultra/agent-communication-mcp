@@ -19,7 +19,8 @@ export class MessagingAdapter {
   async initialize(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const { MessagingAPI } = await import('../features/messaging/index.js');
-    const dataDir = getDataDirectory();
+    // Use the dataDir from lockService instead of getDataDirectory()
+    const dataDir = (this.lockService as any).dataDir;
     this.api = new MessagingAPI(dataDir);
   }
   

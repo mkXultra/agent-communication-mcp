@@ -19,7 +19,8 @@ export class RoomsAdapter {
   async initialize(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const { RoomsAPI } = await import('../features/rooms/index.js');
-    const dataDir = getDataDirectory();
+    // Use the dataDir from lockService instead of getDataDirectory()
+    const dataDir = (this.lockService as any).dataDir;
     this.api = new RoomsAPI(dataDir);
   }
   

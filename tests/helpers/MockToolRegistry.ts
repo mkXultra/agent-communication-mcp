@@ -3,7 +3,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { JSONRPCRequest, JSONRPCResponse } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { MockDataLayer } from './MockDataLayer.js';
-import { AppError, RoomNotFoundError, AgentNotInRoomError, RoomAlreadyExistsError, toMCPError } from '../../src/errors/index.js';
+import { AppError, RoomNotFoundError, AgentNotInRoomError, RoomAlreadyExistsError, ValidationError, toMCPError } from '../../src/errors/index.js';
 
 export class MockToolRegistry {
   constructor(private dataLayer: MockDataLayer) {}
@@ -112,7 +112,8 @@ export class MockToolRegistry {
               agentName: { type: 'string' },
               roomName: { type: 'string' },
               limit: { type: 'number' },
-              before: { type: 'string' }
+              before: { type: 'string' },
+              offset: { type: 'number' }
             },
             required: ['agentName', 'roomName'],
             additionalProperties: false
@@ -221,7 +222,7 @@ export class MockToolRegistry {
               throw new AgentNotInRoomError(args.agentName, args.roomName);
             }
             
-            const messages = this.dataLayer.getMessages(args.roomName, args.limit, args.before);
+            const messages = this.dataLayer.getMessages(args.roomName, args.limit, args.before, args.offset);
             return { content: [{ type: 'text', text: JSON.stringify({ messages }) }] };
           
           case 'agent_communication_get_status':
@@ -248,18 +249,26 @@ export class MockToolRegistry {
             return { content: [{ type: 'text', text: JSON.stringify(fullStats) }] };
           
           case 'agent_communication_clear_room_messages':
+            if (!args.confirm || args.confirm !== true) {
+              throw new ValidationError('Confirmation required: confirm must be set to true');
+            }
             if (!this.dataLayer.roomExists(args.roomName)) {
               throw new RoomNotFoundError(args.roomName);
             }
             const clearedCount = this.dataLayer.clearMessages(args.roomName);
-            return { content: [{ type: 'text', text: JSON.stringify({ success: true, clearedMessages: clearedCount }) }] };
+            return { content: [{ type: 'text', text: JSON.stringify({ success: true, roomName: args.roomName, clearedCount }) }] };
           
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
       } catch (error) {
         if (error instanceof AppError) {
-          throw toMCPError(error);
+          const mcpError = toMCPError(error);
+          // Create an error object that matches MCP SDK expectations
+          const err = new Error(mcpError.message);
+          (err as any).code = mcpError.code;
+          (err as any).data = mcpError.data;
+          throw err;
         }
         throw error;
       }

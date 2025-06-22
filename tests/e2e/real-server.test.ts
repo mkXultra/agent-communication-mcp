@@ -16,6 +16,9 @@ describe('Real MCP Server E2E Tests', () => {
     testDataDir = path.join(process.cwd(), 'e2e-test-' + Date.now());
     await fs.mkdir(testDataDir, { recursive: true });
     
+    // Set environment variable to use test directory
+    process.env.AGENT_COMM_DATA_DIR = testDataDir;
+    
     // Initialize real MCP server
     server = new Server({
       name: 'agent-communication',
@@ -46,6 +49,9 @@ describe('Real MCP Server E2E Tests', () => {
     } catch (error) {
       // Ignore cleanup errors
     }
+    
+    // Clean up environment variable
+    delete process.env.AGENT_COMM_DATA_DIR;
   });
   
   beforeEach(async () => {
@@ -168,7 +174,10 @@ describe('Real MCP Server E2E Tests', () => {
       
       expect(usersResponse.error).toBeUndefined();
       const usersResult = JSON.parse(usersResponse.result!.content[0].text);
-      expect(usersResult.agents).toContain('real-agent-1');
+      expect(usersResult.users).toBeDefined();
+      expect(usersResult.users).toHaveLength(1);
+      expect(usersResult.users[0].name).toBe('real-agent-1');
+      expect(usersResult.users[0].status).toBe('online');
       
       // 5. Send message
       const messageResponse = await transport.simulateRequest({
@@ -223,10 +232,10 @@ describe('Real MCP Server E2E Tests', () => {
       
       expect(statusResponse.error).toBeUndefined();
       const statusResult = JSON.parse(statusResponse.result!.content[0].text);
+      console.log('statusResult:', statusResult);
       expect(statusResult.totalRooms).toBe(1);
       expect(statusResult.totalMessages).toBeGreaterThanOrEqual(1);
-      expect(statusResult.activeAgents).toBeGreaterThanOrEqual(1);
-      expect(statusResult.serverVersion).toBe('1.0.0');
+      expect(statusResult.totalOnlineUsers).toBeGreaterThanOrEqual(1);
     });
     
     it('should handle file persistence across operations', async () => {
