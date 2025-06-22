@@ -50,7 +50,20 @@ export class DataScanner {
       if (!content.trim()) {
         return 0;
       }
-      return content.trim().split('\n').length;
+      
+      const lines = content.trim().split('\n');
+      let validCount = 0;
+      
+      for (const line of lines) {
+        try {
+          JSON.parse(line);
+          validCount++;
+        } catch {
+          // Skip invalid JSON lines
+        }
+      }
+      
+      return validCount;
     } catch (error) {
       return 0;
     }

@@ -16,6 +16,7 @@ export interface SystemStatus {
   totalRooms: number;
   totalOnlineUsers: number;
   totalMessages: number;
+  totalStorageSize: number;
 }
 
 export interface ClearResult {
