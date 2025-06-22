@@ -854,7 +854,8 @@ describe('MCP Tools E2E Tests', () => {
           params: {
             name: 'agent_communication_clear_room_messages',
             arguments: {
-              roomName: 'clear-room'
+              roomName: 'clear-room',
+              confirm: true
             }
           }
         });
@@ -891,7 +892,8 @@ describe('MCP Tools E2E Tests', () => {
           params: {
             name: 'agent_communication_clear_room_messages',
             arguments: {
-              roomName: 'clear-room'
+              roomName: 'clear-room',
+              confirm: true
             }
           }
         });
@@ -903,7 +905,8 @@ describe('MCP Tools E2E Tests', () => {
           params: {
             name: 'agent_communication_clear_room_messages',
             arguments: {
-              roomName: 'clear-room'
+              roomName: 'clear-room',
+              confirm: true
             }
           }
         });

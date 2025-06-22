@@ -58,6 +58,9 @@ describe('Real MCP Server E2E Tests', () => {
     } catch (error) {
       // Ignore if directory doesn't exist
     }
+    
+    // Ensure clean directory structure
+    await fs.mkdir(path.join(testDataDir, 'rooms'), { recursive: true });
   });
   
   describe('Real Server Tool Discovery', () => {

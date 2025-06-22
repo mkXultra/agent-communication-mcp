@@ -524,7 +524,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         params: {
           name: 'agent_communication_clear_room_messages',
           arguments: {
-            roomName: 'cleanup-test'
+            roomName: 'cleanup-test',
+            confirm: true
           }
         }
       });
