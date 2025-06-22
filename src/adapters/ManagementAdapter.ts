@@ -75,6 +75,12 @@ export class ManagementAdapter {
       `rooms/${params.roomName}/messages.jsonl`,
       async () => {
         const result = await this.api!.clearRoomMessages(params.roomName, params.confirm);
+        
+        // Clear the message cache for this room
+        if (this.messageAdapter && this.messageAdapter.clearRoomCache) {
+          this.messageAdapter.clearRoomCache(params.roomName);
+        }
+        
         return {
           success: result.success,
           roomName: result.roomName,

@@ -96,4 +96,8 @@ export class MessageService {
     
     return await this.storage.getMessageCount(roomName);
   }
+
+  clearRoomCache(roomName: string): void {
+    this.cache.clear(roomName);
+  }
 }

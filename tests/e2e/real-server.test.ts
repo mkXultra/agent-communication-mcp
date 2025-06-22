@@ -285,8 +285,9 @@ describe('Real MCP Server E2E Tests', () => {
       
       // Check file contents
       const roomsContent = JSON.parse(await fs.readFile(roomsFile, 'utf8'));
-      expect(roomsContent.rooms).toHaveLength(1);
-      expect(roomsContent.rooms[0].name).toBe('persistent-room');
+      expect(Object.keys(roomsContent.rooms)).toHaveLength(1);
+      expect(roomsContent.rooms['persistent-room']).toBeDefined();
+      expect(roomsContent.rooms['persistent-room'].description).toBeUndefined();
       
       const messagesContent = await fs.readFile(messagesFile, 'utf8');
       const messageLines = messagesContent.trim().split('\n');
@@ -456,7 +457,7 @@ describe('Real MCP Server E2E Tests', () => {
       });
       
       const usersResult = JSON.parse(usersResponse.result!.content[0].text);
-      expect(usersResult.agents).toHaveLength(5);
+      expect(usersResult.users).toHaveLength(5);
       
       const messagesResponse = await transport.simulateRequest({
         jsonrpc: '2.0',
@@ -539,7 +540,7 @@ describe('Real MCP Server E2E Tests', () => {
       
       expect(statusResult.totalRooms).toBe(2);
       expect(statusResult.totalMessages).toBeGreaterThanOrEqual(1);
-      expect(statusResult.activeAgents).toBeGreaterThanOrEqual(1);
+      expect(statusResult.totalOnlineUsers).toBeGreaterThanOrEqual(1);
       expect(statusResult.rooms).toHaveLength(2);
     });
     

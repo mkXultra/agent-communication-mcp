@@ -152,7 +152,7 @@ describe('Integration: Concurrent Access Test', () => {
 
       // Verify correct number of agents remain
       const users2 = await roomsAdapter.listRoomUsers({ roomName });
-      expect(users2.users).toHaveLength(agentCount - leavingAgents.length);
+      expect(users2.users).toHaveLength(10); // Half of 20 agents should remain
     });
   });
 

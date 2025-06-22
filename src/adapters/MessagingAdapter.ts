@@ -98,4 +98,12 @@ export class MessagingAdapter {
       }
     );
   }
+  
+  clearRoomCache(roomName: string): void {
+    if (!this.api) {
+      // If not initialized, no cache to clear
+      return;
+    }
+    this.api.clearRoomCache(roomName);
+  }
 }

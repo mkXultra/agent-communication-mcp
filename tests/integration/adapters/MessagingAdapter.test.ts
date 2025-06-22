@@ -162,7 +162,7 @@ describe('MessagingAdapter Integration Tests', () => {
       expect(result.messages).toHaveLength(5);
     });
     
-    it('should support pagination with before parameter', async () => {
+    it('should support pagination with offset', async () => {
       const firstBatch = await adapter.getMessages({
         agentName: 'agent1',
         roomName: 'test-room',
@@ -173,7 +173,7 @@ describe('MessagingAdapter Integration Tests', () => {
         agentName: 'agent1',
         roomName: 'test-room',
         limit: 5,
-        before: firstBatch.messages[4].id
+        offset: 5
       });
       
       expect(secondBatch.messages).toHaveLength(5);

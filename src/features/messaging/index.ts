@@ -12,6 +12,7 @@ export interface IMessagingAPI {
   sendMessage(params: SendMessageParams): Promise<SendMessageResponse>;
   getMessages(params: GetMessagesParams): Promise<MessageListResponse>;
   getMessageCount(roomName: string): Promise<number>;
+  clearRoomCache(roomName: string): void;
 }
 
 // Implementation of the public API
@@ -32,6 +33,10 @@ export class MessagingAPI implements IMessagingAPI {
 
   async getMessageCount(roomName: string): Promise<number> {
     return await this.messageService.getMessageCount(roomName);
+  }
+
+  clearRoomCache(roomName: string): void {
+    this.messageService.clearRoomCache(roomName);
   }
 }
 
