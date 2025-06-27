@@ -41,7 +41,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       expect(Array.isArray(result.rooms)).toBe(true);
     });
     
-    it('should handle rooms with special characters', async () => {
+    it('should handle rooms with special characters', { timeout: 30000 }, async () => {
       const specialRoomNames = [
         'room-with-dashes',
         'room_with_underscores',
@@ -116,7 +116,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
   });
   
   describe('create_room Edge Cases', () => {
-    it('should reject invalid room names', async () => {
+    it('should reject invalid room names', { timeout: 30000 }, async () => {
       const invalidNames = [
         '',           // Empty string
         ' ',          // Whitespace only

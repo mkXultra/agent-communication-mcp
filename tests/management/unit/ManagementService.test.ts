@@ -135,7 +135,7 @@ describe('ManagementService', () => {
 
       const result = await managementService.getRoomStatistics('general');
       
-      expect(result.onlineUsers).toBe(0);
+      expect(result.onlineUsers).toBe(0); // No presence file means no online users
     });
 
     it('should handle missing messages.jsonl file gracefully', async () => {
@@ -150,8 +150,8 @@ describe('ManagementService', () => {
 
       const result = await managementService.getRoomStatistics('general');
       
-      expect(result.totalMessages).toBe(0);
-      expect(result.storageSize).toBe(0);
+      expect(result.totalMessages).toBe(0); // No messages file means 0 messages
+      expect(result.storageSize).toBe(0); // No messages file means 0 storage size
     });
   });
 
@@ -211,9 +211,9 @@ describe('ManagementService', () => {
       const devTeamMessages = fs.readFileSync('data/rooms/dev-team/messages.jsonl', 'utf8');
       expect(devTeamMessages).toContain('Code review');
       
-      // dev-team should still exist in the rooms array
+      // dev-team should still exist in the rooms object
       const roomsData = JSON.parse(fs.readFileSync('data/rooms.json', 'utf8'));
-      expect(roomsData.rooms).toContain('dev-team');
+      expect(roomsData.rooms['dev-team']).toBeDefined();
     });
   });
 

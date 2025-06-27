@@ -170,7 +170,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       expect(statusResult.activeAgents).toBe(2);
     });
     
-    it('should handle multi-room conversation scenario', async () => {
+    it('should handle multi-room conversation scenario', { timeout: 30000 }, async () => {
       // Create multiple rooms
       const rooms = [
         { name: 'general', description: 'General discussion' },

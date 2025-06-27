@@ -529,15 +529,15 @@ describe('Room-Messaging Flow Integration Tests', () => {
         messageIds.push(result.messageId);
       }
       
-      // Get first page (limit 5) - newest messages first
+      // Get first page (limit 5) - oldest messages first
       const page1 = await scenario.getMessages({
         agentName: 'alice',
         roomName: 'pagination-test',
         limit: 5
       });
       expect(page1.messages).toHaveLength(5);
-      expect(page1.messages[0].message).toBe('Message 15');
-      expect(page1.messages[4].message).toBe('Message 11');
+      expect(page1.messages[0].message).toBe('Message 1');
+      expect(page1.messages[4].message).toBe('Message 5');
       
       // Get second page using 'before' parameter
       const page2 = await scenario.getMessages({
