@@ -16,7 +16,11 @@ describe('ManagementService', () => {
     // Create test directory structure
     vol.fromJSON({
       'data/rooms.json': JSON.stringify({
-        rooms: ['general', 'dev-team', 'empty-room']
+        rooms: {
+          'general': { name: 'general', createdAt: '2024-01-01T00:00:00Z', messageCount: 2 },
+          'dev-team': { name: 'dev-team', createdAt: '2024-01-01T00:00:00Z', messageCount: 1 },
+          'empty-room': { name: 'empty-room', createdAt: '2024-01-01T00:00:00Z', messageCount: 0 }
+        }
       }),
       'data/rooms/general/messages.jsonl': 
         '{"id":"msg1","agentName":"agent1","message":"Hello","timestamp":"2024-01-01T10:00:00.000Z"}\n' +

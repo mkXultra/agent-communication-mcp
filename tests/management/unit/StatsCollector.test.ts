@@ -15,7 +15,12 @@ describe('StatsCollector', () => {
     // Create test directory structure with various data scenarios
     vol.fromJSON({
       'data/rooms.json': JSON.stringify({
-        rooms: ['active-room', 'moderate-room', 'quiet-room', 'empty-room']
+        rooms: {
+          'active-room': { name: 'active-room', createdAt: '2024-01-01T00:00:00Z', messageCount: 150 },
+          'moderate-room': { name: 'moderate-room', createdAt: '2024-01-01T00:00:00Z', messageCount: 50 },
+          'quiet-room': { name: 'quiet-room', createdAt: '2024-01-01T00:00:00Z', messageCount: 10 },
+          'empty-room': { name: 'empty-room', createdAt: '2024-01-01T00:00:00Z', messageCount: 0 }
+        }
       }),
       // Active room with lots of messages
       'data/rooms/active-room/messages.jsonl': 

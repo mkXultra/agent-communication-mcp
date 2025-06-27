@@ -69,7 +69,7 @@ export class MemoryTransport implements Transport {
           this.pendingRequests.delete(request.id!);
           reject(new Error('Request timeout'));
         }
-      }, 10000); // Match vitest timeout
+      }, 20000); // Match vitest timeout (20s)
     });
   }
 }
