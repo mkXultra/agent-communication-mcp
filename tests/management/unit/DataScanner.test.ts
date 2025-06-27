@@ -9,7 +9,7 @@ vi.mock('fs/promises', () => fs.promises);
 describe('DataScanner', () => {
   let dataScanner: any;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Reset the virtual file system
     vol.reset();
     
