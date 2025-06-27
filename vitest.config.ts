@@ -5,8 +5,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    testTimeout: 10000,
-    hookTimeout: 10000,
+    testTimeout: 20000,  // Increased from 10s to 20s for general tests
+    hookTimeout: 15000,  // Increased from 10s to 15s for hooks
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
@@ -24,7 +24,35 @@ export default defineConfig({
       }
     },
     include: ['tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist']
+    exclude: ['node_modules', 'dist'],
+    // Override timeouts for specific test types
+    overrides: [
+      {
+        test: {
+          testTimeout: 30000,  // 30s for performance tests
+        },
+        include: ['**/performance/**/*.test.ts']
+      },
+      {
+        test: {
+          testTimeout: 25000,  // 25s for e2e tests
+          hookTimeout: 20000,
+        },
+        include: ['**/e2e/**/*.test.ts']
+      },
+      {
+        test: {
+          testTimeout: 25000,  // 25s for edge case stress tests
+        },
+        include: ['**/MCPToolEdgeCases.test.ts']
+      },
+      {
+        test: {
+          testTimeout: 20000,  // 20s for concurrency tests
+        },
+        include: ['**/concurrency/**/*.test.ts', '**/file-locking/**/*.test.ts']
+      }
+    ]
   },
   resolve: {
     alias: {

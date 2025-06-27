@@ -9,7 +9,7 @@ vi.mock('fs/promises', () => fs.promises);
 describe('ManagementService', () => {
   let managementService: IManagementAPI;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Reset the virtual file system
     vol.reset();
     
