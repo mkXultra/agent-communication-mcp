@@ -210,7 +210,7 @@ describe('Real Adapters Integration Tests', () => {
         agentName: 'agent1',
         roomName: 'chat-room',
         limit: 5,
-        before: firstPage.messages[4].id
+        offset: 5
       });
       
       expect(secondPage.messages).toHaveLength(5);
@@ -336,14 +336,15 @@ describe('Real Adapters Integration Tests', () => {
         roomName: 'integration-room'
       });
       expect(messages.messages).toHaveLength(2);
-      expect(messages.messages[0].mentions).toContain('bob');
-      expect(messages.messages[1].mentions).toContain('alice');
+      // Messages are returned newest first
+      expect(messages.messages[0].mentions).toContain('alice'); // Bob's message
+      expect(messages.messages[1].mentions).toContain('bob');   // Alice's message
       
       // Verify through management adapter
       const status = await managementAdapter.getStatus();
       expect(status.totalRooms).toBe(1);
       expect(status.totalMessages).toBe(2);
-      expect(status.activeAgents).toBe(2);
+      expect(status.totalOnlineUsers).toBe(2);
       
       const room = status.rooms.find(r => r.name === 'integration-room');
       expect(room?.messageCount).toBe(2);
@@ -403,7 +404,7 @@ describe('Real Adapters Integration Tests', () => {
       const finalStatus = await managementAdapter.getStatus();
       expect(finalStatus.totalRooms).toBe(2);
       expect(finalStatus.totalMessages).toBe(3);
-      expect(finalStatus.activeAgents).toBe(3);
+      expect(finalStatus.totalOnlineUsers).toBe(3);
     });
   });
   

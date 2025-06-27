@@ -41,7 +41,7 @@ class MockMessagingAdapter {
       throw new AgentNotInRoomError(params.agentName, params.roomName);
     }
     
-    const messages = this.dataLayer.getMessages(params.roomName, params.limit, params.before);
+    const messages = this.dataLayer.getMessages(params.roomName, params.limit, params.before, params.offset);
     return { messages };
   }
 }
@@ -169,6 +169,10 @@ describe('MessagingAdapter Integration Tests', () => {
         limit: 5
       });
       
+      expect(firstBatch.messages).toHaveLength(5);
+      expect(firstBatch.messages[0].message).toBe('Message 1');
+      expect(firstBatch.messages[4].message).toBe('Message 5');
+      
       const secondBatch = await adapter.getMessages({
         agentName: 'agent1',
         roomName: 'test-room',
@@ -177,6 +181,8 @@ describe('MessagingAdapter Integration Tests', () => {
       });
       
       expect(secondBatch.messages).toHaveLength(5);
+      expect(secondBatch.messages[0].message).toBe('Message 6');
+      expect(secondBatch.messages[4].message).toBe('Message 10');
       expect(secondBatch.messages[0].id).not.toBe(firstBatch.messages[0].id);
     });
     

@@ -150,9 +150,13 @@ describe('Integration: Concurrent Access Test', () => {
         expect(result.success).toBe(true);
       });
 
-      // Verify correct number of agents remain
+      // Verify correct number of agents remain (users includes offline)
       const users2 = await roomsAdapter.listRoomUsers({ roomName });
-      expect(users2.users).toHaveLength(10); // Half of 20 agents should remain
+      expect(users2.users).toHaveLength(agentCount); // All agents still in list
+      
+      // Check that half are offline
+      const onlineUsers = users2.users.filter(u => u.status === 'online');
+      expect(onlineUsers).toHaveLength(10); // Half of 20 agents should be online
     });
   });
 
