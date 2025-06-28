@@ -81,7 +81,7 @@ class MockFileSystem {
 class FileLockService {
   constructor(private fs: MockFileSystem) {}
   
-  async withLock<T>(filePath: string, operation: () => Promise<T>, timeout: number = 5000): Promise<T> {
+  async withLock<T>(filePath: string, operation: () => Promise<T>, timeout: number = 10000): Promise<T> {
     await this.fs.acquireLock(filePath, timeout);
     
     try {

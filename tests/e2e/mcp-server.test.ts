@@ -21,8 +21,7 @@ describe('E2E: MCP Server', () => {
     try {
       await fs.access(serverPath);
     } catch {
-      console.error('Server not built. Run "npm run build" first.');
-      process.exit(1);
+      throw new Error('Server not built. Run "npm run build" first.');
     }
 
     // Start MCP server

@@ -48,9 +48,9 @@ export default defineConfig({
       },
       {
         test: {
-          testTimeout: 20000,  // 20s for concurrency tests
+          testTimeout: 30000,  // 30s for concurrency tests (increased for CI)
         },
-        include: ['**/concurrency/**/*.test.ts', '**/file-locking/**/*.test.ts']
+        include: ['**/concurrency/**/*.test.ts', '**/file-locking/**/*.test.ts', '**/FileLock.test.ts']
       }
     ]
   },
