@@ -272,26 +272,40 @@ describe('File Lock Concurrency Tests', () => {
   });
   
   describe('Lock Timeout Scenarios', () => {
-    it.skip('should handle lock timeout during message operations', async () => {
+    it('should handle lock timeout during message operations', { timeout: 5000 }, async () => {
       const filePath = '/test/timeout-test.txt';
+      
+      // Create a flag to ensure proper ordering
+      let longOperationStarted = false;
+      let longOperationCompleted = false;
       
       // Start a long-running operation that holds the lock
       const longOperation = lockService.withLock(filePath, async () => {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Increased for CI
+        longOperationStarted = true;
+        await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second for CI
+        longOperationCompleted = true;
         return 'long-operation-result';
       });
       
-      // Try to perform another operation with short timeout
+      // Wait a bit to ensure the long operation has acquired the lock
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Now try to perform another operation with short timeout
       const shortOperation = lockService.withLock(filePath, async () => {
         return 'short-operation-result';
-      }, 100); // 100ms timeout (increased for CI)
+      }, 300); // 300ms timeout - should fail since long operation takes 1s
       
-      // Long operation should succeed
+      // Short operation should timeout first
+      await expect(shortOperation).rejects.toThrow('FILE_LOCK_TIMEOUT');
+      
+      // Verify long operation was started but not completed when short timed out
+      expect(longOperationStarted).toBe(true);
+      expect(longOperationCompleted).toBe(false);
+      
+      // Long operation should eventually succeed
       const longResult = await longOperation;
       expect(longResult).toBe('long-operation-result');
-      
-      // Short operation should timeout
-      await expect(shortOperation).rejects.toThrow('FILE_LOCK_TIMEOUT');
+      expect(longOperationCompleted).toBe(true);
     });
     
     it('should recover from timeout errors', async () => {
@@ -361,14 +375,14 @@ describe('File Lock Concurrency Tests', () => {
       expect(file2EndIndex).toBeLessThan(file1EndIndex);
     });
     
-    it.skip('should prevent deadlocks in nested operations', { timeout: 20000 }, async () => {
+    it('should prevent deadlocks in nested operations', { timeout: 30000 }, async () => {
       const file1 = '/test/nested1.txt';
       const file2 = '/test/nested2.txt';
       
       // Operation that acquires file1 then file2
       const operation1 = async () => {
         return lockService.withLock(file1, async () => {
-          await new Promise(resolve => setTimeout(resolve, 50));
+          await new Promise(resolve => setTimeout(resolve, 100)); // Increased for CI
           return lockService.withLock(file2, async () => {
             return 'op1-success';
           });
@@ -378,7 +392,7 @@ describe('File Lock Concurrency Tests', () => {
       // Operation that acquires file2 then file1
       const operation2 = async () => {
         return lockService.withLock(file2, async () => {
-          await new Promise(resolve => setTimeout(resolve, 50));
+          await new Promise(resolve => setTimeout(resolve, 100)); // Increased for CI
           return lockService.withLock(file1, async () => {
             return 'op2-success';
           });
