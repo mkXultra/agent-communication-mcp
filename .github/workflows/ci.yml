@@ -130,6 +130,7 @@ jobs:
       run: npm run test:e2e
       env:
         AGENT_COMM_DATA_DIR: ./test-data
+        E2E_TESTS: true
     
     - name: Upload E2E test artifacts
       if: failure()
