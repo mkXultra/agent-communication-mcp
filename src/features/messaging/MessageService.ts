@@ -155,10 +155,11 @@ export class MessageService {
         
         if (unreadMessages.length > 0) {
           // Update read status
+          const lastMessage = unreadMessages[unreadMessages.length - 1]!; // Safe because we checked length > 0
           await this.updateReadStatus(
             validatedParams.roomName,
             validatedParams.agentName,
-            unreadMessages[unreadMessages.length - 1]
+            lastMessage
           );
           
           // Remove from waiting list
