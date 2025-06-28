@@ -7,12 +7,15 @@ import { IPresenceStorage, PresenceData, PresenceUser } from '../types/rooms.typ
 import { AgentProfile } from '../../../types/entities';
 import { StorageError, FileNotFoundError } from '../../../errors';
 import { getDataDirectory } from '../../../utils/dataDir';
+import { LockService } from '../../../services/LockService';
 
 export class PresenceStorage implements IPresenceStorage {
   private readonly dataDir: string;
+  private readonly lockService: LockService;
 
-  constructor(dataDir: string = getDataDirectory()) {
+  constructor(dataDir: string = getDataDirectory(), lockService?: LockService) {
     this.dataDir = dataDir;
+    this.lockService = lockService || new LockService(dataDir);
   }
 
   async readPresence(roomName: string): Promise<PresenceData> {
@@ -55,17 +58,22 @@ export class PresenceStorage implements IPresenceStorage {
 
   async addUser(roomName: string, agentName: string, profile?: AgentProfile): Promise<void> {
     try {
-      const presenceData = await this.readPresence(roomName);
-      
-      const userData: PresenceUser = {
-        status: 'online',
-        messageCount: 0,
-        joinedAt: new Date().toISOString(),
-        profile
-      };
-      
-      presenceData.users[agentName] = userData;
-      await this.writePresence(roomName, presenceData);
+      await this.lockService.withLock(`rooms/${roomName}/presence.json`, async () => {
+        const presenceData = await this.readPresence(roomName);
+        
+        // Check if user already exists
+        const existingUser = presenceData.users[agentName];
+        
+        const userData: PresenceUser = {
+          status: 'online',
+          messageCount: existingUser?.messageCount || 0,
+          joinedAt: existingUser?.joinedAt || new Date().toISOString(),
+          profile
+        };
+        
+        presenceData.users[agentName] = userData;
+        await this.writePresence(roomName, presenceData);
+      });
     } catch (error: any) {
       throw new StorageError(`Failed to add user '${agentName}' to room '${roomName}': ${error.message}`);
     }
@@ -73,14 +81,16 @@ export class PresenceStorage implements IPresenceStorage {
 
   async removeUser(roomName: string, agentName: string): Promise<void> {
     try {
-      const presenceData = await this.readPresence(roomName);
-      
-      if (!(agentName in presenceData.users)) {
-        throw new FileNotFoundError(`User '${agentName}' not found in room '${roomName}'`);
-      }
-      
-      delete presenceData.users[agentName];
-      await this.writePresence(roomName, presenceData);
+      await this.lockService.withLock(`rooms/${roomName}/presence.json`, async () => {
+        const presenceData = await this.readPresence(roomName);
+        
+        if (!(agentName in presenceData.users)) {
+          throw new FileNotFoundError(`User '${agentName}' not found in room '${roomName}'`);
+        }
+        
+        delete presenceData.users[agentName];
+        await this.writePresence(roomName, presenceData);
+      });
     } catch (error: any) {
       if (error instanceof FileNotFoundError) {
         throw error;
@@ -91,17 +101,19 @@ export class PresenceStorage implements IPresenceStorage {
 
   async updateUserStatus(roomName: string, agentName: string, status: 'online' | 'offline'): Promise<void> {
     try {
-      const presenceData = await this.readPresence(roomName);
-      
-      if (!(agentName in presenceData.users)) {
-        throw new FileNotFoundError(`User '${agentName}' not found in room '${roomName}'`);
-      }
-      
-      const user = presenceData.users[agentName];
-      if (user) {
-        user.status = status;
-      }
-      await this.writePresence(roomName, presenceData);
+      await this.lockService.withLock(`rooms/${roomName}/presence.json`, async () => {
+        const presenceData = await this.readPresence(roomName);
+        
+        if (!(agentName in presenceData.users)) {
+          throw new FileNotFoundError(`User '${agentName}' not found in room '${roomName}'`);
+        }
+        
+        const user = presenceData.users[agentName];
+        if (user) {
+          user.status = status;
+        }
+        await this.writePresence(roomName, presenceData);
+      });
     } catch (error: any) {
       if (error instanceof FileNotFoundError) {
         throw error;
@@ -150,17 +162,19 @@ export class PresenceStorage implements IPresenceStorage {
 
   async incrementUserMessageCount(roomName: string, agentName: string): Promise<void> {
     try {
-      const presenceData = await this.readPresence(roomName);
-      
-      if (!(agentName in presenceData.users)) {
-        throw new FileNotFoundError(`User '${agentName}' not found in room '${roomName}'`);
-      }
-      
-      const user = presenceData.users[agentName];
-      if (user && user.messageCount !== undefined) {
-        user.messageCount++;
-      }
-      await this.writePresence(roomName, presenceData);
+      await this.lockService.withLock(`rooms/${roomName}/presence.json`, async () => {
+        const presenceData = await this.readPresence(roomName);
+        
+        if (!(agentName in presenceData.users)) {
+          throw new FileNotFoundError(`User '${agentName}' not found in room '${roomName}'`);
+        }
+        
+        const user = presenceData.users[agentName];
+        if (user && user.messageCount !== undefined) {
+          user.messageCount++;
+        }
+        await this.writePresence(roomName, presenceData);
+      });
     } catch (error: any) {
       if (error instanceof FileNotFoundError) {
         throw error;
@@ -185,11 +199,13 @@ export class PresenceStorage implements IPresenceStorage {
   // デバッグ・テスト用のメソッド
   async clearRoomPresence(roomName: string): Promise<void> {
     try {
-      const initialData: PresenceData = {
-        roomName,
-        users: {}
-      };
-      await this.writePresence(roomName, initialData);
+      await this.lockService.withLock(`rooms/${roomName}/presence.json`, async () => {
+        const initialData: PresenceData = {
+          roomName,
+          users: {}
+        };
+        await this.writePresence(roomName, initialData);
+      });
     } catch (error: any) {
       throw new StorageError(`Failed to clear presence for room '${roomName}': ${error.message}`);
     }

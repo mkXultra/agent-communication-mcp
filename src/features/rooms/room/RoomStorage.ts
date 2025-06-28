@@ -6,14 +6,17 @@ import * as path from 'path';
 import { IRoomStorage, RoomsData, RoomData } from '../types/rooms.types';
 import { StorageError, FileNotFoundError } from '../../../errors';
 import { getDataDirectory } from '../../../utils/dataDir';
+import { LockService } from '../../../services/LockService';
 
 export class RoomStorage implements IRoomStorage {
   private readonly dataDir: string;
   private readonly roomsFilePath: string;
+  private readonly lockService: LockService;
 
-  constructor(dataDir: string = getDataDirectory()) {
+  constructor(dataDir: string = getDataDirectory(), lockService?: LockService) {
     this.dataDir = dataDir;
     this.roomsFilePath = path.join(dataDir, 'rooms.json');
+    this.lockService = lockService || new LockService(dataDir);
   }
 
   async readRooms(): Promise<RoomsData> {
@@ -50,17 +53,19 @@ export class RoomStorage implements IRoomStorage {
 
   async createRoom(roomName: string, description?: string): Promise<void> {
     try {
-      const roomsData = await this.readRooms();
-      
-      const roomData: RoomData = {
-        description,
-        createdAt: new Date().toISOString(),
-        messageCount: 0,
-        userCount: 0
-      };
-      
-      roomsData.rooms[roomName] = roomData;
-      await this.writeRooms(roomsData);
+      await this.lockService.withLock('rooms.json', async () => {
+        const roomsData = await this.readRooms();
+        
+        const roomData: RoomData = {
+          description,
+          createdAt: new Date().toISOString(),
+          messageCount: 0,
+          userCount: 0
+        };
+        
+        roomsData.rooms[roomName] = roomData;
+        await this.writeRooms(roomsData);
+      });
     } catch (error: any) {
       throw new StorageError(`Failed to create room '${roomName}': ${error.message}`);
     }
@@ -86,17 +91,19 @@ export class RoomStorage implements IRoomStorage {
 
   async updateRoomUserCount(roomName: string, count: number): Promise<void> {
     try {
-      const roomsData = await this.readRooms();
-      
-      if (!(roomName in roomsData.rooms)) {
-        throw new FileNotFoundError(`Room '${roomName}' not found`);
-      }
-      
-      const room = roomsData.rooms[roomName];
-      if (room) {
-        room.userCount = count;
-      }
-      await this.writeRooms(roomsData);
+      await this.lockService.withLock('rooms.json', async () => {
+        const roomsData = await this.readRooms();
+        
+        if (!(roomName in roomsData.rooms)) {
+          throw new FileNotFoundError(`Room '${roomName}' not found`);
+        }
+        
+        const room = roomsData.rooms[roomName];
+        if (room) {
+          room.userCount = count;
+        }
+        await this.writeRooms(roomsData);
+      });
     } catch (error: any) {
       if (error instanceof FileNotFoundError) {
         throw error;
@@ -116,8 +123,10 @@ export class RoomStorage implements IRoomStorage {
   // デバッグ・テスト用のメソッド
   async clearAllRooms(): Promise<void> {
     try {
-      const initialData: RoomsData = { rooms: {} };
-      await this.writeRooms(initialData);
+      await this.lockService.withLock('rooms.json', async () => {
+        const initialData: RoomsData = { rooms: {} };
+        await this.writeRooms(initialData);
+      });
     } catch (error: any) {
       throw new StorageError(`Failed to clear all rooms: ${error.message}`);
     }

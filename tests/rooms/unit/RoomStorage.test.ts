@@ -10,11 +10,24 @@ vi.mock('fs/promises', () => ({
   ...vol.promises
 }));
 
+// LockServiceをモック
+vi.mock('../../../src/services/LockService', () => ({
+  LockService: vi.fn().mockImplementation(() => ({
+    withLock: vi.fn().mockImplementation(async (path: string, fn: () => Promise<any>) => {
+      // Simply execute the function without locking in tests
+      return await fn();
+    })
+  }))
+}));
+
 describe('RoomStorage', () => {
   let roomStorage: RoomStorage;
   const testDataDir = '/test-storage';
 
   beforeEach(() => {
+    // Clear all mocks
+    vi.clearAllMocks();
+    
     // ファイルシステムをリセット
     vol.reset();
     vol.fromJSON({}, testDataDir);
