@@ -2,12 +2,16 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { StorageError } from '../../errors/AppError';
 import { Message, MessageStorageData, GetMessagesParams } from './types/messaging.types';
+import { getDataDirectory } from '../../utils/dataDir';
+import { LockService } from '../../services/LockService';
 
 export class MessageStorage {
   private readonly dataDir: string;
+  private readonly lockService: LockService;
 
-  constructor(dataDir: string = './data') {
+  constructor(dataDir: string = getDataDirectory(), lockService?: LockService) {
     this.dataDir = dataDir;
+    this.lockService = lockService || new LockService(dataDir);
   }
 
   private getMessagesFilePath(roomName: string): string {
@@ -30,10 +34,12 @@ export class MessageStorage {
     const dirPath = path.dirname(filePath);
     
     try {
-      await this.ensureDirectoryExists(dirPath);
-      
-      const jsonLine = JSON.stringify(messageData) + '\n';
-      await fs.appendFile(filePath, jsonLine, 'utf8');
+      await this.lockService.withLock(`rooms/${roomName}/messages.jsonl`, async () => {
+        await this.ensureDirectoryExists(dirPath);
+        
+        const jsonLine = JSON.stringify(messageData) + '\n';
+        await fs.appendFile(filePath, jsonLine, 'utf8');
+      });
     } catch (error) {
       if (error instanceof StorageError) {
         throw error;

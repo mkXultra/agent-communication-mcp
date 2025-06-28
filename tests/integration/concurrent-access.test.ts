@@ -10,6 +10,13 @@ describe('Integration: Concurrent Access Test', () => {
   let roomsAdapter: RoomsAdapter;
 
   beforeEach(async () => {
+    // Use the unique test data directory from setup.ts
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const actualDataDir = process.env.AGENT_COMM_DATA_DIR!;
+    await fs.mkdir(actualDataDir, { recursive: true });
+    await fs.mkdir(path.join(actualDataDir, 'rooms'), { recursive: true });
+    
     lockService = new LockService();
     messagingAdapter = new MessagingAdapter(lockService);
     roomsAdapter = new RoomsAdapter(lockService);
@@ -28,8 +35,15 @@ describe('Integration: Concurrent Access Test', () => {
     const messagesPerAgent = 10;
 
     it('should handle concurrent messages from multiple agents', async () => {
-      // Create room
+      // Create room and ensure directory structure
       await roomsAdapter.createRoom({ roomName });
+      
+      // Ensure room directory exists
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const actualDataDir = process.env.AGENT_COMM_DATA_DIR!;
+      const roomDir = path.join(actualDataDir, 'rooms', roomName);
+      await fs.mkdir(roomDir, { recursive: true });
 
       // Create agents and have them join
       const agents = Array.from({ length: agentCount }, (_, i) => `agent-${i}`);
@@ -135,9 +149,13 @@ describe('Integration: Concurrent Access Test', () => {
         expect(result.success).toBe(true);
       });
 
-      // Verify correct number of agents remain
+      // Verify correct number of agents remain (users includes offline)
       const users2 = await roomsAdapter.listRoomUsers({ roomName });
-      expect(users2.users).toHaveLength(agentCount - leavingAgents.length);
+      expect(users2.users).toHaveLength(agentCount); // All agents still in list
+      
+      // Check that half are offline
+      const onlineUsers = users2.users.filter(u => u.status === 'online');
+      expect(onlineUsers).toHaveLength(10); // Half of 20 agents should be online
     });
   });
 

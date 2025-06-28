@@ -1,32 +1,55 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { vol } from 'memfs';
-import { RoomsAPI } from '../../../src/features/rooms';
 import type { AgentProfile } from '../../../src/types/entities';
 
+// Mock the getDataDirectory function to return our test directory
+vi.mock('../../../src/utils/dataDir', () => ({
+  getDataDirectory: () => process.env.AGENT_COMM_DATA_DIR || '/test-data',
+  DEFAULT_HOME_DATA_DIR: '/home/.agent-communication-mcp',
+  LEGACY_DATA_DIR: './data'
+}));
+
 // ファイルシステムをモック
+vi.mock('fs', () => ({
+  ...vol,
+  promises: vol.promises,
+  existsSync: vol.existsSync.bind(vol),
+  accessSync: vol.accessSync.bind(vol),
+  constants: { W_OK: 2 }
+}));
 vi.mock('fs/promises', () => ({
   default: vol.promises,
   ...vol.promises
 }));
 
 describe('Room Lifecycle Integration Tests', () => {
-  let roomsAPI: RoomsAPI;
+  let RoomsAPI: any;
   const testDataDir = '/integration-test-data';
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Set environment variable to use test directory
+    process.env.AGENT_COMM_DATA_DIR = testDataDir;
+    
     // ファイルシステムをリセット
     vol.reset();
-    vol.fromJSON({}, testDataDir);
+    vol.fromJSON({
+      [`${testDataDir}/rooms.json`]: JSON.stringify({ rooms: {} })
+    });
     
-    roomsAPI = new RoomsAPI(testDataDir);
+    // Import RoomsAPI dynamically after setting up mocks
+    const roomsModule = await import('../../../src/features/rooms');
+    RoomsAPI = roomsModule.RoomsAPI;
   });
 
   afterEach(() => {
     vol.reset();
+    // Clean up environment variable
+    delete process.env.AGENT_COMM_DATA_DIR;
   });
 
   describe('Complete room lifecycle', () => {
     it('should handle create → enter → leave → cleanup flow', async () => {
+      const roomsAPI = new RoomsAPI(testDataDir);
       const roomName = 'lifecycle-room';
       const description = 'Lifecycle test room';
 
@@ -119,6 +142,7 @@ describe('Room Lifecycle Integration Tests', () => {
     });
 
     it('should handle multiple rooms with overlapping users', async () => {
+      const roomsAPI = new RoomsAPI(testDataDir);
       // 複数ルーム作成
       await roomsAPI.createRoom('room-a', 'Room A');
       await roomsAPI.createRoom('room-b', 'Room B');
@@ -155,6 +179,7 @@ describe('Room Lifecycle Integration Tests', () => {
     });
 
     it('should handle error scenarios gracefully', async () => {
+      const roomsAPI = new RoomsAPI(testDataDir);
       const roomName = 'error-test-room';
 
       // 存在しないルームへの入室
@@ -187,6 +212,7 @@ describe('Room Lifecycle Integration Tests', () => {
     });
 
     it('should maintain data consistency across operations', async () => {
+      const roomsAPI = new RoomsAPI(testDataDir);
       const roomName = 'consistency-room';
       
       // ルーム作成
@@ -234,6 +260,7 @@ describe('Room Lifecycle Integration Tests', () => {
     });
 
     it('should handle offline user cleanup', async () => {
+      const roomsAPI = new RoomsAPI(testDataDir);
       const roomName = 'cleanup-room';
       
       await roomsAPI.createRoom(roomName);
@@ -262,6 +289,7 @@ describe('Room Lifecycle Integration Tests', () => {
 
   describe('Complex scenarios', () => {
     it('should handle rapid enter/leave operations', async () => {
+      const roomsAPI = new RoomsAPI(testDataDir);
       const roomName = 'rapid-ops-room';
       await roomsAPI.createRoom(roomName);
 
@@ -300,6 +328,7 @@ describe('Room Lifecycle Integration Tests', () => {
     });
 
     it('should handle agent re-entering same room', async () => {
+      const roomsAPI = new RoomsAPI(testDataDir);
       const roomName = 'reentry-room';
       const agentName = 'reentry-agent';
 

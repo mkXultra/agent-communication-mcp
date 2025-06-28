@@ -15,17 +15,21 @@ describe('Agent Communication MCP Server E2E Tests', () => {
     server = new Server({
       name: 'agent-communication',
       version: '1.0.0'
+    }, {
+      capabilities: {
+        tools: {}  // Enable tool support
+      }
     });
     
     transport = new MemoryTransport();
     dataLayer = new MockDataLayer();
     toolRegistry = new MockToolRegistry(dataLayer);
     
-    // Register all MCP tools
-    await toolRegistry.registerAll(server);
-    
     // Connect server to transport
     await server.connect(transport);
+    
+    // Register all MCP tools
+    await toolRegistry.registerAll(server);
   });
   
   afterAll(async () => {
@@ -45,7 +49,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'test-room',
             description: 'E2E test room'
@@ -66,7 +70,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'agent1',
             roomName: 'test-room'
@@ -84,7 +88,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 3,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'agent2',
             roomName: 'test-room'
@@ -98,7 +102,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 4,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'agent1',
             roomName: 'test-room',
@@ -119,7 +123,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 5,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'agent2',
             roomName: 'test-room',
@@ -134,7 +138,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 6,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'agent1',
             roomName: 'test-room'
@@ -154,7 +158,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 7,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_status',
+          name: 'agent_communication_get_status',
           arguments: {}
         }
       });
@@ -166,24 +170,29 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       expect(statusResult.activeAgents).toBe(2);
     });
     
-    it('should handle multi-room conversation scenario', async () => {
+    it('should handle multi-room conversation scenario', { timeout: 30000 }, async () => {
       // Create multiple rooms
       const rooms = [
-        { name: 'general', description: 'General discussion' },
-        { name: 'dev-team', description: 'Development team' },
-        { name: 'alerts', description: 'System alerts' }
+        { roomName: 'general', description: 'General discussion' },
+        { roomName: 'dev-team', description: 'Development team' },
+        { roomName: 'alerts', description: 'System alerts' }
       ];
       
       for (const room of rooms) {
-        await transport.simulateRequest({
+        const createResponse = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
-            name: 'agent_communication/create_room',
+            name: 'agent_communication_create_room',
             arguments: room
           }
         });
+        
+        if (createResponse.error) {
+          console.error('Room creation failed:', room.roomName, createResponse.error);
+        }
+        expect(createResponse.error).toBeUndefined();
       }
       
       // List all rooms
@@ -192,7 +201,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 10,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_rooms',
+          name: 'agent_communication_list_rooms',
           arguments: {}
         }
       });
@@ -216,10 +225,10 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         for (const roomName of combo.rooms) {
           await transport.simulateRequest({
             jsonrpc: '2.0',
-            id: Math.random(),
+            id: Math.floor(Math.random() * 1000000),
             method: 'tools/call',
             params: {
-              name: 'agent_communication/enter_room',
+              name: 'agent_communication_enter_room',
               arguments: {
                 agentName: combo.agent,
                 roomName
@@ -241,10 +250,10 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       for (const msg of messages) {
         await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: msg.agent,
               roomName: msg.room,
@@ -260,7 +269,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 20,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'alice',
             roomName: 'general'
@@ -278,7 +287,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 21,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_status',
+          name: 'agent_communication_get_status',
           arguments: {}
         }
       });
@@ -296,7 +305,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'lifecycle-test',
             description: 'Testing agent lifecycle'
@@ -310,7 +319,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'agent1',
             roomName: 'lifecycle-test'
@@ -323,7 +332,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 3,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'agent1',
             roomName: 'lifecycle-test',
@@ -338,7 +347,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 4,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'agent2',
             roomName: 'lifecycle-test',
@@ -348,7 +357,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(unauthorizedMessage.error).toBeDefined();
-      expect(unauthorizedMessage.error!.data?.errorCode).toBe('AGENT_NOT_IN_ROOM');
+      expect(unauthorizedMessage.error!.code).toBe(-32602);
+      expect(unauthorizedMessage.error!.message).toContain('not in room');
       
       // Agent2 joins room
       await transport.simulateRequest({
@@ -356,7 +366,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 5,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'agent2',
             roomName: 'lifecycle-test'
@@ -370,7 +380,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 6,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'agent2',
             roomName: 'lifecycle-test',
@@ -387,7 +397,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 7,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_room_users',
+          name: 'agent_communication_list_room_users',
           arguments: {
             roomName: 'lifecycle-test'
           }
@@ -405,7 +415,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 8,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/leave_room',
+          name: 'agent_communication_leave_room',
           arguments: {
             agentName: 'agent1',
             roomName: 'lifecycle-test'
@@ -419,7 +429,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 9,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'agent1',
             roomName: 'lifecycle-test',
@@ -429,7 +439,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(postLeaveMessage.error).toBeDefined();
-      expect(postLeaveMessage.error!.data?.errorCode).toBe('AGENT_NOT_IN_ROOM');
+      expect(postLeaveMessage.error!.code).toBe(-32602);
+      expect(postLeaveMessage.error!.message).toContain('not in room');
       
       // Verify only agent2 remains
       const finalUsersResponse = await transport.simulateRequest({
@@ -437,7 +448,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 10,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_room_users',
+          name: 'agent_communication_list_room_users',
           arguments: {
             roomName: 'lifecycle-test'
           }
@@ -455,7 +466,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'cleanup-test',
             description: 'Testing message cleanup'
@@ -468,7 +479,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'agent1',
             roomName: 'cleanup-test'
@@ -483,7 +494,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
           id: i + 10,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'agent1',
               roomName: 'cleanup-test',
@@ -499,7 +510,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 20,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'agent1',
             roomName: 'cleanup-test'
@@ -516,9 +527,10 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 21,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/clear_room_messages',
+          name: 'agent_communication_clear_room_messages',
           arguments: {
-            roomName: 'cleanup-test'
+            roomName: 'cleanup-test',
+            confirm: true
           }
         }
       });
@@ -526,7 +538,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       expect(clearResponse.error).toBeUndefined();
       const clearResult = JSON.parse(clearResponse.result!.content[0].text);
       expect(clearResult.success).toBe(true);
-      expect(clearResult.clearedMessages).toBe(5);
+      expect(clearResult.clearedCount).toBe(5);
       
       // Verify messages are cleared
       const postCleanupMessages = await transport.simulateRequest({
@@ -534,7 +546,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 22,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'agent1',
             roomName: 'cleanup-test'
@@ -551,7 +563,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 23,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_room_users',
+          name: 'agent_communication_list_room_users',
           arguments: {
             roomName: 'cleanup-test'
           }
@@ -571,7 +583,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'agent1',
             roomName: 'non-existent'
@@ -580,7 +592,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(enterResponse.error).toBeDefined();
-      expect(enterResponse.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+      expect(enterResponse.error!.code).toBe(-32602);
+      expect(enterResponse.error!.message).toContain('not found');
       
       // Try to send message to non-existent room
       const messageResponse = await transport.simulateRequest({
@@ -588,7 +601,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/send_message',
+          name: 'agent_communication_send_message',
           arguments: {
             agentName: 'agent1',
             roomName: 'non-existent',
@@ -598,7 +611,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(messageResponse.error).toBeDefined();
-      expect(messageResponse.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+      expect(messageResponse.error!.code).toBe(-32602);
+      expect(messageResponse.error!.message).toContain('not found');
       
       // Try to list users in non-existent room
       const usersResponse = await transport.simulateRequest({
@@ -606,7 +620,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 3,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_room_users',
+          name: 'agent_communication_list_room_users',
           arguments: {
             roomName: 'non-existent'
           }
@@ -614,7 +628,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(usersResponse.error).toBeDefined();
-      expect(usersResponse.error!.data?.errorCode).toBe('ROOM_NOT_FOUND');
+      expect(usersResponse.error!.code).toBe(-32602);
+      expect(usersResponse.error!.message).toContain('not found');
     });
     
     it('should handle duplicate room creation', async () => {
@@ -624,7 +639,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'duplicate-test',
             description: 'First creation'
@@ -638,7 +653,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'duplicate-test',
             description: 'Second creation attempt'
@@ -647,7 +662,8 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(duplicateResponse.error).toBeDefined();
-      expect(duplicateResponse.error!.data?.errorCode).toBe('ROOM_ALREADY_EXISTS');
+      expect(duplicateResponse.error!.code).toBe(-32602);
+      expect(duplicateResponse.error!.message).toContain('already exists');
     });
     
     it('should handle message pagination correctly', async () => {
@@ -657,7 +673,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'pagination-test'
           }
@@ -669,7 +685,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 2,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/enter_room',
+          name: 'agent_communication_enter_room',
           arguments: {
             agentName: 'agent1',
             roomName: 'pagination-test'
@@ -677,7 +693,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         }
       });
       
-      // Send 15 messages
+      // Send 15 messages with proper numbering
       const messageIds = [];
       for (let i = 1; i <= 15; i++) {
         const response = await transport.simulateRequest({
@@ -685,16 +701,18 @@ describe('Agent Communication MCP Server E2E Tests', () => {
           id: i + 10,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: 'agent1',
               roomName: 'pagination-test',
-              message: `Message ${i}`
+              message: `Message ${i.toString().padStart(2, '0')}` // Use zero-padding for proper sorting
             }
           }
         });
         const result = JSON.parse(response.result!.content[0].text);
         messageIds.push(result.messageId);
+        // Small delay to ensure ordering
+        await new Promise(resolve => setTimeout(resolve, 10));
       }
       
       // Get first page (limit 5)
@@ -703,7 +721,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 30,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'agent1',
             roomName: 'pagination-test',
@@ -714,28 +732,30 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       
       const page1Result = JSON.parse(page1Response.result!.content[0].text);
       expect(page1Result.messages).toHaveLength(5);
-      expect(page1Result.messages[0].message).toBe('Message 1');
-      expect(page1Result.messages[4].message).toBe('Message 5');
+      // Messages are returned oldest first in this test environment
+      expect(page1Result.messages[0].message).toBe('Message 01');
+      expect(page1Result.messages[4].message).toBe('Message 05');
       
-      // Get second page using 'before' parameter
+      // Get second page using offset
       const page2Response = await transport.simulateRequest({
         jsonrpc: '2.0',
         id: 31,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'agent1',
             roomName: 'pagination-test',
             limit: 5,
-            before: page1Result.messages[4].id
+            offset: 5
           }
         }
       });
       
       const page2Result = JSON.parse(page2Response.result!.content[0].text);
       expect(page2Result.messages).toHaveLength(5);
-      expect(page2Result.messages[0].message).toBe('Message 6');
+      // With offset 5 and oldest first, should get messages 6-10
+      expect(page2Result.messages[0].message).toBe('Message 06');
       expect(page2Result.messages[4].message).toBe('Message 10');
     });
   });
@@ -748,7 +768,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/create_room',
+          name: 'agent_communication_create_room',
           arguments: {
             roomName: 'concurrent-test'
           }
@@ -762,7 +782,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
           id: index + 10,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/enter_room',
+            name: 'agent_communication_enter_room',
             arguments: {
               agentName: agent,
               roomName: 'concurrent-test'
@@ -783,7 +803,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
           id: index + 20,
           method: 'tools/call',
           params: {
-            name: 'agent_communication/send_message',
+            name: 'agent_communication_send_message',
             arguments: {
               agentName: agent,
               roomName: 'concurrent-test',
@@ -804,7 +824,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 30,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/list_room_users',
+          name: 'agent_communication_list_room_users',
           arguments: {
             roomName: 'concurrent-test'
           }
@@ -819,7 +839,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         id: 31,
         method: 'tools/call',
         params: {
-          name: 'agent_communication/get_messages',
+          name: 'agent_communication_get_messages',
           arguments: {
             agentName: 'agent1',
             roomName: 'concurrent-test'

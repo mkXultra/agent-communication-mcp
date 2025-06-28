@@ -4,6 +4,8 @@
 import { RoomService } from './room/RoomService';
 import { PresenceService } from './presence/PresenceService';
 import { AgentProfile } from '../../types/entities';
+import { getDataDirectory } from '../../utils/dataDir';
+import { LockService } from '../../services/LockService';
 import {
   CreateRoomResult,
   ListRoomsResult,
@@ -41,10 +43,12 @@ export interface IRoomsAPI {
 export class RoomsAPI implements IRoomsAPI {
   private roomService: RoomService;
   private presenceService: PresenceService;
+  private lockService: LockService;
 
-  constructor(dataDir: string = './data') {
-    this.roomService = new RoomService(dataDir);
-    this.presenceService = new PresenceService(dataDir);
+  constructor(dataDir: string = getDataDirectory(), lockService?: LockService) {
+    this.lockService = lockService || new LockService(dataDir);
+    this.roomService = new RoomService(dataDir, this.lockService);
+    this.presenceService = new PresenceService(dataDir, this.lockService);
   }
 
   // === ルーム管理 ===

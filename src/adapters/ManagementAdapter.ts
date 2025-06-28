@@ -1,6 +1,7 @@
 import { LockService } from '../services/LockService.js';
 import { RoomNotFoundError } from '../errors/index.js';
 import type { IManagementAPI, SystemStatus, RoomStats } from '../features/management/index.js';
+import { getDataDirectory } from '../utils/dataDir.js';
 
 export class ManagementAdapter {
   private api?: IManagementAPI;
@@ -22,7 +23,8 @@ export class ManagementAdapter {
   async initialize(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const { ManagementAPI } = await import('../features/management/index.js');
-    const dataDir = process.env.AGENT_COMM_DATA_DIR || './data';
+    // Use the dataDir from lockService instead of getDataDirectory()
+    const dataDir = (this.lockService as any).dataDir;
     this.api = new ManagementAPI(dataDir);
   }
   
@@ -31,26 +33,21 @@ export class ManagementAdapter {
       await this.initialize();
     }
     
-    // Get status with distributed locking to ensure consistency
-    return await this.lockService.withLock(
-      'system-status',
-      async () => {
-        const systemStatus = await this.api!.getSystemStatus();
-        
-        // Convert to expected format
-        return {
-          rooms: systemStatus.rooms.map((room: any) => ({
-            name: room.roomName,
-            onlineUsers: room.onlineUsers,
-            totalMessages: room.messageCount,
-            storageSize: room.storageSize
-          })),
-          totalRooms: systemStatus.totalRooms,
-          totalOnlineUsers: systemStatus.totalOnlineUsers,
-          totalMessages: systemStatus.totalMessages
-        };
-      }
-    );
+    // LockService is now handled in the storage layer
+    const systemStatus = await this.api!.getSystemStatus();
+    
+    // Convert to expected format
+    return {
+      rooms: systemStatus.rooms.map((room: any) => ({
+        name: room.name,
+        onlineUsers: room.onlineUsers,
+        totalMessages: room.totalMessages,
+        storageSize: room.storageSize
+      })),
+      totalRooms: systemStatus.totalRooms,
+      totalOnlineUsers: systemStatus.totalOnlineUsers,
+      totalMessages: systemStatus.totalMessages
+    };
   }
   
   async clearRoomMessages(params: { roomName: string; confirm: boolean }): Promise<{ success: boolean; roomName: string; clearedCount: number }> {
@@ -68,17 +65,18 @@ export class ManagementAdapter {
       throw new RoomNotFoundError(params.roomName);
     }
     
-    // Clear messages with file locking
-    return await this.lockService.withLock(
-      `rooms/${params.roomName}/messages.jsonl`,
-      async () => {
-        const result = await this.api!.clearRoomMessages(params.roomName, params.confirm);
-        return {
-          success: result.success,
-          roomName: result.roomName,
-          clearedCount: result.clearedCount
-        };
-      }
-    );
+    // LockService is now handled in the storage layer
+    const result = await this.api!.clearRoomMessages(params.roomName, params.confirm);
+    
+    // Clear the message cache for this room
+    if (this.messageAdapter && this.messageAdapter.clearRoomCache) {
+      this.messageAdapter.clearRoomCache(params.roomName);
+    }
+    
+    return {
+      success: result.success,
+      roomName: result.roomName,
+      clearedCount: result.clearedCount
+    };
   }
 }

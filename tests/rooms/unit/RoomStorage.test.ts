@@ -10,11 +10,24 @@ vi.mock('fs/promises', () => ({
   ...vol.promises
 }));
 
+// LockServiceをモック
+vi.mock('../../../src/services/LockService', () => ({
+  LockService: vi.fn().mockImplementation(() => ({
+    withLock: vi.fn().mockImplementation(async (path: string, fn: () => Promise<any>) => {
+      // Simply execute the function without locking in tests
+      return await fn();
+    })
+  }))
+}));
+
 describe('RoomStorage', () => {
   let roomStorage: RoomStorage;
   const testDataDir = '/test-storage';
 
   beforeEach(() => {
+    // Clear all mocks
+    vi.clearAllMocks();
+    
     // ファイルシステムをリセット
     vol.reset();
     vol.fromJSON({}, testDataDir);
@@ -117,10 +130,10 @@ describe('RoomStorage', () => {
 
       const roomsData = await roomStorage.readRooms();
       expect(roomsData.rooms[roomName]).toMatchObject({
-        description: undefined,
         messageCount: 0,
         userCount: 0
       });
+      expect(roomsData.rooms[roomName].description).toBeUndefined();
     });
   });
 
@@ -219,14 +232,12 @@ describe('RoomStorage', () => {
 
   describe('error handling', () => {
     it('should handle file system errors gracefully', async () => {
-      // ファイルシステムエラーをシミュレート
-      const originalMkdir = vol.promises.mkdir;
-      vol.promises.mkdir = vi.fn().mockRejectedValue(new Error('Filesystem error'));
+      // ファイルシステムエラーをシミュレート - JSON.parse でエラーを発生させる
+      vol.fromJSON({
+        [`${testDataDir}/rooms.json`]: '{"invalid": json}' // Invalid JSON
+      });
 
       await expect(roomStorage.readRooms()).rejects.toThrow(StorageError);
-
-      // 元の関数を復元
-      vol.promises.mkdir = originalMkdir;
     });
   });
 });

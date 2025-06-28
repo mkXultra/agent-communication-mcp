@@ -12,12 +12,24 @@ vi.mock('fs/promises', () => ({
   ...vol.promises
 }));
 
+// LockServiceをモック
+vi.mock('../../../src/services/LockService', () => ({
+  LockService: vi.fn().mockImplementation(() => ({
+    withLock: vi.fn().mockImplementation(async (path: string, fn: () => Promise<any>) => {
+      return await fn();
+    })
+  }))
+}));
+
 describe('PresenceService', () => {
   let presenceService: PresenceService;
   let roomService: RoomService;
   const testDataDir = '/test-data';
 
   beforeEach(async () => {
+    // Clear all mocks
+    vi.clearAllMocks();
+    
     // ファイルシステムをリセット
     vol.reset();
     vol.fromJSON({}, testDataDir);

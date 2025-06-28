@@ -4,10 +4,21 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const testDataDir = path.join(__dirname, '../../test-data');
+
+// Generate unique test directory for each test
+function getUniqueTestDir(): string {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 8);
+  return path.join(__dirname, `../../test-data-${timestamp}-${random}`);
+}
+
+let testDataDir = getUniqueTestDir();
 
 // Test data directory setup
 export async function setupTestDataDir(): Promise<string> {
+  // Generate new unique directory for this test
+  testDataDir = getUniqueTestDir();
+  
   try {
     await fs.rm(testDataDir, { recursive: true, force: true });
   } catch (error) {
@@ -27,8 +38,9 @@ export async function cleanupTestDataDir(): Promise<void> {
 
 // Mock environment setup
 export function setupTestEnv(dataDir?: string): void {
+  // Use the current unique test directory
   process.env.AGENT_COMM_DATA_DIR = dataDir || testDataDir;
-  process.env.AGENT_COMM_LOCK_TIMEOUT = '2000'; // Shorter timeout for tests
+  process.env.AGENT_COMM_LOCK_TIMEOUT = '5000'; // Increased timeout for concurrent tests
   process.env.AGENT_COMM_MAX_MESSAGES = '100';
   process.env.AGENT_COMM_MAX_ROOMS = '10';
 }
@@ -53,8 +65,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  // Clean data directory before each test
-  await setupTestDataDir();
+  // Create new unique data directory before each test
+  const newDir = await setupTestDataDir();
+  setupTestEnv(newDir);
 });
 
 afterEach(async () => {

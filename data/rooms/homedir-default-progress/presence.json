@@ -1,0 +1,15 @@
+{
+  "roomName": "homedir-default-progress",
+  "users": {
+    "CI-Fix-Assistant": {
+      "status": "online",
+      "messageCount": 0,
+      "joinedAt": "2025-06-21T05:15:24.965Z"
+    },
+    "claude-progress-reporter": {
+      "status": "online",
+      "messageCount": 0,
+      "joinedAt": "2025-06-21T05:29:18.158Z"
+    }
+  }
+}

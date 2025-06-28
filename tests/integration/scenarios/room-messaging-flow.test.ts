@@ -81,7 +81,7 @@ class IntegratedScenario {
     return { success: true, messageId: message.id, mentions };
   }
   
-  async getMessages(params: { agentName: string; roomName: string; limit?: number; before?: string }) {
+  async getMessages(params: { agentName: string; roomName: string; limit?: number; before?: string; offset?: number }) {
     if (!this.dataLayer.roomExists(params.roomName)) {
       throw new RoomNotFoundError(params.roomName);
     }
@@ -91,7 +91,7 @@ class IntegratedScenario {
       throw new AgentNotInRoomError(params.agentName, params.roomName);
     }
     
-    const messages = this.dataLayer.getMessages(params.roomName, params.limit, params.before);
+    const messages = this.dataLayer.getMessages(params.roomName, params.limit, params.before, params.offset);
     return { messages };
   }
   
@@ -129,7 +129,7 @@ class IntegratedScenario {
     
     return {
       success: true,
-      clearedMessages: messagesBefore
+      clearedCount: messagesBefore
     };
   }
 }
@@ -529,7 +529,7 @@ describe('Room-Messaging Flow Integration Tests', () => {
         messageIds.push(result.messageId);
       }
       
-      // Get first page (limit 5)
+      // Get first page (limit 5) - oldest messages first
       const page1 = await scenario.getMessages({
         agentName: 'alice',
         roomName: 'pagination-test',
@@ -539,12 +539,12 @@ describe('Room-Messaging Flow Integration Tests', () => {
       expect(page1.messages[0].message).toBe('Message 1');
       expect(page1.messages[4].message).toBe('Message 5');
       
-      // Get second page using 'before' parameter
+      // Get second page using offset
       const page2 = await scenario.getMessages({
         agentName: 'alice',
         roomName: 'pagination-test',
         limit: 5,
-        before: page1.messages[4].id
+        offset: 5
       });
       expect(page2.messages).toHaveLength(5);
       expect(page2.messages[0].message).toBe('Message 6');
@@ -555,7 +555,7 @@ describe('Room-Messaging Flow Integration Tests', () => {
         agentName: 'alice',
         roomName: 'pagination-test',
         limit: 10,
-        before: page2.messages[4].id
+        offset: 10
       });
       expect(page3.messages).toHaveLength(5); // only 5 remaining
       expect(page3.messages[0].message).toBe('Message 11');

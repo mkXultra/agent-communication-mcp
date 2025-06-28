@@ -19,6 +19,9 @@ describe('Real Adapters Integration Tests', () => {
     testDataDir = path.join(process.cwd(), 'test-data-' + Date.now());
     await fs.mkdir(testDataDir, { recursive: true });
     
+    // Set environment variable to use our test directory
+    process.env.AGENT_COMM_DATA_DIR = testDataDir;
+    
     // Initialize services
     lockService = new LockService(testDataDir);
     messagingAdapter = new MessagingAdapter(lockService);
@@ -45,6 +48,9 @@ describe('Real Adapters Integration Tests', () => {
     } catch (error) {
       // Ignore cleanup errors
     }
+    
+    // Clean up environment variable
+    delete process.env.AGENT_COMM_DATA_DIR;
   });
   
   describe('Rooms Adapter with Real Implementation', () => {
@@ -75,7 +81,7 @@ describe('Real Adapters Integration Tests', () => {
       
       // Initially no users
       const initialUsers = await roomsAdapter.listRoomUsers({ roomName: 'membership-test' });
-      expect(initialUsers.agents).toEqual([]);
+      expect(initialUsers.users).toEqual([]);
       
       // Agent enters room
       const enterResult = await roomsAdapter.enterRoom({
@@ -86,7 +92,7 @@ describe('Real Adapters Integration Tests', () => {
       
       // Verify agent is in room
       const users = await roomsAdapter.listRoomUsers({ roomName: 'membership-test' });
-      expect(users.agents).toContain('agent1');
+      expect(users.users.map(u => u.name)).toContain('agent1');
       
       // Agent leaves room
       const leaveResult = await roomsAdapter.leaveRoom({
@@ -95,9 +101,10 @@ describe('Real Adapters Integration Tests', () => {
       });
       expect(leaveResult.success).toBe(true);
       
-      // Verify agent is no longer in room
+      // Verify agent is no longer in room (may remain with offline status)
       const finalUsers = await roomsAdapter.listRoomUsers({ roomName: 'membership-test' });
-      expect(finalUsers.agents).not.toContain('agent1');
+      const onlineUsers = finalUsers.users.filter(u => u.status === 'online');
+      expect(onlineUsers).toEqual([]);
     });
     
     it('should enforce room existence for operations', async () => {
@@ -195,19 +202,20 @@ describe('Real Adapters Integration Tests', () => {
       });
       
       expect(firstPage.messages).toHaveLength(5);
-      expect(firstPage.messages[0].message).toBe('Message 1');
-      expect(firstPage.messages[4].message).toBe('Message 5');
+      expect(firstPage.messages[0].message).toBe('Message 10');
+      expect(firstPage.messages[4].message).toBe('Message 6');
       
       // Get second page
       const secondPage = await messagingAdapter.getMessages({
         agentName: 'agent1',
         roomName: 'chat-room',
         limit: 5,
-        before: firstPage.messages[4].id
+        offset: 5
       });
       
       expect(secondPage.messages).toHaveLength(5);
-      expect(secondPage.messages[0].message).toBe('Message 6');
+      expect(secondPage.messages[0].message).toBe('Message 5');
+      expect(secondPage.messages[4].message).toBe('Message 1');
     });
   });
   
@@ -239,12 +247,11 @@ describe('Real Adapters Integration Tests', () => {
       
       expect(status.totalRooms).toBe(2);
       expect(status.totalMessages).toBeGreaterThanOrEqual(2);
-      expect(status.activeAgents).toBeGreaterThanOrEqual(2);
-      expect(status.serverVersion).toBe('1.0.0');
+      expect(status.totalOnlineUsers).toBeGreaterThanOrEqual(2);
       expect(status.rooms).toHaveLength(2);
       
       const room1 = status.rooms.find(r => r.name === 'stats-room-1');
-      expect(room1?.activeAgents).toBe(2);
+      expect(room1?.onlineUsers).toBe(2);
     });
     
     it('should clear room messages', async () => {
@@ -270,11 +277,12 @@ describe('Real Adapters Integration Tests', () => {
       
       // Clear messages
       const clearResult = await managementAdapter.clearRoomMessages({
-        roomName: 'stats-room-1'
+        roomName: 'stats-room-1',
+        confirm: true
       });
       
       expect(clearResult.success).toBe(true);
-      expect(clearResult.clearedMessages).toBe(2);
+      expect(clearResult.clearedCount).toBe(2);
       
       // Verify messages are gone
       const afterClear = await messagingAdapter.getMessages({
@@ -318,8 +326,9 @@ describe('Real Adapters Integration Tests', () => {
       
       // Verify through rooms adapter
       const users = await roomsAdapter.listRoomUsers({ roomName: 'integration-room' });
-      expect(users.agents).toContain('alice');
-      expect(users.agents).toContain('bob');
+      const userNames = users.users.map(u => u.name);
+      expect(userNames).toContain('alice');
+      expect(userNames).toContain('bob');
       
       // Verify through messaging adapter
       const messages = await messagingAdapter.getMessages({
@@ -327,18 +336,20 @@ describe('Real Adapters Integration Tests', () => {
         roomName: 'integration-room'
       });
       expect(messages.messages).toHaveLength(2);
-      expect(messages.messages[0].mentions).toContain('bob');
-      expect(messages.messages[1].mentions).toContain('alice');
+      // Messages are returned newest first
+      expect(messages.messages[0].mentions).toContain('alice'); // Bob's message
+      expect(messages.messages[1].mentions).toContain('bob');   // Alice's message
       
       // Verify through management adapter
       const status = await managementAdapter.getStatus();
       expect(status.totalRooms).toBe(1);
       expect(status.totalMessages).toBe(2);
-      expect(status.activeAgents).toBe(2);
+      expect(status.totalOnlineUsers).toBe(2);
       
       const room = status.rooms.find(r => r.name === 'integration-room');
-      expect(room?.messageCount).toBe(2);
-      expect(room?.activeAgents).toBe(2);
+      expect(room).toBeDefined();
+      expect(room?.totalMessages).toBe(2);
+      expect(room?.onlineUsers).toBe(2);
     });
     
     it('should handle complex workflow scenarios', async () => {
@@ -394,7 +405,7 @@ describe('Real Adapters Integration Tests', () => {
       const finalStatus = await managementAdapter.getStatus();
       expect(finalStatus.totalRooms).toBe(2);
       expect(finalStatus.totalMessages).toBe(3);
-      expect(finalStatus.activeAgents).toBe(3);
+      expect(finalStatus.totalOnlineUsers).toBe(3); // Unique users: alice, bob, charlie
     });
   });
   

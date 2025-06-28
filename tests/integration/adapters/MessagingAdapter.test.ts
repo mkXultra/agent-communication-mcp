@@ -41,7 +41,7 @@ class MockMessagingAdapter {
       throw new AgentNotInRoomError(params.agentName, params.roomName);
     }
     
-    const messages = this.dataLayer.getMessages(params.roomName, params.limit, params.before);
+    const messages = this.dataLayer.getMessages(params.roomName, params.limit, params.before, params.offset);
     return { messages };
   }
 }
@@ -162,21 +162,27 @@ describe('MessagingAdapter Integration Tests', () => {
       expect(result.messages).toHaveLength(5);
     });
     
-    it('should support pagination with before parameter', async () => {
+    it('should support pagination with offset', async () => {
       const firstBatch = await adapter.getMessages({
         agentName: 'agent1',
         roomName: 'test-room',
         limit: 5
       });
       
+      expect(firstBatch.messages).toHaveLength(5);
+      expect(firstBatch.messages[0].message).toBe('Message 1');
+      expect(firstBatch.messages[4].message).toBe('Message 5');
+      
       const secondBatch = await adapter.getMessages({
         agentName: 'agent1',
         roomName: 'test-room',
         limit: 5,
-        before: firstBatch.messages[4].id
+        offset: 5
       });
       
       expect(secondBatch.messages).toHaveLength(5);
+      expect(secondBatch.messages[0].message).toBe('Message 6');
+      expect(secondBatch.messages[4].message).toBe('Message 10');
       expect(secondBatch.messages[0].id).not.toBe(firstBatch.messages[0].id);
     });
     

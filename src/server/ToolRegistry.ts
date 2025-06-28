@@ -1,4 +1,5 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { LockService } from '../services/LockService';
 import { MessagingAdapter } from '../adapters/MessagingAdapter';
@@ -101,28 +102,32 @@ export class ToolRegistry {
         } catch (error) {
           // Convert AppError to MCP error format
           if (error instanceof AppError) {
-            throw {
-              code: error.statusCode,
-              message: error.message,
-              data: { errorCode: error.code }
-            };
+            // Map HTTP status codes to JSON-RPC error codes
+            // 404 for resources (rooms, agents) should be InvalidParams, not MethodNotFound
+            const errorCode = error.statusCode >= 400 && error.statusCode < 500 ? ErrorCode.InvalidParams :
+                            ErrorCode.InternalError;
+            throw new McpError(
+              errorCode,
+              error.message,
+              { errorCode: error.code }
+            );
           }
           
           // Handle validation errors (from zod)
           if (error instanceof Error && error.name === 'ZodError') {
-            throw {
-              code: 400,
-              message: `Validation error: ${error.message}`,
-              data: { errorCode: 'VALIDATION_ERROR' }
-            };
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              `Validation error: ${error.message}`,
+              { errorCode: 'VALIDATION_ERROR' }
+            );
           }
           
           // Handle unknown errors
-          throw {
-            code: 500,
-            message: error instanceof Error ? error.message : 'Internal server error',
-            data: { errorCode: 'INTERNAL_ERROR' }
-          };
+          throw new McpError(
+            ErrorCode.InternalError,
+            error instanceof Error ? error.message : 'Internal server error',
+            { errorCode: 'INTERNAL_ERROR' }
+          );
         }
       });
       

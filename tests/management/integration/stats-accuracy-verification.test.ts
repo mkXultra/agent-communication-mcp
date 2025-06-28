@@ -59,9 +59,11 @@ describe('Management Statistics Accuracy Verification', () => {
           '{"id":"msg5","agentName":"alice","message":"Great!","timestamp":"2024-01-01T10:04:00.000Z"}'
         ].join('\n'),
         'test-data/rooms/room-1/presence.json': JSON.stringify({
-          alice: { online: true, lastSeen: '2024-01-01T10:04:00.000Z' },
-          bob: { online: false, lastSeen: '2024-01-01T09:30:00.000Z' },
-          charlie: { online: true, lastSeen: '2024-01-01T10:03:00.000Z' }
+          users: {
+            alice: { status: 'online', lastSeen: '2024-01-01T10:04:00.000Z' },
+            bob: { status: 'offline', lastSeen: '2024-01-01T09:30:00.000Z' },
+            charlie: { status: 'online', lastSeen: '2024-01-01T10:03:00.000Z' }
+          }
         }),
         // Room 2: 3 messages, 1 online user
         'test-data/rooms/room-2/messages.jsonl': [
@@ -70,12 +72,14 @@ describe('Management Statistics Accuracy Verification', () => {
           '{"id":"msg3","agentName":"user1","message":"Message 3","timestamp":"2024-01-02T10:02:00.000Z"}'
         ].join('\n'),
         'test-data/rooms/room-2/presence.json': JSON.stringify({
-          user1: { online: true, lastSeen: '2024-01-02T10:02:00.000Z' },
-          user2: { online: false, lastSeen: '2024-01-02T09:30:00.000Z' }
+          users: {
+            user1: { status: 'online', lastSeen: '2024-01-02T10:02:00.000Z' },
+            user2: { status: 'offline', lastSeen: '2024-01-02T09:30:00.000Z' }
+          }
         }),
         // Empty room: 0 messages, 0 online users
         'test-data/rooms/empty-room/messages.jsonl': '',
-        'test-data/rooms/empty-room/presence.json': JSON.stringify({})
+        'test-data/rooms/empty-room/presence.json': JSON.stringify({ users: {} })
       });
 
       const systemStatus = await managementService.getStatus();
@@ -269,8 +273,8 @@ describe('Management Statistics Accuracy Verification', () => {
         }),
         'test-data/rooms/large-room/messages.jsonl': largeMessageContent,
         'test-data/rooms/large-room/presence.json': JSON.stringify({
-          ...Array.from({ length: 10 }, (_, i) => ({
-            [`agent${i}`]: { online: i % 2 === 0, lastSeen: '2024-01-01T10:00:00.000Z' }
+          users: Array.from({ length: 10 }, (_, i) => ({
+            [`agent${i}`]: { status: i % 2 === 0 ? 'online' : 'offline', lastSeen: '2024-01-01T10:00:00.000Z' }
           })).reduce((acc, curr) => ({ ...acc, ...curr }), {})
         })
       });

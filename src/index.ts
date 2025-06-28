@@ -4,6 +4,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ToolRegistry } from './server/ToolRegistry.js';
 import { ErrorHandler } from './server/ErrorHandler.js';
+import { getDataDirectory } from './utils/dataDir.js';
 
 async function main() {
   try {
@@ -18,7 +19,7 @@ async function main() {
     });
     
     // Initialize and register tools
-    const dataDir = process.env.AGENT_COMM_DATA_DIR || './data';
+    const dataDir = getDataDirectory();
     const toolRegistry = new ToolRegistry(dataDir);
     
     await toolRegistry.registerAll(server);

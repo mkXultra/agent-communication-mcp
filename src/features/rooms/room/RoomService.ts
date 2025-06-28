@@ -5,14 +5,18 @@ import { IRoomService, IRoomStorage, IPresenceStorage, CreateRoomResult, ListRoo
 import { RoomStorage } from './RoomStorage';
 import { PresenceStorage } from '../presence/PresenceStorage';
 import { RoomAlreadyExistsError, RoomNotFoundError, ValidationError } from '../../../errors';
+import { getDataDirectory } from '../../../utils/dataDir';
+import { LockService } from '../../../services/LockService';
 
 export class RoomService implements IRoomService {
   private roomStorage: IRoomStorage;
   private presenceStorage: IPresenceStorage;
+  private lockService: LockService;
 
-  constructor(dataDir: string = './data') {
-    this.roomStorage = new RoomStorage(dataDir);
-    this.presenceStorage = new PresenceStorage(dataDir);
+  constructor(dataDir: string = getDataDirectory(), lockService?: LockService) {
+    this.lockService = lockService || new LockService(dataDir);
+    this.roomStorage = new RoomStorage(dataDir, this.lockService);
+    this.presenceStorage = new PresenceStorage(dataDir, this.lockService);
   }
 
   async createRoom(roomName: string, description?: string): Promise<CreateRoomResult> {

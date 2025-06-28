@@ -5,7 +5,14 @@ import { RoomNotFoundError, ValidationError } from '../../../src/errors/AppError
 describe('MessageService', () => {
   let messageService: MessageService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Clean up test data directory before each test
+    const fs = await import('fs/promises');
+    try {
+      await fs.rm('./test-data', { recursive: true, force: true });
+    } catch {
+      // Ignore if doesn't exist
+    }
     messageService = new MessageService('./test-data');
   });
 
@@ -51,17 +58,6 @@ describe('MessageService', () => {
 
       expect(result.success).toBe(true);
       expect(result.messageId).toBeDefined();
-    });
-
-    it.skip('should throw RoomNotFoundError for non-existent room', async () => {
-      // Note: Room validation is now handled at the adapter layer
-      const params = {
-        agentName: 'test-agent',
-        roomName: 'non-existent-room',
-        message: 'Hello world!'
-      };
-
-      await expect(messageService.sendMessage(params)).rejects.toThrow(RoomNotFoundError);
     });
 
     it('should throw ValidationError for invalid parameters', async () => {
@@ -161,15 +157,6 @@ describe('MessageService', () => {
       expect(result.count).toBe(0);
       expect(result.hasMore).toBe(false);
     });
-
-    it.skip('should throw RoomNotFoundError for non-existent room', async () => {
-      // Note: Room validation is now handled at the adapter layer
-      const params = {
-        roomName: 'non-existent-room'
-      };
-
-      await expect(messageService.getMessages(params)).rejects.toThrow(RoomNotFoundError);
-    });
   });
 
   describe('getMessageCount', () => {
@@ -193,11 +180,6 @@ describe('MessageService', () => {
 
       const count = await messageService.getMessageCount('general');
       expect(count).toBe(2);
-    });
-
-    it.skip('should throw RoomNotFoundError for non-existent room', async () => {
-      // Note: Room validation is now handled at the adapter layer
-      await expect(messageService.getMessageCount('non-existent-room')).rejects.toThrow(RoomNotFoundError);
     });
   });
 });

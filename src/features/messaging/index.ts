@@ -6,20 +6,25 @@ import {
   MessageListResponse,
   Message
 } from './types/messaging.types';
+import { LockService } from '../../services/LockService';
+import { getDataDirectory } from '../../utils/dataDir';
 
 // Public API interface
 export interface IMessagingAPI {
   sendMessage(params: SendMessageParams): Promise<SendMessageResponse>;
   getMessages(params: GetMessagesParams): Promise<MessageListResponse>;
   getMessageCount(roomName: string): Promise<number>;
+  clearRoomCache(roomName: string): void;
 }
 
 // Implementation of the public API
 export class MessagingAPI implements IMessagingAPI {
   private readonly messageService: MessageService;
+  private readonly lockService: LockService;
 
-  constructor(dataDir?: string, cacheCapacity?: number) {
-    this.messageService = new MessageService(dataDir, cacheCapacity);
+  constructor(dataDir: string = getDataDirectory(), cacheCapacity?: number, lockService?: LockService) {
+    this.lockService = lockService || new LockService(dataDir);
+    this.messageService = new MessageService(dataDir, cacheCapacity, this.lockService);
   }
 
   async sendMessage(params: SendMessageParams): Promise<SendMessageResponse> {
@@ -32,6 +37,10 @@ export class MessagingAPI implements IMessagingAPI {
 
   async getMessageCount(roomName: string): Promise<number> {
     return await this.messageService.getMessageCount(roomName);
+  }
+
+  clearRoomCache(roomName: string): void {
+    this.messageService.clearRoomCache(roomName);
   }
 }
 
@@ -53,5 +62,5 @@ export { MessageValidator } from './MessageValidator';
 // Export MCP tools
 export { messagingTools, MessagingToolHandlers, messagingToolHandlers } from './tools/messaging.tools';
 
-// Export default API instance
-export const messagingAPI = new MessagingAPI();
+// Export default API class for instantiation
+export default MessagingAPI;

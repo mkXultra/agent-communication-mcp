@@ -2,6 +2,7 @@ import { LockService } from '../services/LockService.js';
 import { RoomNotFoundError, RoomAlreadyExistsError, AgentNotInRoomError } from '../errors/index.js';
 import { Room } from '../types/index.js';
 import type { IRoomsAPI } from '../features/rooms/index.js';
+import { getDataDirectory } from '../utils/dataDir.js';
 
 export class RoomsAdapter {
   private api?: IRoomsAPI;
@@ -18,7 +19,8 @@ export class RoomsAdapter {
   async initialize(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const { RoomsAPI } = await import('../features/rooms/index.js');
-    const dataDir = process.env.AGENT_COMM_DATA_DIR || './data';
+    // Use the dataDir from lockService instead of getDataDirectory()
+    const dataDir = (this.lockService as any).dataDir;
     this.api = new RoomsAPI(dataDir);
   }
   
@@ -27,21 +29,17 @@ export class RoomsAdapter {
       await this.initialize();
     }
     
-    return await this.lockService.withLock(
-      'rooms.json',
-      async () => {
-        const result = await this.api!.listRooms(agentName);
-        // Convert RoomListItem[] to Room[]
-        const rooms: Room[] = result.rooms.map(item => ({
-          name: item.name,
-          description: item.description,
-          createdAt: new Date().toISOString(), // Since RoomListItem doesn't have createdAt
-          messageCount: item.messageCount,
-          userCount: item.userCount
-        }));
-        return { rooms };
-      }
-    );
+    // LockService is now handled in the storage layer
+    const result = await this.api!.listRooms(agentName);
+    // Convert RoomListItem[] to Room[]
+    const rooms: Room[] = result.rooms.map(item => ({
+      name: item.name,
+      description: item.description,
+      createdAt: new Date().toISOString(), // Since RoomListItem doesn't have createdAt
+      messageCount: item.messageCount,
+      userCount: item.userCount
+    }));
+    return { rooms };
   }
   
   async createRoom(params: { roomName: string; description?: string }): Promise<{ success: boolean; roomName: string }> {
@@ -55,13 +53,9 @@ export class RoomsAdapter {
       throw new RoomAlreadyExistsError(params.roomName);
     }
     
-    return await this.lockService.withLock(
-      'rooms.json',
-      async () => {
-        const result = await this.api!.createRoom(params.roomName, params.description);
-        return { success: result.success, roomName: result.roomName };
-      }
-    );
+    // LockService is now handled in the storage layer
+    const result = await this.api!.createRoom(params.roomName, params.description);
+    return { success: result.success, roomName: result.roomName };
   }
   
   async enterRoom(params: { agentName: string; roomName: string; profile?: any }): Promise<{ success: boolean }> {
@@ -75,13 +69,9 @@ export class RoomsAdapter {
       throw new RoomNotFoundError(params.roomName);
     }
     
-    return await this.lockService.withLock(
-      `rooms/${params.roomName}/presence.json`,
-      async () => {
-        const result = await this.api!.enterRoom(params.agentName, params.roomName, params.profile);
-        return { success: result.success };
-      }
-    );
+    // LockService is now handled in the storage layer
+    const result = await this.api!.enterRoom(params.agentName, params.roomName, params.profile);
+    return { success: result.success };
   }
   
   async leaveRoom(params: { agentName: string; roomName: string }): Promise<{ success: boolean }> {
@@ -101,13 +91,9 @@ export class RoomsAdapter {
       throw new AgentNotInRoomError(params.agentName, params.roomName);
     }
     
-    return await this.lockService.withLock(
-      `rooms/${params.roomName}/presence.json`,
-      async () => {
-        const result = await this.api!.leaveRoom(params.agentName, params.roomName);
-        return { success: result.success };
-      }
-    );
+    // LockService is now handled in the storage layer
+    const result = await this.api!.leaveRoom(params.agentName, params.roomName);
+    return { success: result.success };
   }
   
   async listRoomUsers(params: { roomName: string }): Promise<{ roomName: string; users: any[]; onlineCount: number }> {

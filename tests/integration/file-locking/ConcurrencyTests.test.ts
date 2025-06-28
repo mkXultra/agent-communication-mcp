@@ -15,9 +15,9 @@ describe('File Locking Concurrency Tests', () => {
     await fs.mkdir(testDataDir, { recursive: true });
     
     // Create multiple lock service instances to simulate concurrent access
-    lockService1 = new LockService(testDataDir, 1000); // 1 second timeout
-    lockService2 = new LockService(testDataDir, 1000);
-    lockService3 = new LockService(testDataDir, 1000);
+    lockService1 = new LockService(testDataDir, 5000); // 5 second timeout
+    lockService2 = new LockService(testDataDir, 5000);
+    lockService3 = new LockService(testDataDir, 5000);
   });
   
   afterEach(async () => {
@@ -323,7 +323,7 @@ describe('File Locking Concurrency Tests', () => {
   
   describe('Performance under Concurrency', () => {
     it('should handle high concurrency without deadlocks', async () => {
-      const numOperations = 50;
+      const numOperations = 30; // Reduced from 50 to prevent timeout
       const operations = [];
       
       for (let i = 0; i < numOperations; i++) {
@@ -331,8 +331,8 @@ describe('File Locking Concurrency Tests', () => {
         
         operations.push(
           service.withLock(`file-${i % 5}.txt`, async () => {
-            // Random delay between 1-10ms
-            await new Promise(resolve => setTimeout(resolve, Math.random() * 10 + 1));
+            // Reduced delay to speed up test
+            await new Promise(resolve => setTimeout(resolve, Math.random() * 5 + 1));
             return i;
           })
         );

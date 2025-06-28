@@ -44,22 +44,26 @@ export class MockDataLayer {
     this.messages.set(roomName, messages);
   }
   
-  getMessages(roomName: string, limit?: number, before?: string): Message[] {
+  getMessages(roomName: string, limit?: number, before?: string, offset?: number): Message[] {
     const messages = this.messages.get(roomName) || [];
-    let result = [...messages].reverse();
+    let result = [...messages];
     
     if (before) {
       const beforeIndex = result.findIndex(m => m.id === before);
       if (beforeIndex >= 0) {
-        result = result.slice(beforeIndex + 1);
+        result = result.slice(0, beforeIndex);
       }
+    }
+    
+    if (offset !== undefined && offset > 0) {
+      result = result.slice(offset);
     }
     
     if (limit) {
       result = result.slice(0, limit);
     }
     
-    return result.reverse();
+    return result;
   }
   
   clearMessages(roomName: string): number {

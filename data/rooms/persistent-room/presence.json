@@ -1,0 +1,10 @@
+{
+  "roomName": "persistent-room",
+  "users": {
+    "persistent-agent": {
+      "status": "online",
+      "messageCount": 0,
+      "joinedAt": "2025-06-21T05:32:55.750Z"
+    }
+  }
+}

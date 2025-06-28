@@ -182,14 +182,15 @@ describe('Schema Validation Tests', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.limit).toBe(50); // default value
-        expect(result.data.includeMetadata).toBe(false); // default value
+        expect(result.data.offset).toBe(0); // default value
+        expect(result.data.mentionsOnly).toBe(false); // default value
       }
     });
 
     it('should reject invalid limit values', () => {
       const invalidInputs = [
         { roomName: 'test-room', limit: 0 }, // too small
-        { roomName: 'test-room', limit: 101 }, // too large
+        { roomName: 'test-room', limit: 1001 }, // too large
         { roomName: 'test-room', limit: -1 }, // negative
       ];
 
@@ -201,6 +202,7 @@ describe('Schema Validation Tests', () => {
 
     it('should validate get_messages output schema', () => {
       const validOutput = {
+        roomName: 'test-room',
         messages: [
           {
             id: 'msg-123',
@@ -212,9 +214,8 @@ describe('Schema Validation Tests', () => {
             metadata: { priority: 'high' },
           },
         ],
-        total: 1,
+        count: 1,
         hasMore: false,
-        cursor: 'next-cursor',
       };
 
       const result = getMessagesOutputSchema.safeParse(validOutput);
@@ -238,26 +239,26 @@ describe('Schema Validation Tests', () => {
     it('should validate clear_room_messages input schema', () => {
       const validInput = {
         roomName: 'test-room',
-        olderThan: '2023-01-01T00:00:00Z',
-        dryRun: true,
+        confirm: true,
       };
 
       const result = clearRoomMessagesInputSchema.safeParse(validInput);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.dryRun).toBe(true);
+        expect(result.data.confirm).toBe(true);
       }
     });
 
     it('should validate clear_room_messages with minimal input', () => {
       const minimalInput = {
         roomName: 'test-room',
+        confirm: true,  // confirm is required
       };
 
       const result = clearRoomMessagesInputSchema.safeParse(minimalInput);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.dryRun).toBe(false); // default value
+        expect(result.data.confirm).toBe(true);
       }
     });
 

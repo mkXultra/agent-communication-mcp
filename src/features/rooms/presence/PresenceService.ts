@@ -6,14 +6,18 @@ import { AgentProfile } from '../../../types/entities';
 import { RoomStorage } from '../room/RoomStorage';
 import { PresenceStorage } from './PresenceStorage';
 import { RoomNotFoundError, AgentAlreadyInRoomError, AgentNotInRoomError, ValidationError } from '../../../errors';
+import { getDataDirectory } from '../../../utils/dataDir';
+import { LockService } from '../../../services/LockService';
 
 export class PresenceService implements IPresenceService {
   private roomStorage: IRoomStorage;
   private presenceStorage: IPresenceStorage;
+  private lockService: LockService;
 
-  constructor(dataDir: string = './data') {
-    this.roomStorage = new RoomStorage(dataDir);
-    this.presenceStorage = new PresenceStorage(dataDir);
+  constructor(dataDir: string = getDataDirectory(), lockService?: LockService) {
+    this.lockService = lockService || new LockService(dataDir);
+    this.roomStorage = new RoomStorage(dataDir, this.lockService);
+    this.presenceStorage = new PresenceStorage(dataDir, this.lockService);
   }
 
   async enterRoom(agentName: string, roomName: string, profile?: AgentProfile): Promise<EnterRoomResult> {
@@ -34,8 +38,16 @@ export class PresenceService implements IPresenceService {
     // 既に入室済みかチェック
     const isAlreadyInRoom = await this.presenceStorage.isUserInRoom(roomName, agentName);
     if (isAlreadyInRoom) {
-      // 既に入室済みの場合はオンラインステータスに更新
-      await this.presenceStorage.updateUserStatus(roomName, agentName, 'online');
+      // 既に入室済みの場合は、ステータスをオンラインに更新し、プロファイルも更新
+      const userStatus = await this.presenceStorage.getUserStatus(roomName, agentName);
+      if (userStatus === 'offline') {
+        // オフラインユーザーの再入室：addUserでプロファイルを更新
+        await this.presenceStorage.addUser(roomName, agentName, profile);
+      } else {
+        // すでにオンラインの場合は何もしない（二重入室防止）
+        // または、プロファイルの更新を許可する場合はaddUserを呼ぶ
+        await this.presenceStorage.addUser(roomName, agentName, profile);
+      }
     } else {
       // 新規入室
       await this.presenceStorage.addUser(roomName, agentName, profile);
