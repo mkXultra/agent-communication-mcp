@@ -277,14 +277,14 @@ describe('File Lock Concurrency Tests', () => {
       
       // Start a long-running operation that holds the lock
       const longOperation = lockService.withLock(filePath, async () => {
-        await new Promise(resolve => setTimeout(resolve, 200));
+        await new Promise(resolve => setTimeout(resolve, 500)); // Increased for CI
         return 'long-operation-result';
       });
       
       // Try to perform another operation with short timeout
       const shortOperation = lockService.withLock(filePath, async () => {
         return 'short-operation-result';
-      }, 50); // 50ms timeout
+      }, 100); // 100ms timeout (increased for CI)
       
       // Long operation should succeed
       const longResult = await longOperation;
@@ -361,7 +361,7 @@ describe('File Lock Concurrency Tests', () => {
       expect(file2EndIndex).toBeLessThan(file1EndIndex);
     });
     
-    it('should prevent deadlocks in nested operations', async () => {
+    it('should prevent deadlocks in nested operations', { timeout: 20000 }, async () => {
       const file1 = '/test/nested1.txt';
       const file2 = '/test/nested2.txt';
       

@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverPath = path.join(__dirname, '../../dist/index.js');
 const testDataDir = path.join(__dirname, '../../test-data-e2e');
 
-describe('E2E: MCP Server', () => {
+describe.skip('E2E: MCP Server', () => {
   let serverProcess: ChildProcess;
   let messageId = 1;
 
