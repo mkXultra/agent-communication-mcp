@@ -344,8 +344,11 @@ describe('DataScanner', () => {
 
   describe('error handling', () => {
     it('should handle permission errors gracefully', async () => {
-      // Mock fs.stat to throw permission error
-      vi.spyOn(fs.promises, 'stat').mockRejectedValueOnce(
+      // Mock all file operations to throw permission errors
+      vi.spyOn(fs.promises, 'stat').mockRejectedValue(
+        new Error('EACCES: permission denied')
+      );
+      vi.spyOn(fs.promises, 'readFile').mockRejectedValue(
         new Error('EACCES: permission denied')
       );
 
@@ -357,6 +360,9 @@ describe('DataScanner', () => {
         onlineUsers: 0,
         storageSize: 0
       });
+      
+      // Restore mocks
+      vi.restoreAllMocks();
     });
 
     // Skip tests for scanAllRooms as it doesn't exist in the implementation

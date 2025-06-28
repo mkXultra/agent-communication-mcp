@@ -131,19 +131,28 @@ describe('StatsCollector', () => {
     });
 
     it('should handle rooms with missing files', async () => {
-      // Remove some files to test robustness
+      // Create a new room without files to test robustness
+      vol.reset();
       vol.fromJSON({
-        'data/rooms/active-room/messages.jsonl': '', // Clear messages
-        // Remove presence file entirely
-      }, 'data/rooms/active-room');
+        'data/rooms.json': JSON.stringify({
+          rooms: {
+            'missing-files-room': { name: 'missing-files-room', createdAt: '2024-01-01T00:00:00Z', messageCount: 0 }
+          }
+        })
+        // No messages.jsonl or presence.json files
+      });
 
-      const result = await statsCollector.collectSystemStatus();
+      // Re-create StatsCollector with new filesystem
+      const { StatsCollector } = await import('../../../src/features/management/StatsCollector');
+      const newStatsCollector = new StatsCollector();
       
-      const activeRoomStats = result.rooms.find((r: any) => r.name === 'active-room');
-      expect(activeRoomStats).toMatchObject({
-        name: 'active-room',
+      const result = await newStatsCollector.collectSystemStatus();
+      
+      const roomStats = result.rooms.find((r: any) => r.name === 'missing-files-room');
+      expect(roomStats).toMatchObject({
+        name: 'missing-files-room',
         onlineUsers: 0, // No presence file
-        totalMessages: 0, // Empty messages file
+        totalMessages: 0, // No messages file
         storageSize: 0
       });
     });

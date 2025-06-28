@@ -9,7 +9,9 @@ import type { AgentProfile } from '../../../src/types/entities';
 vi.mock('fs', () => ({
   ...vol,
   promises: vol.promises,
-  existsSync: vol.existsSync
+  existsSync: vol.existsSync,
+  accessSync: vol.accessSync,
+  constants: { W_OK: 2 }
 }));
 vi.mock('fs/promises', () => ({
   default: vol.promises,
