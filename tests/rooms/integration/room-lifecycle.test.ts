@@ -4,6 +4,10 @@ import { RoomsAPI } from '../../../src/features/rooms';
 import type { AgentProfile } from '../../../src/types/entities';
 
 // ファイルシステムをモック
+vi.mock('fs', () => ({
+  ...vol,
+  promises: vol.promises
+}));
 vi.mock('fs/promises', () => ({
   default: vol.promises,
   ...vol.promises
@@ -16,7 +20,9 @@ describe('Room Lifecycle Integration Tests', () => {
   beforeEach(() => {
     // ファイルシステムをリセット
     vol.reset();
-    vol.fromJSON({}, testDataDir);
+    vol.fromJSON({
+      [`${testDataDir}/rooms.json`]: JSON.stringify({ rooms: {} })
+    });
     
     roomsAPI = new RoomsAPI(testDataDir);
   });

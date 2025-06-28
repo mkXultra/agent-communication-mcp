@@ -457,7 +457,7 @@ describe('Error Code Coverage Tests', () => {
       expect(error.stack).toContain('createError');
     });
     
-    it('should handle nested error contexts', () => {
+    it('should handle nested error contexts', async () => {
       const simulateNestedOperation = async () => {
         try {
           throw new StorageError('write', 'disk full');

@@ -6,6 +6,10 @@ import { RoomsAPI } from '../../../src/features/rooms';
 import type { AgentProfile } from '../../../src/types/entities';
 
 // ファイルシステムをモック
+vi.mock('fs', () => ({
+  ...vol,
+  promises: vol.promises
+}));
 vi.mock('fs/promises', () => ({
   default: vol.promises,
   ...vol.promises
@@ -25,7 +29,7 @@ describe('Multi-Room Load Tests', () => {
     // ファイルシステムをリセット
     vol.reset();
     vol.fromJSON({
-      [testDataDir]: null
+      [`${testDataDir}/rooms.json`]: JSON.stringify({ rooms: {} })
     });
     
     roomsAPI = new RoomsAPI(testDataDir);
