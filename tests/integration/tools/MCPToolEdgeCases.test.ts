@@ -42,33 +42,58 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
     });
     
     it('should handle rooms with special characters', { timeout: 30000 }, async () => {
-      const specialRoomNames = [
+      // Valid room names (alphanumeric, hyphens, underscores only)
+      const validRoomNames = [
         'room-with-dashes',
         'room_with_underscores',
-        'room.with.dots',
         'ROOM_WITH_CAPS',
         'room123numbers',
-        'room@special#chars',
-        '房间中文名',
-        'комната-русский'
+        'Room-123_Test'
       ];
       
-      // Create rooms with special names
-      for (const roomName of specialRoomNames) {
-        await transport.simulateRequest({
+      // Invalid room names (contain special characters not allowed)
+      const invalidRoomNames = [
+        'room.with.dots',
+        'room@special#chars',
+        '房间中文名',
+        'комната-русский',
+        'room with spaces',
+        'room!exclamation'
+      ];
+      
+      // Create rooms with valid names
+      for (const roomName of validRoomNames) {
+        const response = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: 'agent_communication_create_room',
             arguments: { roomName }
           }
         });
+        expect(response.error).toBeUndefined();
       }
       
-      const response = await transport.simulateRequest({
+      // Try to create rooms with invalid names - should fail
+      for (const roomName of invalidRoomNames) {
+        const response = await transport.simulateRequest({
+          jsonrpc: '2.0',
+          id: Math.floor(Math.random() * 1000000),
+          method: 'tools/call',
+          params: {
+            name: 'agent_communication_create_room',
+            arguments: { roomName }
+          }
+        });
+        expect(response.error).toBeDefined();
+        expect(response.error!.code).toBe(-32602); // Invalid params
+      }
+      
+      // List rooms to verify only valid ones were created
+      const listResponse = await transport.simulateRequest({
         jsonrpc: '2.0',
-        id: 2,
+        id: Math.floor(Math.random() * 1000000),
         method: 'tools/call',
         params: {
           name: 'agent_communication_list_rooms',
@@ -76,11 +101,11 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         }
       });
       
-      const result = JSON.parse(response.result!.content[0].text);
-      expect(result.rooms).toHaveLength(specialRoomNames.length);
+      const result = JSON.parse(listResponse.result!.content[0].text);
+      expect(result.rooms).toHaveLength(validRoomNames.length);
       
       const returnedNames = result.rooms.map((r: any) => r.name);
-      specialRoomNames.forEach(name => {
+      validRoomNames.forEach(name => {
         expect(returnedNames).toContain(name);
       });
     });
@@ -121,14 +146,12 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         '',           // Empty string
         ' ',          // Whitespace only
         '   ',        // Multiple spaces
-        null,         // Null value
-        undefined     // Undefined value
       ];
       
       for (const invalidName of invalidNames) {
         const response = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000), // Use integer ID
           method: 'tools/call',
           params: {
             name: 'agent_communication_create_room',
@@ -136,11 +159,37 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           }
         });
         
-        // Should either error or handle gracefully
-        if (response.error) {
-          expect(response.error).toBeDefined();
-        }
+        // Should get an error for invalid room names
+        expect(response.error).toBeDefined();
+        expect(response.error!.code).toBe(-32602); // Invalid params
+        expect(response.error!.message).toContain('Validation error');
       }
+      
+      // Test null and undefined separately as they require different handling
+      const nullResponse = await transport.simulateRequest({
+        jsonrpc: '2.0',
+        id: Math.floor(Math.random() * 1000000),
+        method: 'tools/call',
+        params: {
+          name: 'agent_communication_create_room',
+          arguments: { roomName: null as any }
+        }
+      });
+      expect(nullResponse.error).toBeDefined();
+      expect(nullResponse.error!.code).toBe(-32602);
+      
+      // Test with missing roomName (undefined)
+      const undefinedResponse = await transport.simulateRequest({
+        jsonrpc: '2.0',
+        id: Math.floor(Math.random() * 1000000),
+        method: 'tools/call',
+        params: {
+          name: 'agent_communication_create_room',
+          arguments: {}
+        }
+      });
+      expect(undefinedResponse.error).toBeDefined();
+      expect(undefinedResponse.error!.code).toBe(-32602);
     });
     
     it('should handle extremely long room names', async () => {
@@ -205,7 +254,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       
       // Check that failures are due to room already existing
       failures.forEach(result => {
-        expect(result.error!.code).toBe(409);
+        expect(result.error!.code).toBe(-32602); // Invalid params (room already exists)
         expect(result.error!.message).toContain('already exists');
       });
     });
@@ -228,15 +277,15 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       const invalidAgentNames = [
         '',
         ' ',
+        '   ',  // Only whitespace
         null,
-        undefined,
-        '   whitespace-only   '
+        undefined
       ];
       
       for (const agentName of invalidAgentNames) {
         const response = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: 'agent_communication_enter_room',
@@ -244,9 +293,22 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           }
         });
         
-        // Should handle gracefully
-        expect(response).toBeDefined();
+        // Should return error for invalid agent names
+        expect(response.error).toBeDefined();
+        expect(response.error!.code).toBe(-32602); // Invalid params
       }
+      
+      // Test valid agent name with whitespace (should succeed after trim)
+      const validResponse = await transport.simulateRequest({
+        jsonrpc: '2.0',
+        id: 9999,
+        method: 'tools/call',
+        params: {
+          name: 'agent_communication_enter_room',
+          arguments: { agentName: '   valid-agent   ', roomName: 'test-room' }
+        }
+      });
+      expect(validResponse.error).toBeUndefined();
     });
     
     it('should handle agent entering same room multiple times', async () => {
@@ -372,7 +434,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       for (const message of malformedMentions) {
         const response = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: 'agent_communication_send_message',
@@ -408,7 +470,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       for (const message of specialMessages) {
         const response = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: 'agent_communication_send_message',
@@ -421,6 +483,9 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
         });
         
         expect(response.error).toBeUndefined();
+        expect(response.result).toBeDefined();
+        const result = JSON.parse(response.result!.content[0].text);
+        expect(result.success).toBe(true);
       }
     });
   });
@@ -454,7 +519,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       for (const limit of invalidLimits) {
         const response = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: 'agent_communication_get_messages',
@@ -466,8 +531,16 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           }
         });
         
-        // Should handle invalid limits gracefully
-        expect(response).toBeDefined();
+        // Should handle invalid limits - some should error, some use defaults
+        if (limit === undefined) {
+          // undefined is treated as default value, no error
+          expect(response.error).toBeUndefined();
+        } else if (limit === null || typeof limit === 'string' || limit < 1 || limit > 1000) {
+          expect(response.error).toBeDefined();
+          expect(response.error!.code).toBe(-32602);
+        } else {
+          expect(response.error).toBeUndefined();
+        }
       }
     });
     
@@ -484,7 +557,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       for (const before of invalidBefore) {
         const response = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: 'agent_communication_get_messages',
@@ -496,8 +569,18 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           }
         });
         
-        // Should handle invalid before parameters gracefully
-        expect(response).toBeDefined();
+        // Should handle invalid before parameters
+        if (before === undefined || before === '' || before === 'non-existent-id') {
+          // These are considered valid (no before filter or non-existent ID)
+          expect(response.error).toBeUndefined();
+        } else if (before === null || typeof before !== 'string') {
+          // Type mismatch should error
+          expect(response.error).toBeDefined();
+          expect(response.error!.code).toBe(-32602);
+        } else {
+          // Should not reach here
+          expect(response.error).toBeUndefined();
+        }
       }
     });
     
@@ -531,7 +614,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       for (const args of edgeCases) {
         const response = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: 'agent_communication_get_messages',
@@ -662,7 +745,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       });
       
       expect(response.error).toBeDefined();
-      expect(response.error!.code).toBe(404);
+      expect(response.error!.code).toBe(-32602); // Invalid params (room not found)
       expect(response.error!.message).toContain('not found');
     });
     
@@ -837,7 +920,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       for (const testCase of testCases) {
         const response = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: testCase.tool,
@@ -845,8 +928,9 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           }
         });
         
-        // Should handle missing parameters appropriately
-        expect(response).toBeDefined();
+        // Should return error for missing parameters
+        expect(response.error).toBeDefined();
+        expect(response.error!.code).toBe(-32602); // Invalid params
       }
     });
     
@@ -889,7 +973,7 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
       for (const testCase of typeMismatchCases) {
         const response = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: testCase.tool,
@@ -897,8 +981,9 @@ describe('MCP Tools Edge Cases and Validation Tests', () => {
           }
         });
         
-        // Should handle type mismatches gracefully
-        expect(response).toBeDefined();
+        // Should return error for type mismatches
+        expect(response.error).toBeDefined();
+        expect(response.error!.code).toBe(-32602); // Invalid params
       }
     });
   });

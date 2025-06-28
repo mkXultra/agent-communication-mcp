@@ -386,16 +386,25 @@ describe('File Lock Concurrency Tests', () => {
       };
       
       // This could potentially deadlock, but our implementation should handle it
-      // Since we're using a simple mock, one operation will succeed
-      try {
-        const results = await Promise.allSettled([operation1(), operation2()]);
-        
+      // The lock service should detect and prevent deadlocks
+      const results = await Promise.allSettled([operation1(), operation2()]);
+      
+      // At least one should succeed or both should timeout due to deadlock prevention
+      const successes = results.filter(r => r.status === 'fulfilled');
+      const failures = results.filter(r => r.status === 'rejected');
+      
+      if (successes.length === 0) {
+        // If no successes, both should have timed out due to deadlock prevention
+        expect(failures.length).toBe(2);
+        failures.forEach(result => {
+          if (result.status === 'rejected') {
+            // The error message should indicate a lock timeout
+            expect(result.reason.message.toUpperCase()).toContain('TIMEOUT');
+          }
+        });
+      } else {
         // At least one should succeed
-        const successes = results.filter(r => r.status === 'fulfilled');
         expect(successes.length).toBeGreaterThanOrEqual(1);
-      } catch (error) {
-        // If there's a timeout, it's expected behavior for deadlock prevention
-        expect(error.message).toContain('timeout');
       }
     }, 10000); // Increase timeout to 10 seconds
   });

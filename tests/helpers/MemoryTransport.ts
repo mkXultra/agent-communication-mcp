@@ -37,6 +37,11 @@ export class MemoryTransport implements Transport {
       throw new Error('Transport is not connected');
     }
     
+    // Debug: Log all messages
+    if (process.env.DEBUG_TRANSPORT) {
+      console.log('Transport.send:', JSON.stringify(message, null, 2));
+    }
+    
     // The server sends responses through this method
     // We'll capture them for our tests
     if ('result' in message || 'error' in message) {
@@ -45,6 +50,8 @@ export class MemoryTransport implements Transport {
       if (resolver) {
         resolver(response);
         this.pendingRequests.delete(response.id!);
+      } else if (process.env.DEBUG_TRANSPORT) {
+        console.log('No resolver found for response id:', response.id);
       }
     }
   }
@@ -60,16 +67,23 @@ export class MemoryTransport implements Transport {
       // Store the resolver for this request
       this.pendingRequests.set(request.id!, resolve);
       
-      // Send the request to the server
-      this.onmessage(request);
-      
       // Set a timeout to avoid hanging tests
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         if (this.pendingRequests.has(request.id!)) {
           this.pendingRequests.delete(request.id!);
           reject(new Error('Request timeout'));
         }
       }, 20000); // Match vitest timeout (20s)
+      
+      // Override the resolver to clear the timeout
+      const originalResolve = resolve;
+      this.pendingRequests.set(request.id!, (response) => {
+        clearTimeout(timeoutId);
+        originalResolve(response);
+      });
+      
+      // Send the request to the server
+      this.onmessage(request);
     });
   }
 }

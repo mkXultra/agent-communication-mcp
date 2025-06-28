@@ -236,7 +236,7 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.code).toBe(409);
+        expect(response.error!.code).toBe(-32602);
         expect(response.error!.message).toContain('already exists');
       });
     });
@@ -291,7 +291,7 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.code).toBe(404);
+        expect(response.error!.code).toBe(-32602);
         expect(response.error!.message).toContain('not found');
       });
     });
@@ -359,7 +359,7 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.code).toBe(403);
+        expect(response.error!.code).toBe(-32602);
         expect(response.error!.message).toContain('not in room');
       });
     });
@@ -459,7 +459,7 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.code).toBe(404);
+        expect(response.error!.code).toBe(-32602);
         expect(response.error!.message).toContain('not found');
       });
     });
@@ -553,7 +553,7 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.code).toBe(403);
+        expect(response.error!.code).toBe(-32602);
         expect(response.error!.message).toContain('not in room');
       });
       
@@ -573,7 +573,7 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.code).toBe(404);
+        expect(response.error!.code).toBe(-32602);
         expect(response.error!.message).toContain('not found');
       });
     });
@@ -639,46 +639,6 @@ describe('MCP Tools E2E Tests', () => {
         expect(result.messages).toHaveLength(3);
       });
       
-      it.skip('should support pagination with before parameter', async () => {
-        // Get first batch
-        const firstResponse = await transport.simulateRequest({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/call',
-          params: {
-            name: 'agent_communication_get_messages',
-            arguments: {
-              agentName: 'agent1',
-              roomName: 'messaging-room',
-              limit: 2
-            }
-          }
-        });
-        
-        const firstResult = JSON.parse(firstResponse.result!.content[0].text);
-        expect(firstResult.messages).toHaveLength(2);
-        
-        // Get second batch using before parameter
-        const secondResponse = await transport.simulateRequest({
-          jsonrpc: '2.0',
-          id: 2,
-          method: 'tools/call',
-          params: {
-            name: 'agent_communication_get_messages',
-            arguments: {
-              agentName: 'agent1',
-              roomName: 'messaging-room',
-              limit: 2,
-              before: firstResult.messages[1].id
-            }
-          }
-        });
-        
-        const secondResult = JSON.parse(secondResponse.result!.content[0].text);
-        expect(secondResult.messages).toHaveLength(2);
-        expect(secondResult.messages[0].id).not.toBe(firstResult.messages[0].id);
-      });
-      
       it('should reject access from agent not in room', async () => {
         const response = await transport.simulateRequest({
           jsonrpc: '2.0',
@@ -694,7 +654,7 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.code).toBe(403);
+        expect(response.error!.code).toBe(-32602);
         expect(response.error!.message).toContain('not in room');
       });
     });
@@ -932,7 +892,7 @@ describe('MCP Tools E2E Tests', () => {
         });
         
         expect(response.error).toBeDefined();
-        expect(response.error!.code).toBe(404);
+        expect(response.error!.code).toBe(-32602);
         expect(response.error!.message).toContain('not found');
       });
     });

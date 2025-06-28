@@ -8,13 +8,12 @@ describe('Integration: Concurrent Access Test', () => {
   let lockService: LockService;
   let messagingAdapter: MessagingAdapter;
   let roomsAdapter: RoomsAdapter;
-  const testDataDir = process.env.AGENT_COMM_DATA_DIR || './test-data';
 
   beforeEach(async () => {
-    // Ensure test data directory exists
+    // Use the unique test data directory from setup.ts
     const fs = await import('fs/promises');
     const path = await import('path');
-    const actualDataDir = process.env.AGENT_COMM_DATA_DIR || testDataDir;
+    const actualDataDir = process.env.AGENT_COMM_DATA_DIR!;
     await fs.mkdir(actualDataDir, { recursive: true });
     await fs.mkdir(path.join(actualDataDir, 'rooms'), { recursive: true });
     
@@ -42,7 +41,7 @@ describe('Integration: Concurrent Access Test', () => {
       // Ensure room directory exists
       const fs = await import('fs/promises');
       const path = await import('path');
-      const actualDataDir = process.env.AGENT_COMM_DATA_DIR || testDataDir;
+      const actualDataDir = process.env.AGENT_COMM_DATA_DIR!;
       const roomDir = path.join(actualDataDir, 'rooms', roomName);
       await fs.mkdir(roomDir, { recursive: true });
 

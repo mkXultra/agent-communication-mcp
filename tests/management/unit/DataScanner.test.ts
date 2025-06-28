@@ -364,18 +364,5 @@ describe('DataScanner', () => {
       // Restore mocks
       vi.restoreAllMocks();
     });
-
-    // Skip tests for scanAllRooms as it doesn't exist in the implementation
-    it.skip('should handle corrupted rooms.json file', async () => {
-      // This functionality is not implemented
-    });
-
-    it.skip('should handle missing data directory', async () => {
-      // This functionality is not implemented
-    });
-
-    it.skip('should continue scanning other rooms if one fails', async () => {
-      // This functionality is not implemented
-    });
   });
 });

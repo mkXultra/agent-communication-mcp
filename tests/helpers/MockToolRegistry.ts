@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { JSONRPCRequest, JSONRPCResponse } from '@modelcontextprotocol/sdk/types.js';
+import { JSONRPCRequest, JSONRPCResponse, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { MockDataLayer } from './MockDataLayer.js';
 import { AppError, RoomNotFoundError, AgentNotInRoomError, RoomAlreadyExistsError, ValidationError, toMCPError } from '../../src/errors/index.js';
@@ -147,6 +147,80 @@ export class MockToolRegistry {
       const { name, arguments: args } = request.params;
       
       try {
+        // Validate that the tool exists
+        const validTools = [
+          'agent_communication_list_rooms',
+          'agent_communication_create_room',
+          'agent_communication_enter_room',
+          'agent_communication_leave_room',
+          'agent_communication_list_room_users',
+          'agent_communication_send_message',
+          'agent_communication_get_messages',
+          'agent_communication_get_status',
+          'agent_communication_clear_room_messages'
+        ];
+        
+        if (!validTools.includes(name)) {
+          throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+        }
+        
+        // Basic input validation for required fields
+        switch (name) {
+          case 'agent_communication_create_room':
+            if (!args?.roomName || typeof args.roomName !== 'string' || args.roomName.trim() === '') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Room name cannot be empty');
+            }
+            // Validate room name format (alphanumeric, hyphens, underscores only)
+            if (!/^[a-zA-Z0-9-_]+$/.test(args.roomName)) {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Room name must contain only alphanumeric characters, hyphens, and underscores');
+            }
+            // Validate room name length
+            if (args.roomName.length > 50) {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Room name cannot exceed 50 characters');
+            }
+            break;
+          case 'agent_communication_enter_room':
+          case 'agent_communication_leave_room':
+            if (!args?.agentName || typeof args.agentName !== 'string' || args.agentName.trim() === '') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Agent name cannot be empty');
+            }
+            if (!args?.roomName || typeof args.roomName !== 'string' || args.roomName.trim() === '') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Room name cannot be empty');
+            }
+            break;
+          case 'agent_communication_send_message':
+            if (!args?.agentName || typeof args.agentName !== 'string' || args.agentName.trim() === '') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Agent name cannot be empty');
+            }
+            if (!args?.roomName || typeof args.roomName !== 'string' || args.roomName.trim() === '') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Room name cannot be empty');
+            }
+            if (!args?.message || typeof args.message !== 'string') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Message cannot be empty');
+            }
+            break;
+          case 'agent_communication_get_messages':
+            if (!args?.agentName || typeof args.agentName !== 'string' || args.agentName.trim() === '') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Agent name cannot be empty');
+            }
+            if (!args?.roomName || typeof args.roomName !== 'string' || args.roomName.trim() === '') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Room name cannot be empty');
+            }
+            if (args.limit !== undefined && (typeof args.limit !== 'number' || args.limit < 1 || args.limit > 1000)) {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Limit must be between 1 and 1000');
+            }
+            if (args.before !== undefined && typeof args.before !== 'string') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Before parameter must be a string');
+            }
+            break;
+          case 'agent_communication_list_room_users':
+          case 'agent_communication_clear_room_messages':
+            if (!args?.roomName || typeof args.roomName !== 'string' || args.roomName.trim() === '') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Room name cannot be empty');
+            }
+            break;
+        }
+        
         switch (name) {
           case 'agent_communication_list_rooms':
             return { content: [{ type: 'text', text: JSON.stringify({ rooms: this.dataLayer.getAllRooms() }) }] };
@@ -259,18 +333,33 @@ export class MockToolRegistry {
             return { content: [{ type: 'text', text: JSON.stringify({ success: true, roomName: args.roomName, clearedCount }) }] };
           
           default:
-            throw new Error(`Unknown tool: ${name}`);
+            throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
       } catch (error) {
-        if (error instanceof AppError) {
-          const mcpError = toMCPError(error);
-          // Create an error object that matches MCP SDK expectations
-          const err = new Error(mcpError.message);
-          (err as any).code = mcpError.code;
-          (err as any).data = mcpError.data;
-          throw err;
+        // If it's already a McpError, just throw it
+        if (error instanceof McpError) {
+          throw error;
         }
-        throw error;
+        
+        // Convert AppError to McpError
+        if (error instanceof AppError) {
+          // Map HTTP status codes to MCP error codes
+          // 404 for resources (rooms, agents) should be InvalidParams, not MethodNotFound
+          const errorCode = error.statusCode >= 400 && error.statusCode < 500 ? ErrorCode.InvalidParams :
+                          ErrorCode.InternalError;
+          throw new McpError(
+            errorCode,
+            error.message,
+            { errorCode: error.code }
+          );
+        }
+        
+        // Handle any other errors
+        throw new McpError(
+          ErrorCode.InternalError,
+          error instanceof Error ? error.message : 'Internal server error',
+          { errorCode: 'INTERNAL_ERROR' }
+        );
       }
     });
   }

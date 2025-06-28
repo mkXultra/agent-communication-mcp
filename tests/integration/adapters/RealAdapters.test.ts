@@ -347,8 +347,9 @@ describe('Real Adapters Integration Tests', () => {
       expect(status.totalOnlineUsers).toBe(2);
       
       const room = status.rooms.find(r => r.name === 'integration-room');
-      expect(room?.messageCount).toBe(2);
-      expect(room?.activeAgents).toBe(2);
+      expect(room).toBeDefined();
+      expect(room?.totalMessages).toBe(2);
+      expect(room?.onlineUsers).toBe(2);
     });
     
     it('should handle complex workflow scenarios', async () => {
@@ -404,7 +405,7 @@ describe('Real Adapters Integration Tests', () => {
       const finalStatus = await managementAdapter.getStatus();
       expect(finalStatus.totalRooms).toBe(2);
       expect(finalStatus.totalMessages).toBe(3);
-      expect(finalStatus.totalOnlineUsers).toBe(3);
+      expect(finalStatus.totalOnlineUsers).toBe(3); // Unique users: alice, bob, charlie
     });
   });
   

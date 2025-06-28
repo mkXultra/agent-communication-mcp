@@ -19,13 +19,24 @@ export class StatsCollector {
 
     const rooms = await this.scanner.getAllRooms();
     const roomStats: RoomStats[] = [];
+    const uniqueOnlineUsers = new Set<string>();
     
-    let totalOnlineUsers = 0;
     let totalMessages = 0;
     let totalStorageSize = 0;
 
     for (const roomName of rooms) {
       const scanResult = await this.scanner.scanRoomDirectory(roomName);
+      
+      // Get the actual user data to track unique users
+      const presencePath = join(this.dataDir, 'rooms', roomName, 'presence.json');
+      const usersData = await this.scanner.getUsersData(presencePath);
+      
+      // Add online users to the unique set
+      Object.entries(usersData).forEach(([agentName, userData]) => {
+        if (userData.status === 'online') {
+          uniqueOnlineUsers.add(agentName);
+        }
+      });
       
       const roomStat: RoomStats = {
         name: roomName,
@@ -35,7 +46,6 @@ export class StatsCollector {
       };
       
       roomStats.push(roomStat);
-      totalOnlineUsers += scanResult.onlineUsers;
       totalMessages += scanResult.messageCount;
       totalStorageSize += scanResult.storageSize;
     }
@@ -43,7 +53,7 @@ export class StatsCollector {
     return {
       rooms: roomStats,
       totalRooms: rooms.length,
-      totalOnlineUsers,
+      totalOnlineUsers: uniqueOnlineUsers.size,
       totalMessages,
       totalStorageSize
     };

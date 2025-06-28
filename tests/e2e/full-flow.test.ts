@@ -173,21 +173,26 @@ describe('Agent Communication MCP Server E2E Tests', () => {
     it('should handle multi-room conversation scenario', { timeout: 30000 }, async () => {
       // Create multiple rooms
       const rooms = [
-        { name: 'general', description: 'General discussion' },
-        { name: 'dev-team', description: 'Development team' },
-        { name: 'alerts', description: 'System alerts' }
+        { roomName: 'general', description: 'General discussion' },
+        { roomName: 'dev-team', description: 'Development team' },
+        { roomName: 'alerts', description: 'System alerts' }
       ];
       
       for (const room of rooms) {
-        await transport.simulateRequest({
+        const createResponse = await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: 'agent_communication_create_room',
             arguments: room
           }
         });
+        
+        if (createResponse.error) {
+          console.error('Room creation failed:', room.roomName, createResponse.error);
+        }
+        expect(createResponse.error).toBeUndefined();
       }
       
       // List all rooms
@@ -220,7 +225,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
         for (const roomName of combo.rooms) {
           await transport.simulateRequest({
             jsonrpc: '2.0',
-            id: Math.random(),
+            id: Math.floor(Math.random() * 1000000),
             method: 'tools/call',
             params: {
               name: 'agent_communication_enter_room',
@@ -245,7 +250,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       for (const msg of messages) {
         await transport.simulateRequest({
           jsonrpc: '2.0',
-          id: Math.random(),
+          id: Math.floor(Math.random() * 1000000),
           method: 'tools/call',
           params: {
             name: 'agent_communication_send_message',
@@ -352,7 +357,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(unauthorizedMessage.error).toBeDefined();
-      expect(unauthorizedMessage.error!.code).toBe(403);
+      expect(unauthorizedMessage.error!.code).toBe(-32602);
       expect(unauthorizedMessage.error!.message).toContain('not in room');
       
       // Agent2 joins room
@@ -434,7 +439,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(postLeaveMessage.error).toBeDefined();
-      expect(postLeaveMessage.error!.code).toBe(403);
+      expect(postLeaveMessage.error!.code).toBe(-32602);
       expect(postLeaveMessage.error!.message).toContain('not in room');
       
       // Verify only agent2 remains
@@ -587,7 +592,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(enterResponse.error).toBeDefined();
-      expect(enterResponse.error!.code).toBe(404);
+      expect(enterResponse.error!.code).toBe(-32602);
       expect(enterResponse.error!.message).toContain('not found');
       
       // Try to send message to non-existent room
@@ -606,7 +611,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(messageResponse.error).toBeDefined();
-      expect(messageResponse.error!.code).toBe(404);
+      expect(messageResponse.error!.code).toBe(-32602);
       expect(messageResponse.error!.message).toContain('not found');
       
       // Try to list users in non-existent room
@@ -623,7 +628,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(usersResponse.error).toBeDefined();
-      expect(usersResponse.error!.code).toBe(404);
+      expect(usersResponse.error!.code).toBe(-32602);
       expect(usersResponse.error!.message).toContain('not found');
     });
     
@@ -657,7 +662,7 @@ describe('Agent Communication MCP Server E2E Tests', () => {
       });
       
       expect(duplicateResponse.error).toBeDefined();
-      expect(duplicateResponse.error!.code).toBe(409);
+      expect(duplicateResponse.error!.code).toBe(-32602);
       expect(duplicateResponse.error!.message).toContain('already exists');
     });
     

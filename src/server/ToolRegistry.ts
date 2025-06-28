@@ -103,8 +103,8 @@ export class ToolRegistry {
           // Convert AppError to MCP error format
           if (error instanceof AppError) {
             // Map HTTP status codes to JSON-RPC error codes
-            const errorCode = error.statusCode === 404 ? ErrorCode.MethodNotFound : 
-                            error.statusCode >= 400 && error.statusCode < 500 ? ErrorCode.InvalidParams :
+            // 404 for resources (rooms, agents) should be InvalidParams, not MethodNotFound
+            const errorCode = error.statusCode >= 400 && error.statusCode < 500 ? ErrorCode.InvalidParams :
                             ErrorCode.InternalError;
             throw new McpError(
               errorCode,

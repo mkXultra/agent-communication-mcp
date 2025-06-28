@@ -314,8 +314,8 @@ describe('Real MCP Server E2E Tests', () => {
       });
       
       expect(response.error).toBeDefined();
-      expect(response.error!.code).toBe(404);
-      expect(response.error!.code).toBe(404);
+      expect(response.error!.code).toBe(-32602);
+      expect(response.error!.code).toBe(-32602);
       expect(response.error!.message).toContain('not found');
       expect(response.error!.message).toContain('non-existent-room');
     });
@@ -348,8 +348,8 @@ describe('Real MCP Server E2E Tests', () => {
       });
       
       expect(response.error).toBeDefined();
-      expect(response.error!.code).toBe(403);
-      expect(response.error!.code).toBe(403);
+      expect(response.error!.code).toBe(-32602);
+      expect(response.error!.code).toBe(-32602);
       expect(response.error!.message).toContain('not in room');
     });
     
@@ -377,8 +377,8 @@ describe('Real MCP Server E2E Tests', () => {
       });
       
       expect(response.error).toBeDefined();
-      expect(response.error!.code).toBe(409);
-      expect(response.error!.code).toBe(409);
+      expect(response.error!.code).toBe(-32602);
+      expect(response.error!.code).toBe(-32602);
       expect(response.error!.message).toContain('already exists');
     });
   });
