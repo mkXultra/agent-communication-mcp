@@ -127,7 +127,8 @@ describe('ManagementService', () => {
     });
 
     it('should handle missing presence.json file gracefully', async () => {
-      // Create proper rooms.json structure
+      // Reset and create new structure without presence file
+      vol.reset();
       vol.fromJSON({
         'data/rooms.json': JSON.stringify({
           rooms: {
@@ -138,13 +139,18 @@ describe('ManagementService', () => {
           '{"id":"msg1","agentName":"agent1","message":"Hello","timestamp":"2024-01-01T10:00:00.000Z"}\n'
       });
 
-      const result = await managementService.getRoomStatistics('general');
+      // Re-instantiate to use new filesystem
+      const { ManagementService } = await import('../../../src/features/management');
+      const newManagementService = new ManagementService();
+      
+      const result = await newManagementService.getRoomStatistics('general');
       
       expect(result.onlineUsers).toBe(0); // No presence file means no online users
     });
 
     it('should handle missing messages.jsonl file gracefully', async () => {
-      // Create proper rooms.json structure
+      // Reset and create new structure without messages file
+      vol.reset();
       vol.fromJSON({
         'data/rooms.json': JSON.stringify({
           rooms: {
@@ -158,7 +164,11 @@ describe('ManagementService', () => {
         })
       });
 
-      const result = await managementService.getRoomStatistics('general');
+      // Re-instantiate to use new filesystem
+      const { ManagementService } = await import('../../../src/features/management');
+      const newManagementService = new ManagementService();
+      
+      const result = await newManagementService.getRoomStatistics('general');
       
       expect(result.totalMessages).toBe(0); // No messages file means 0 messages
       expect(result.storageSize).toBe(0); // No messages file means 0 storage size
