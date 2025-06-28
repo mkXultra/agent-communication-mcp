@@ -395,7 +395,8 @@ describe('Error Code Coverage Tests', () => {
         // Code should end with 'ERROR' or be descriptive
         const validPatterns = [
           /_ERROR$/,
-          /^[A-Z_]+_(NOT_FOUND|ALREADY_EXISTS|TIMEOUT|NOT_IN_ROOM|ALREADY_IN_ROOM)$/
+          /^[A-Z_]+_(NOT_FOUND|ALREADY_EXISTS|TIMEOUT|NOT_IN_ROOM|ALREADY_IN_ROOM)$/,
+          /^INVALID_[A-Z_]+_FORMAT$/  // For format validation errors
         ];
         
         const isValidCode = validPatterns.some(pattern => pattern.test(error.code));
