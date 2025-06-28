@@ -1,16 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { vol } from 'memfs';
-import { RoomService } from '../../../src/features/rooms/room/RoomService';
-import { PresenceService } from '../../../src/features/rooms/presence/PresenceService';
-import { RoomsAPI } from '../../../src/features/rooms';
 import type { AgentProfile } from '../../../src/types/entities';
+
+// Mock the getDataDirectory function to return our test directory
+vi.mock('../../../src/utils/dataDir', () => ({
+  getDataDirectory: () => process.env.AGENT_COMM_DATA_DIR || '/test-data',
+  DEFAULT_HOME_DATA_DIR: '/home/.agent-communication-mcp',
+  LEGACY_DATA_DIR: './data'
+}));
 
 // ファイルシステムをモック
 vi.mock('fs', () => ({
   ...vol,
   promises: vol.promises,
-  existsSync: vol.existsSync,
-  accessSync: vol.accessSync,
+  existsSync: vol.existsSync.bind(vol),
+  accessSync: vol.accessSync.bind(vol),
   constants: { W_OK: 2 }
 }));
 vi.mock('fs/promises', () => ({
@@ -19,7 +23,7 @@ vi.mock('fs/promises', () => ({
 }));
 
 describe('Multi-Room Load Tests', () => {
-  let roomsAPI: RoomsAPI;
+  let RoomsAPI: any;
   const testDataDir = '/load-test-data';
 
   // 負荷テスト設定
@@ -29,20 +33,28 @@ describe('Multi-Room Load Tests', () => {
   const TOTAL_AGENTS = NUM_ROOMS * NUM_AGENTS_PER_ROOM;
 
   beforeEach(async () => {
+    // Set environment variable to use test directory
+    process.env.AGENT_COMM_DATA_DIR = testDataDir;
+    
     // ファイルシステムをリセット
     vol.reset();
     vol.fromJSON({
       [`${testDataDir}/rooms.json`]: JSON.stringify({ rooms: {} })
     });
     
-    roomsAPI = new RoomsAPI(testDataDir);
+    // Import RoomsAPI dynamically after setting up mocks
+    const roomsModule = await import('../../../src/features/rooms');
+    RoomsAPI = roomsModule.RoomsAPI;
   });
 
   afterEach(() => {
     vol.reset();
+    // Clean up environment variable
+    delete process.env.AGENT_COMM_DATA_DIR;
   });
 
   it('should handle creation of 100 rooms', async () => {
+    const roomsAPI = new RoomsAPI(testDataDir);
     console.log(`Creating ${NUM_ROOMS} rooms...`);
     const startTime = Date.now();
 
@@ -86,6 +98,7 @@ describe('Multi-Room Load Tests', () => {
   }, 30000); // 30秒のタイムアウト
 
   it('should handle 50 agents entering each room', async () => {
+    const roomsAPI = new RoomsAPI(testDataDir);
     console.log('Setting up rooms for agent entry test...');
     
     // まず10個のルームを作成（全部だと時間がかかりすぎるため）
@@ -146,6 +159,7 @@ describe('Multi-Room Load Tests', () => {
   }, 60000); // 60秒のタイムアウト
 
   it('should handle concurrent room operations', async () => {
+    const roomsAPI = new RoomsAPI(testDataDir);
     console.log('Testing concurrent room operations...');
     const startTime = Date.now();
 
@@ -189,6 +203,7 @@ describe('Multi-Room Load Tests', () => {
   }, 30000);
 
   it('should maintain data consistency under load', async () => {
+    const roomsAPI = new RoomsAPI(testDataDir);
     console.log('Testing data consistency under load...');
 
     // 複数のルームを作成
@@ -240,6 +255,7 @@ describe('Multi-Room Load Tests', () => {
   }, 45000);
 
   it('should handle memory efficiently with large datasets', async () => {
+    const roomsAPI = new RoomsAPI(testDataDir);
     console.log('Testing memory efficiency...');
     
     // 大量のルームとエージェントを作成
