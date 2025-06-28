@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { vol } from 'memfs';
 import { RoomsAPI } from '../../../src/features/rooms';
 import type { AgentProfile } from '../../../src/types/entities';

@@ -159,7 +159,7 @@ describe('ManagementService', () => {
     it('should require confirm=true to clear messages', async () => {
       await expect(
         managementService.clearRoomMessages('general', false)
-      ).rejects.toThrow('Validation failed for field \'confirm\': Confirmation required');
+      ).rejects.toThrow('Confirmation required for clearing room messages');
     });
 
     it('should clear messages when confirm=true', async () => {
