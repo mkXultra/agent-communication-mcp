@@ -60,6 +60,34 @@ export const getMessagesOutputSchema = z.object({
   hasMore: z.boolean(),
 });
 
+// wait_for_messages ツール
+export const waitForMessagesInputSchema = z.object({
+  agentName: agentNameSchema,
+  roomName: roomNameSchema,
+  timeout: z.number()
+    .int()
+    .min(1000, 'Timeout must be at least 1000ms')
+    .max(120000, 'Timeout cannot exceed 120000ms')
+    .optional()
+    .default(120000),
+});
+
+export const waitForMessagesOutputSchema = z.object({
+  messages: z.array(z.object({
+    id: z.string(),
+    agentName: z.string(),
+    roomName: z.string(),
+    message: z.string(),
+    timestamp: z.string(),
+    mentions: z.array(z.string()),
+    metadata: z.record(z.any()).optional(),
+  })),
+  hasNewMessages: z.boolean(),
+  timedOut: z.boolean(),
+  warning: z.string().optional(),
+  waitingAgents: z.array(z.string()).optional(),
+});
+
 // エイリアスを追加（後方互換性のため）
 export const sendMessageSchema = sendMessageInputSchema;
 export const getMessagesSchema = getMessagesInputSchema;
@@ -69,3 +97,5 @@ export type SendMessageInput = z.infer<typeof sendMessageInputSchema>;
 export type SendMessageOutput = z.infer<typeof sendMessageOutputSchema>;
 export type GetMessagesInput = z.infer<typeof getMessagesInputSchema>;
 export type GetMessagesOutput = z.infer<typeof getMessagesOutputSchema>;
+export type WaitForMessagesInput = z.infer<typeof waitForMessagesInputSchema>;
+export type WaitForMessagesOutput = z.infer<typeof waitForMessagesOutputSchema>;

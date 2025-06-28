@@ -56,6 +56,33 @@ export const getMessagesTool: Tool = {
   }
 };
 
+export const waitForMessagesTool: Tool = {
+  name: 'agent_communication_wait_for_messages',
+  description: 'Wait for new messages in a room using long-polling. This tool will block until new messages are available or the timeout is reached. Returns immediately if new messages are already available since the last check.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agentName: {
+        type: 'string',
+        description: 'Name of the agent waiting for messages'
+      },
+      roomName: {
+        type: 'string',
+        description: 'Name of the room to wait for messages in'
+      },
+      timeout: {
+        type: 'number',
+        description: 'Maximum time to wait for new messages in seconds',
+        minimum: 1,
+        maximum: 300,
+        default: 30
+      }
+    },
+    required: ['agentName', 'roomName'],
+    additionalProperties: false
+  }
+};
+
 export async function handleSendMessage(
   args: any,
   messagingAdapter: any
@@ -76,6 +103,27 @@ export async function handleGetMessages(
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   const validatedArgs = getMessagesSchema.parse(args);
   const result = await messagingAdapter.getMessages(validatedArgs);
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify(result)
+    }]
+  };
+}
+
+export async function handleWaitForMessages(
+  args: any,
+  messagingAdapter: any
+): Promise<{ content: Array<{ type: string; text: string }> }> {
+  // Convert timeout from seconds to milliseconds
+  const timeoutMs = args.timeout ? args.timeout * 1000 : undefined;
+  
+  const result = await messagingAdapter.waitForMessages({
+    agentName: args.agentName,
+    roomName: args.roomName,
+    timeout: timeoutMs
+  });
+  
   return {
     content: [{
       type: 'text',

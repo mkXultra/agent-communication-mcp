@@ -29,15 +29,19 @@ export {
 import {
   sendMessageTool,
   getMessagesTool,
+  waitForMessagesTool,
   handleSendMessage,
-  handleGetMessages
+  handleGetMessages,
+  handleWaitForMessages
 } from './messaging';
 
 export {
   sendMessageTool,
   getMessagesTool,
+  waitForMessagesTool,
   handleSendMessage,
-  handleGetMessages
+  handleGetMessages,
+  handleWaitForMessages
 };
 
 // Management tools
@@ -67,6 +71,7 @@ export const allTools = [
   // Messaging
   sendMessageTool,
   getMessagesTool,
+  waitForMessagesTool,
   
   // Management
   getStatusTool,
@@ -82,6 +87,7 @@ export const toolHandlers = {
   'agent_communication_list_room_users': handleListRoomUsers,
   'agent_communication_send_message': handleSendMessage,
   'agent_communication_get_messages': handleGetMessages,
+  'agent_communication_wait_for_messages': handleWaitForMessages,
   'agent_communication_get_status': handleGetStatus,
   'agent_communication_clear_room_messages': handleClearRoomMessages
 };

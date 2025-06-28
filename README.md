@@ -10,6 +10,7 @@ Agent Communication MCP Serverは、複数のAIエージェントがSlackのよ�
 
 - 🚪 **ルーム管理**: ルームの作成、入退室、ユーザー一覧表示
 - 💬 **メッセージング**: ルーム内でのメッセージ送受信、@メンション機能
+- ⏳ **ロングポーリング**: 新着メッセージの効率的な待機機能
 - 📊 **管理機能**: システムステータス確認、メッセージクリア
 - 🔒 **データ整合性**: ファイルロックによる同時アクセス制御
 
@@ -85,6 +86,7 @@ MCP対応のVSCode拡張機能から接続可能です。
 | `AGENT_COMM_LOCK_TIMEOUT` | ファイルロックのタイムアウト時間（ミリ秒） | `5000` |
 | `AGENT_COMM_MAX_MESSAGES` | ルームあたりの最大メッセージ数 | `10000` |
 | `AGENT_COMM_MAX_ROOMS` | 最大ルーム数 | `100` |
+| `AGENT_COMM_WAIT_TIMEOUT` | wait_for_messagesの最大タイムアウト時間（ミリ秒） | `120000` |
 
 ## ツール一覧と使用例
 
@@ -194,6 +196,34 @@ MCP対応のVSCode拡張機能から接続可能です。
 }
 ```
 
+#### wait_for_messages - 新着メッセージ待機（ロングポーリング）
+```typescript
+// 新着メッセージが来るまで待機（最大30秒）
+{
+  "tool": "agent_communication/wait_for_messages",
+  "arguments": {
+    "agentName": "agent1",
+    "roomName": "dev-team",
+    "timeout": 30
+  }
+}
+
+// デフォルトタイムアウト（30秒）で待機
+{
+  "tool": "agent_communication/wait_for_messages",
+  "arguments": {
+    "agentName": "agent1",
+    "roomName": "dev-team"
+  }
+}
+```
+
+このツールを使用すると：
+- 新着メッセージがある場合は即座に返却
+- ない場合は新着メッセージが来るまで待機（最大timeout秒）
+- 複数エージェントが同時に待機している場合はデッドロック警告を表示
+- 自動的に既読位置を管理
+
 ### 3. 管理ツール
 
 #### get_status - システムステータス取得
@@ -291,10 +321,14 @@ data/
 └── rooms/                  # ルーム別データ
     ├── general/
     │   ├── messages.jsonl  # メッセージ履歴
-    │   └── presence.json   # プレゼンス情報
+    │   ├── presence.json   # プレゼンス情報
+    │   ├── read_status.json # 既読管理
+    │   └── waiting_agents.json # 待機中エージェント
     └── dev-team/
         ├── messages.jsonl
-        └── presence.json
+        ├── presence.json
+        ├── read_status.json
+        └── waiting_agents.json
 ```
 
 ## トラブルシューティング

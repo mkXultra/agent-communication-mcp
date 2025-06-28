@@ -96,4 +96,30 @@ export class MessagingAdapter {
     }
     this.api.clearRoomCache(roomName);
   }
+  
+  async waitForMessages(params: { agentName: string; roomName: string; timeout?: number }): Promise<{ messages: Message[]; hasNewMessages: boolean; timedOut: boolean; warning?: string; waitingAgents?: string[] }> {
+    if (!this.api) {
+      await this.initialize();
+    }
+    
+    // Check if room exists
+    if (!this.roomsAdapter) {
+      throw new Error('RoomsAdapter not initialized');
+    }
+    
+    const roomExists = await this.roomsAdapter.roomExists(params.roomName);
+    if (!roomExists) {
+      throw new RoomNotFoundError(params.roomName);
+    }
+    
+    // Check if agent is in room
+    const roomUsers = await this.roomsAdapter.getRoomUsers(params.roomName);
+    if (!roomUsers.includes(params.agentName)) {
+      throw new AgentNotInRoomError(params.agentName, params.roomName);
+    }
+    
+    // Call the API method
+    const result = await this.api!.waitForMessages(params);
+    return result;
+  }
 }

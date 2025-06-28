@@ -46,3 +46,29 @@ export interface MessageStorageData {
   mentions: string[];
   metadata?: Record<string, any>;
 }
+
+export interface WaitForMessagesParams {
+  agentName: string;
+  roomName: string;
+  timeout?: number;
+}
+
+export interface WaitForMessagesResponse {
+  messages: Message[];
+  hasNewMessages: boolean;
+  timedOut: boolean;
+  warning?: string;
+  waitingAgents?: string[];
+}
+
+export interface WaitingAgentInfo {
+  agentName: string;
+  startTime: string;
+  timeout: number;
+}
+
+export interface ReadStatusInfo {
+  agentName: string;
+  lastReadMessageId: string;
+  lastReadTimestamp: string;
+}

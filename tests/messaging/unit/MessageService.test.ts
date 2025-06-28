@@ -9,11 +9,15 @@ describe('MessageService', () => {
     // Clean up test data directory before each test
     const fs = await import('fs/promises');
     try {
-      await fs.rm('./test-data', { recursive: true, force: true });
+      await fs.rm('./test-data-message-service', { recursive: true, force: true });
     } catch {
       // Ignore if doesn't exist
     }
-    messageService = new MessageService('./test-data');
+    
+    // Create the test data directory and rooms/general directory
+    await fs.mkdir('./test-data-message-service/rooms/general', { recursive: true });
+    
+    messageService = new MessageService('./test-data-message-service');
   });
 
   describe('sendMessage', () => {

@@ -70,7 +70,7 @@ describe('Real MCP Server E2E Tests', () => {
   });
   
   describe('Real Server Tool Discovery', () => {
-    it('should list all 9 tools correctly', async () => {
+    it('should list all 10 tools correctly', async () => {
       const response = await transport.simulateRequest({
         jsonrpc: '2.0',
         id: 1,
@@ -82,7 +82,7 @@ describe('Real MCP Server E2E Tests', () => {
       expect(response.result).toBeDefined();
       
       const tools = response.result!.tools;
-      expect(tools).toHaveLength(9);
+      expect(tools).toHaveLength(10);
       
       const expectedTools = [
         'agent_communication_list_rooms',
@@ -92,6 +92,7 @@ describe('Real MCP Server E2E Tests', () => {
         'agent_communication_list_room_users',
         'agent_communication_send_message',
         'agent_communication_get_messages',
+        'agent_communication_wait_for_messages',
         'agent_communication_get_status',
         'agent_communication_clear_room_messages'
       ];
