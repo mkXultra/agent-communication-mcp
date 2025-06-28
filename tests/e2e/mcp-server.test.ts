@@ -8,7 +8,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverPath = path.join(__dirname, '../../dist/index.js');
 const testDataDir = path.join(__dirname, '../../test-data-e2e');
 
-describe('E2E: MCP Server', () => {
+// Skip this test suite in unit test environment (requires built server)
+const skipInUnitTests = process.env.VITEST_POOL_ID && !process.env.E2E_TESTS;
+
+describe.skipIf(skipInUnitTests)('E2E: MCP Server', () => {
   let serverProcess: ChildProcess;
   let messageId = 1;
 
@@ -17,12 +20,7 @@ describe('E2E: MCP Server', () => {
     await fs.rm(testDataDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(testDataDir, { recursive: true });
 
-    // Check if server is built (skip in unit test environment)
-    if (process.env.VITEST_POOL_ID && !process.env.E2E_TESTS) {
-      console.log('Skipping mcp-server test in unit test environment');
-      return;
-    }
-    
+    // Check if server is built
     try {
       await fs.access(serverPath);
     } catch {
@@ -61,11 +59,6 @@ describe('E2E: MCP Server', () => {
   });
 
   afterAll(async () => {
-    // Skip cleanup in unit test environment
-    if (process.env.VITEST_POOL_ID && !process.env.E2E_TESTS) {
-      return;
-    }
-    
     // Kill server process
     if (serverProcess) {
       serverProcess.kill();
