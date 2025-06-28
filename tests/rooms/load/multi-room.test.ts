@@ -8,7 +8,8 @@ import type { AgentProfile } from '../../../src/types/entities';
 // ファイルシステムをモック
 vi.mock('fs', () => ({
   ...vol,
-  promises: vol.promises
+  promises: vol.promises,
+  existsSync: vol.existsSync
 }));
 vi.mock('fs/promises', () => ({
   default: vol.promises,
