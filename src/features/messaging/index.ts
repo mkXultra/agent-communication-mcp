@@ -6,6 +6,8 @@ import {
   MessageListResponse,
   Message
 } from './types/messaging.types';
+import { LockService } from '../../services/LockService';
+import { getDataDirectory } from '../../utils/dataDir';
 
 // Public API interface
 export interface IMessagingAPI {
@@ -18,9 +20,11 @@ export interface IMessagingAPI {
 // Implementation of the public API
 export class MessagingAPI implements IMessagingAPI {
   private readonly messageService: MessageService;
+  private readonly lockService: LockService;
 
-  constructor(dataDir?: string, cacheCapacity?: number) {
-    this.messageService = new MessageService(dataDir, cacheCapacity);
+  constructor(dataDir: string = getDataDirectory(), cacheCapacity?: number, lockService?: LockService) {
+    this.lockService = lockService || new LockService(dataDir);
+    this.messageService = new MessageService(dataDir, cacheCapacity, this.lockService);
   }
 
   async sendMessage(params: SendMessageParams): Promise<SendMessageResponse> {

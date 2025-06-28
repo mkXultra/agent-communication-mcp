@@ -3,6 +3,7 @@ import { MessageValidator } from './MessageValidator';
 import { MessageCache } from './MessageCache';
 import { generateUUID } from './utils';
 import { getDataDirectory } from '../../utils/dataDir';
+import { LockService } from '../../services/LockService';
 import {
   SendMessageParams,
   SendMessageResponse,
@@ -14,9 +15,11 @@ import {
 export class MessageService {
   private readonly storage: MessageStorage;
   private readonly cache: MessageCache;
+  private readonly lockService: LockService;
 
-  constructor(dataDir?: string, cacheCapacity?: number) {
-    this.storage = new MessageStorage(dataDir || getDataDirectory());
+  constructor(dataDir: string = getDataDirectory(), cacheCapacity?: number, lockService?: LockService) {
+    this.lockService = lockService || new LockService(dataDir);
+    this.storage = new MessageStorage(dataDir, this.lockService);
     this.cache = new MessageCache(cacheCapacity);
   }
 

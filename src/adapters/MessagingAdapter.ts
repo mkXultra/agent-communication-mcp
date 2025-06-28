@@ -45,20 +45,15 @@ export class MessagingAdapter {
       throw new AgentNotInRoomError(params.agentName, params.roomName);
     }
     
-    // Send message with file locking
-    return await this.lockService.withLock(
-      `rooms/${params.roomName}/messages.jsonl`,
-      async () => {
-        const result = await this.api!.sendMessage(params);
-        return {
-          success: result.success,
-          messageId: result.messageId,
-          timestamp: result.timestamp,
-          roomName: result.roomName,
-          mentions: result.mentions
-        };
-      }
-    );
+    // LockService is now handled in the storage layer
+    const result = await this.api!.sendMessage(params);
+    return {
+      success: result.success,
+      messageId: result.messageId,
+      timestamp: result.timestamp,
+      roomName: result.roomName,
+      mentions: result.mentions
+    };
   }
   
   async getMessages(params: { agentName?: string; roomName: string; limit?: number; offset?: number; mentionsOnly?: boolean }): Promise<{ roomName: string; messages: Message[]; count: number; hasMore: boolean }> {
@@ -84,19 +79,14 @@ export class MessagingAdapter {
       }
     }
     
-    // Get messages with file locking
-    return await this.lockService.withLock(
-      `rooms/${params.roomName}/messages.jsonl`,
-      async () => {
-        const result = await this.api!.getMessages(params);
-        return {
-          roomName: params.roomName,
-          messages: result.messages,
-          count: result.messages.length,
-          hasMore: result.hasMore
-        };
-      }
-    );
+    // LockService is now handled in the storage layer
+    const result = await this.api!.getMessages(params);
+    return {
+      roomName: params.roomName,
+      messages: result.messages,
+      count: result.messages.length,
+      hasMore: result.hasMore
+    };
   }
   
   clearRoomCache(roomName: string): void {

@@ -33,26 +33,21 @@ export class ManagementAdapter {
       await this.initialize();
     }
     
-    // Get status with distributed locking to ensure consistency
-    return await this.lockService.withLock(
-      'system-status',
-      async () => {
-        const systemStatus = await this.api!.getSystemStatus();
-        
-        // Convert to expected format
-        return {
-          rooms: systemStatus.rooms.map((room: any) => ({
-            name: room.name,
-            onlineUsers: room.onlineUsers,
-            totalMessages: room.totalMessages,
-            storageSize: room.storageSize
-          })),
-          totalRooms: systemStatus.totalRooms,
-          totalOnlineUsers: systemStatus.totalOnlineUsers,
-          totalMessages: systemStatus.totalMessages
-        };
-      }
-    );
+    // LockService is now handled in the storage layer
+    const systemStatus = await this.api!.getSystemStatus();
+    
+    // Convert to expected format
+    return {
+      rooms: systemStatus.rooms.map((room: any) => ({
+        name: room.name,
+        onlineUsers: room.onlineUsers,
+        totalMessages: room.totalMessages,
+        storageSize: room.storageSize
+      })),
+      totalRooms: systemStatus.totalRooms,
+      totalOnlineUsers: systemStatus.totalOnlineUsers,
+      totalMessages: systemStatus.totalMessages
+    };
   }
   
   async clearRoomMessages(params: { roomName: string; confirm: boolean }): Promise<{ success: boolean; roomName: string; clearedCount: number }> {
@@ -70,23 +65,18 @@ export class ManagementAdapter {
       throw new RoomNotFoundError(params.roomName);
     }
     
-    // Clear messages with file locking
-    return await this.lockService.withLock(
-      `rooms/${params.roomName}/messages.jsonl`,
-      async () => {
-        const result = await this.api!.clearRoomMessages(params.roomName, params.confirm);
-        
-        // Clear the message cache for this room
-        if (this.messageAdapter && this.messageAdapter.clearRoomCache) {
-          this.messageAdapter.clearRoomCache(params.roomName);
-        }
-        
-        return {
-          success: result.success,
-          roomName: result.roomName,
-          clearedCount: result.clearedCount
-        };
-      }
-    );
+    // LockService is now handled in the storage layer
+    const result = await this.api!.clearRoomMessages(params.roomName, params.confirm);
+    
+    // Clear the message cache for this room
+    if (this.messageAdapter && this.messageAdapter.clearRoomCache) {
+      this.messageAdapter.clearRoomCache(params.roomName);
+    }
+    
+    return {
+      success: result.success,
+      roomName: result.roomName,
+      clearedCount: result.clearedCount
+    };
   }
 }
