@@ -4,7 +4,9 @@ import {
   SendMessageResponse,
   GetMessagesParams,
   MessageListResponse,
-  Message
+  Message,
+  WaitForMessagesParams,
+  WaitForMessagesResponse
 } from './types/messaging.types';
 import { LockService } from '../../services/LockService';
 import { getDataDirectory } from '../../utils/dataDir';
@@ -15,6 +17,7 @@ export interface IMessagingAPI {
   getMessages(params: GetMessagesParams): Promise<MessageListResponse>;
   getMessageCount(roomName: string): Promise<number>;
   clearRoomCache(roomName: string): void;
+  waitForMessages(params: WaitForMessagesParams): Promise<WaitForMessagesResponse>;
 }
 
 // Implementation of the public API
@@ -42,6 +45,10 @@ export class MessagingAPI implements IMessagingAPI {
   clearRoomCache(roomName: string): void {
     this.messageService.clearRoomCache(roomName);
   }
+
+  async waitForMessages(params: WaitForMessagesParams): Promise<WaitForMessagesResponse> {
+    return await this.messageService.waitForMessages(params);
+  }
 }
 
 // Export types
@@ -50,7 +57,9 @@ export type {
   SendMessageResponse,
   GetMessagesParams,
   MessageListResponse,
-  Message
+  Message,
+  WaitForMessagesParams,
+  WaitForMessagesResponse
 };
 
 // Export services

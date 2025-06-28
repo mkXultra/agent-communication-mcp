@@ -1,9 +1,10 @@
 // Agent Communication MCP Server - Room Service Implementation
 // エージェントB担当：ルーム管理ビジネスロジック
 
-import { IRoomService, IRoomStorage, IPresenceStorage, CreateRoomResult, ListRoomsResult, RoomData, RoomListItem } from '../types/rooms.types';
+import { IRoomService, IRoomStorage, IPresenceStorage, CreateRoomResult, ListRoomsResult, RoomData, RoomListItem, EnterRoomResult, LeaveRoomResult, ListRoomUsersResult } from '../types/rooms.types';
 import { RoomStorage } from './RoomStorage';
 import { PresenceStorage } from '../presence/PresenceStorage';
+import { PresenceService } from '../presence/PresenceService';
 import { RoomAlreadyExistsError, RoomNotFoundError, ValidationError } from '../../../errors';
 import { getDataDirectory } from '../../../utils/dataDir';
 import { LockService } from '../../../services/LockService';
@@ -11,20 +12,36 @@ import { LockService } from '../../../services/LockService';
 export class RoomService implements IRoomService {
   private roomStorage: IRoomStorage;
   private presenceStorage: IPresenceStorage;
+  private presenceService: PresenceService;
   private lockService: LockService;
 
   constructor(dataDir: string = getDataDirectory(), lockService?: LockService) {
     this.lockService = lockService || new LockService(dataDir);
     this.roomStorage = new RoomStorage(dataDir, this.lockService);
     this.presenceStorage = new PresenceStorage(dataDir, this.lockService);
+    this.presenceService = new PresenceService(dataDir, this.lockService);
   }
 
-  async createRoom(roomName: string, description?: string): Promise<CreateRoomResult> {
+  async createRoom(params: { roomName: string; description?: string } | string, description?: string): Promise<CreateRoomResult> {
+    // Handle both old API (string, string) and new API ({ roomName, description })
+    let roomName: string;
+    let desc: string | undefined;
+    
+    if (typeof params === 'string') {
+      // Old API: createRoom(roomName, description)
+      roomName = params;
+      desc = description;
+    } else {
+      // New API: createRoom({ roomName, description })
+      roomName = params.roomName;
+      desc = params.description;
+    }
+    
     // バリデーション
     this.validateRoomName(roomName);
     
-    if (description !== undefined) {
-      this.validateDescription(description);
+    if (desc !== undefined) {
+      this.validateDescription(desc);
     }
 
     // 既存ルームチェック
@@ -34,7 +51,7 @@ export class RoomService implements IRoomService {
     }
 
     // ルーム作成
-    await this.roomStorage.createRoom(roomName, description);
+    await this.roomStorage.createRoom(roomName, desc);
 
     return {
       success: true,
@@ -172,5 +189,60 @@ export class RoomService implements IRoomService {
   // テスト・デバッグ用メソッド
   async clearAllRooms(): Promise<void> {
     await this.roomStorage.clearAllRooms();
+  }
+
+  // Presence delegation methods for compatibility
+  async enterRoom(params: { agentName: string; roomName: string; profile?: any } | string, roomName?: string, profile?: any): Promise<EnterRoomResult> {
+    // Handle both old API (agentName, roomName, profile) and new API ({ agentName, roomName, profile })
+    let agentName: string;
+    let room: string;
+    let prof: any;
+    
+    if (typeof params === 'string') {
+      // Old API: enterRoom(agentName, roomName, profile)
+      agentName = params;
+      room = roomName!;
+      prof = profile;
+    } else {
+      // New API: enterRoom({ agentName, roomName, profile })
+      agentName = params.agentName;
+      room = params.roomName;
+      prof = params.profile;
+    }
+    
+    return await this.presenceService.enterRoom(agentName, room, prof);
+  }
+
+  async leaveRoom(params: { agentName: string; roomName: string } | string, roomName?: string): Promise<LeaveRoomResult> {
+    // Handle both old API (agentName, roomName) and new API ({ agentName, roomName })
+    let agentName: string;
+    let room: string;
+    
+    if (typeof params === 'string') {
+      // Old API: leaveRoom(agentName, roomName)
+      agentName = params;
+      room = roomName!;
+    } else {
+      // New API: leaveRoom({ agentName, roomName })
+      agentName = params.agentName;
+      room = params.roomName;
+    }
+    
+    return await this.presenceService.leaveRoom(agentName, room);
+  }
+
+  async listRoomUsers(params: { roomName: string } | string): Promise<ListRoomUsersResult> {
+    // Handle both old API (roomName) and new API ({ roomName })
+    let room: string;
+    
+    if (typeof params === 'string') {
+      // Old API: listRoomUsers(roomName)
+      room = params;
+    } else {
+      // New API: listRoomUsers({ roomName })
+      room = params.roomName;
+    }
+    
+    return await this.presenceService.listRoomUsers(room);
   }
 }

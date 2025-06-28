@@ -137,4 +137,50 @@ export class MessageStorage {
       );
     }
   }
+
+  async getAllMessages(roomName: string): Promise<Message[]> {
+    const filePath = this.getMessagesFilePath(roomName);
+    
+    try {
+      // Check if file exists
+      try {
+        await fs.access(filePath);
+      } catch {
+        return [];
+      }
+
+      const fileContent = await fs.readFile(filePath, 'utf8');
+      const lines = fileContent.trim().split('\n').filter(line => line.trim());
+      
+      // Parse all messages
+      const allMessages: Message[] = [];
+      for (const line of lines) {
+        try {
+          const data: MessageStorageData = JSON.parse(line);
+          const message: Message = {
+            ...data,
+            roomName
+          };
+          allMessages.push(message);
+        } catch (parseError) {
+          // Skip malformed lines
+          continue;
+        }
+      }
+
+      // Sort by timestamp (oldest first for read tracking)
+      allMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+      return allMessages;
+    } catch (error) {
+      throw new StorageError(
+        'getAllMessages',
+        `Failed to get all messages: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  get dataDirectory(): string {
+    return this.dataDir;
+  }
 }
