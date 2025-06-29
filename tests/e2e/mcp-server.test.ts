@@ -121,7 +121,7 @@ describe.skipIf(skipInUnitTests)('E2E: MCP Server', () => {
       const result = await sendRequest('tools/list');
       
       expect(result.tools).toBeDefined();
-      expect(result.tools).toHaveLength(9);
+      expect(result.tools).toHaveLength(10);
       
       const toolNames = result.tools.map((t: any) => t.name);
       expect(toolNames).toContain('agent_communication_list_rooms');
@@ -131,6 +131,7 @@ describe.skipIf(skipInUnitTests)('E2E: MCP Server', () => {
       expect(toolNames).toContain('agent_communication_list_room_users');
       expect(toolNames).toContain('agent_communication_send_message');
       expect(toolNames).toContain('agent_communication_get_messages');
+      expect(toolNames).toContain('agent_communication_wait_for_messages');
       expect(toolNames).toContain('agent_communication_get_status');
       expect(toolNames).toContain('agent_communication_clear_room_messages');
     });

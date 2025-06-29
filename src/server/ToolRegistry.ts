@@ -86,6 +86,7 @@ export class ToolRegistry {
               
             case 'agent_communication_send_message':
             case 'agent_communication_get_messages':
+            case 'agent_communication_wait_for_messages':
               result = await handler(args, this.messagingAdapter);
               break;
               
