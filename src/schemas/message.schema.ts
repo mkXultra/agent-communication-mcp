@@ -18,7 +18,7 @@ const agentNameSchema = z
 const messageContentSchema = z
   .string()
   .min(1, 'Message cannot be empty')
-  .max(1000, 'Message cannot exceed 1000 characters');
+  .max(2000, 'Message cannot exceed 2000 characters');
 
 // send_message ツール（実装済み）
 export const sendMessageInputSchema = z.object({

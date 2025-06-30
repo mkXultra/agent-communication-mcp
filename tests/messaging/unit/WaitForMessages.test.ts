@@ -749,8 +749,8 @@ describe('WaitForMessages', () => {
     });
 
     it('should handle very long message content', async () => {
-      // Message validator has a 1000 character limit
-      const longMessage = 'x'.repeat(1000);
+      // Message validator has a 2000 character limit
+      const longMessage = 'x'.repeat(2000);
       
       await messageService.sendMessage({
         agentName: 'bob',
