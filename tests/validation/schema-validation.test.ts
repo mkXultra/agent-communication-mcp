@@ -124,7 +124,7 @@ describe('Schema Validation Tests', () => {
         {
           agentName: 'alice',
           roomName: 'test-room',
-          message: 'x'.repeat(1001), // too long
+          message: 'x'.repeat(2001), // too long
         },
         {
           agentName: '', // empty agent name

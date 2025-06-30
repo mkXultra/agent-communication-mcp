@@ -1,6 +1,6 @@
 {
   "name": "agent-communication-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server enabling room-based messaging between multiple agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

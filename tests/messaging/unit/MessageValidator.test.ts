@@ -71,7 +71,7 @@ describe('MessageValidator', () => {
       const invalidParams = {
         agentName: 'test-agent',
         roomName: 'test-room',
-        message: 'a'.repeat(1001)
+        message: 'a'.repeat(2001)
       };
 
       expect(() => MessageValidator.validateSendMessage(invalidParams)).toThrow(ValidationError);

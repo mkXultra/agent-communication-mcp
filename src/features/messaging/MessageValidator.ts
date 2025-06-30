@@ -6,7 +6,7 @@ import { WAIT_CONSTANTS } from './constants';
 export const sendMessageSchema = z.object({
   agentName: z.string().min(1).max(50),
   roomName: z.string().min(1).regex(/^[a-zA-Z0-9-_]+$/),
-  message: z.string().min(1).max(1000),
+  message: z.string().min(1).max(2000),
   metadata: z.record(z.any()).optional()
 });
 
