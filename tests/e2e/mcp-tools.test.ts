@@ -37,7 +37,7 @@ describe('MCP Tools E2E Tests', () => {
   });
   
   describe('Tool Discovery', () => {
-    it('should list all 9 MCP tools correctly', async () => {
+    it('should list all 10 MCP tools correctly', async () => {
       const listToolsResponse = await transport.simulateRequest({
         jsonrpc: '2.0',
         id: 1,
@@ -49,7 +49,7 @@ describe('MCP Tools E2E Tests', () => {
       expect(listToolsResponse.result).toBeDefined();
       
       const tools = listToolsResponse.result!.tools;
-      expect(tools).toHaveLength(9);
+      expect(tools).toHaveLength(10);
       
       const expectedTools = [
         'agent_communication_list_rooms',
@@ -59,6 +59,7 @@ describe('MCP Tools E2E Tests', () => {
         'agent_communication_list_room_users',
         'agent_communication_send_message',
         'agent_communication_get_messages',
+        'agent_communication_wait_for_messages',
         'agent_communication_get_status',
         'agent_communication_clear_room_messages'
       ];
@@ -656,6 +657,57 @@ describe('MCP Tools E2E Tests', () => {
         expect(response.error).toBeDefined();
         expect(response.error!.code).toBe(-32602);
         expect(response.error!.message).toContain('not in room');
+      });
+    });
+
+    describe('wait_for_messages', () => {
+      beforeEach(async () => {
+        // Setup room and agent
+        await transport.simulateRequest({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'agent_communication_create_room',
+            arguments: {
+              roomName: 'waiting-room'
+            }
+          }
+        });
+        
+        await transport.simulateRequest({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: {
+            name: 'agent_communication_enter_room',
+            arguments: {
+              agentName: 'waiter',
+              roomName: 'waiting-room'
+            }
+          }
+        });
+      });
+
+      it('should invoke wait_for_messages successfully (timeout expected)', async () => {
+        const response = await transport.simulateRequest({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'agent_communication_wait_for_messages',
+            arguments: {
+              agentName: 'waiter',
+              roomName: 'waiting-room',
+              timeout: 1 // 1 second timeout for test
+            }
+          }
+        });
+
+        expect(response.error).toBeUndefined();
+        const result = JSON.parse(response.result!.content[0].text);
+        expect(result.timedOut).toBe(true);
+        expect(result.messages).toEqual([]);
       });
     });
   });

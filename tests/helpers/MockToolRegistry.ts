@@ -120,6 +120,20 @@ export class MockToolRegistry {
           }
         },
         {
+          name: 'agent_communication_wait_for_messages',
+          description: 'Wait for new messages in a room',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              agentName: { type: 'string' },
+              roomName: { type: 'string' },
+              timeout: { type: 'number' }
+            },
+            required: ['agentName', 'roomName'],
+            additionalProperties: false
+          }
+        },
+        {
           name: 'agent_communication_get_status',
           description: 'Get server status',
           inputSchema: {
@@ -156,6 +170,7 @@ export class MockToolRegistry {
           'agent_communication_list_room_users',
           'agent_communication_send_message',
           'agent_communication_get_messages',
+          'agent_communication_wait_for_messages',
           'agent_communication_get_status',
           'agent_communication_clear_room_messages'
         ];
@@ -211,6 +226,17 @@ export class MockToolRegistry {
             }
             if (args.before !== undefined && typeof args.before !== 'string') {
               throw new McpError(ErrorCode.InvalidParams, 'Validation error: Before parameter must be a string');
+            }
+            break;
+          case 'agent_communication_wait_for_messages':
+            if (!args?.agentName || typeof args.agentName !== 'string' || args.agentName.trim() === '') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Agent name cannot be empty');
+            }
+            if (!args?.roomName || typeof args.roomName !== 'string' || args.roomName.trim() === '') {
+              throw new McpError(ErrorCode.InvalidParams, 'Validation error: Room name cannot be empty');
+            }
+            if (args.timeout !== undefined && (typeof args.timeout !== 'number' || args.timeout < 0)) {
+               throw new McpError(ErrorCode.InvalidParams, 'Validation error: Timeout must be a positive number');
             }
             break;
           case 'agent_communication_list_room_users':
@@ -299,6 +325,17 @@ export class MockToolRegistry {
             const messages = this.dataLayer.getMessages(args.roomName, args.limit, args.before, args.offset);
             return { content: [{ type: 'text', text: JSON.stringify({ messages }) }] };
           
+          case 'agent_communication_wait_for_messages':
+            if (!this.dataLayer.roomExists(args.roomName)) {
+              throw new RoomNotFoundError(args.roomName);
+            }
+            const waitingAgents = this.dataLayer.getRoomAgents(args.roomName);
+            if (!waitingAgents.includes(args.agentName)) {
+               throw new AgentNotInRoomError(args.agentName, args.roomName);
+            }
+            // Mock immediate timeout response
+            return { content: [{ type: 'text', text: JSON.stringify({ messages: [], hasNewMessages: false, timedOut: true }) }] };
+
           case 'agent_communication_get_status':
             const stats = this.dataLayer.getSystemStats();
             const rooms = this.dataLayer.getAllRooms().map(room => {
