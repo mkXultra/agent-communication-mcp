@@ -11,6 +11,9 @@ describe('Management Statistics Accuracy Integration Tests', () => {
   let statsCollector: any;
 
   beforeEach(async () => {
+    // Set environment variable to use 'data' directory
+    process.env.AGENT_COMM_DATA_DIR = 'data';
+
     // Reset the virtual file system
     vol.reset();
     
@@ -161,6 +164,7 @@ describe('Management Statistics Accuracy Integration Tests', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    delete process.env.AGENT_COMM_DATA_DIR;
   });
 
   describe('Cross-service Statistics Consistency', () => {

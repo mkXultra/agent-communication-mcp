@@ -14,6 +14,7 @@ describe('Management Statistics Accuracy Verification', () => {
   let statsCollector: StatsCollector;
 
   beforeEach(() => {
+    process.env.AGENT_COMM_DATA_DIR = 'test-data';
     vol.reset();
     managementService = new ManagementService('./test-data');
     dataScanner = new DataScanner('./test-data');
@@ -22,6 +23,7 @@ describe('Management Statistics Accuracy Verification', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    delete process.env.AGENT_COMM_DATA_DIR;
   });
 
   describe('Directory Scanning Accuracy', () => {

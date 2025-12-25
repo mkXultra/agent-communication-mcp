@@ -24,9 +24,12 @@ describe('RoomService', () => {
   const testDataDir = '/test-data';
 
   beforeEach(() => {
+    // Set environment variable to use test directory
+    process.env.AGENT_COMM_DATA_DIR = testDataDir;
+
     // Clear all mocks
     vi.clearAllMocks();
-    
+
     // ファイルシステムをリセット
     vol.reset();
     vol.fromJSON({}, testDataDir);
@@ -36,6 +39,7 @@ describe('RoomService', () => {
 
   afterEach(() => {
     vol.reset();
+    delete process.env.AGENT_COMM_DATA_DIR;
   });
 
   describe('createRoom', () => {

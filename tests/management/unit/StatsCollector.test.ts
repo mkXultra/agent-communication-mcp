@@ -9,6 +9,9 @@ describe('StatsCollector', () => {
   let statsCollector: any;
 
   beforeEach(async () => {
+    // Set environment variable to use 'data' directory
+    process.env.AGENT_COMM_DATA_DIR = 'data';
+
     // Reset the virtual file system
     vol.reset();
     
@@ -75,6 +78,7 @@ describe('StatsCollector', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    delete process.env.AGENT_COMM_DATA_DIR;
   });
 
   describe('collectSystemStats', () => {
