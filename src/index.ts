@@ -5,7 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ToolRegistry } from './server/ToolRegistry.js';
 import { ErrorHandler } from './server/ErrorHandler.js';
 import { getDataDirectory } from './utils/dataDir.js';
-import { resolveCloudConfig } from './cloud/index.js';
+import { fileModeNotice, resolveCloudConfig } from './cloud/index.js';
 
 async function main() {
   try {
@@ -59,6 +59,7 @@ async function main() {
     
     console.error('Agent Communication MCP Server started on stdio');
     
+    // docs/cloud-architecture.md §5.1: AGENT_COMM_TOKEN selects cloud mode. stderr only: stdout is the MCP stdio channel.
     const cloudConfig = resolveCloudConfig();
     if (cloudConfig) {
       console.error(`Cloud mode: ${cloudConfig.apiUrl}`);
@@ -67,6 +68,8 @@ async function main() {
         await toolRegistry.shutdown();
         process.exit(0);
       });
+    } else {
+      console.error(fileModeNotice());
     }
     
   } catch (error) {

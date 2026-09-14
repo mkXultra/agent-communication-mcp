@@ -26,7 +26,7 @@ let nextId = 1;
 
 /**
  * Builds a server the way src/index.ts does. The operating mode is taken from the environment at this
- * point (AGENT_COMM_API_URL + AGENT_COMM_TOKEN -> cloud, otherwise the given data directory).
+ * point (AGENT_COMM_TOKEN -> cloud at AGENT_COMM_API_URL or the default URL, otherwise the given data directory).
  */
 export async function createMcpClient(dataDir?: string): Promise<McpTestClient> {
   const server = new Server({ name: 'agent-communication', version: '1.0.0' }, { capabilities: { tools: {} } });

@@ -8,7 +8,7 @@ export class ManagementAdapter {
   private api?: IManagementAPI;
   private roomsAdapter?: any; // Will be injected
   private messageAdapter?: any; // Will be injected
-  // Cloud mode (AGENT_COMM_API_URL + AGENT_COMM_TOKEN): GET /status and DELETE /rooms/{room}/messages instead of DataScanner
+  // Cloud mode (AGENT_COMM_TOKEN set): GET /status and DELETE /rooms/{room}/messages instead of DataScanner
   private readonly cloud: CloudBackend | null = getCloudBackend();
   
   constructor(

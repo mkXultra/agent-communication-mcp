@@ -19,7 +19,7 @@ export class ToolRegistry {
   private messagingAdapter: MessagingAdapter;
   private roomsAdapter: RoomsAdapter;
   private managementAdapter: ManagementAdapter;
-  // Cloud mode when AGENT_COMM_API_URL + AGENT_COMM_TOKEN are set (docs/cloud-architecture.md §5.1)
+  // Cloud mode when AGENT_COMM_TOKEN is set (docs/cloud-architecture.md §5.1)
   private readonly cloud: CloudBackend | null = getCloudBackend();
   
   constructor(dataDir?: string) {

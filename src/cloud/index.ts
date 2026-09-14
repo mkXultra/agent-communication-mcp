@@ -61,7 +61,7 @@ export { CloudManagementService } from './CloudManagementService.js';
 export { CloudMessagingService } from './CloudMessagingService.js';
 export { CloudRoomsService } from './CloudRoomsService.js';
 export { CloudWaitService } from './CloudWaitService.js';
-export { API_URL_ENV, TOKEN_ENV, getOperatingMode, resolveCloudConfig } from './config.js';
+export { API_URL_ENV, DEFAULT_API_URL, TOKEN_ENV, fileModeNotice, getOperatingMode, resolveCloudConfig } from './config.js';
 export type { CloudConfig, OperatingMode } from './config.js';
 export { CloudTransportError, toAppError, parseApiErrorBody } from './errors.js';
 export { cloudFetch } from './http.js';

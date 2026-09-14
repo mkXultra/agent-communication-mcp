@@ -61,8 +61,8 @@ export default defineConfig({
     // the machine with another file of this run. The agora instances are started by the globalSetup before any test.
     projects: [
       {
-        // Cloud mode (AGENT_COMM_API_URL + AGENT_COMM_TOKEN) against agora started with `wrangler dev`
-        // (AGORA_DIR, default ../agora): the existing e2e and integration tests, unchanged, in cloud mode.
+        // Cloud mode (AGENT_COMM_TOKEN) against agora started with `wrangler dev` (AGORA_DIR, default ../agora), which
+        // AGENT_COMM_API_URL points at: the existing e2e and integration tests, unchanged, in cloud mode.
         extends: true,
         test: {
           name: 'cloud-compat',

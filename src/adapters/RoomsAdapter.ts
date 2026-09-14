@@ -8,7 +8,7 @@ import { getCloudBackend, type CloudBackend } from '../cloud/index.js';
 export class RoomsAdapter {
   private api?: IRoomsAPI;
   private messageAdapter?: any; // Will be injected to get message counts
-  // Cloud mode (AGENT_COMM_API_URL + AGENT_COMM_TOKEN) replaces the features/ implementation and LockService with HTTP calls
+  // Cloud mode (AGENT_COMM_TOKEN set) replaces the features/ implementation and LockService with HTTP calls
   private readonly cloud: CloudBackend | null = getCloudBackend();
   
   constructor(

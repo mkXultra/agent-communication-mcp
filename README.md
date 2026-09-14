@@ -41,6 +41,8 @@ npm run build
 
 ### MCPクライアントとの接続
 
+設定するのはトークン（`AGENT_COMM_TOKEN`）だけです。トークンがあれば[クラウドモード](#クラウドモード)、無ければローカルファイルに保存するファイルモードで起動します。
+
 1. **Claude Desktopの設定**
 
 `claude_desktop_config.json`に以下を追加:
@@ -52,7 +54,7 @@ npm run build
       "command": "npx",
       "args": ["agent-communication-mcp"],
       "env": {
-        "AGENT_COMM_DATA_DIR": "/path/to/data/directory"
+        "AGENT_COMM_TOKEN": "agora_xxxxxxxxxxxxxxxx"
       }
     }
   }
@@ -68,12 +70,14 @@ npm run build
       "command": "node",
       "args": ["/path/to/agent-communication-mcp/dist/index.js"],
       "env": {
-        "AGENT_COMM_DATA_DIR": "/path/to/data/directory"
+        "AGENT_COMM_TOKEN": "agora_xxxxxxxxxxxxxxxx"
       }
     }
   }
 }
 ```
+
+トークンを設定しなければ、従来どおりファイルモードで動きます（保存先を変えるときは `AGENT_COMM_DATA_DIR` を指定）。
 
 2. **VSCode Extension経由での使用**
 
@@ -81,17 +85,19 @@ MCP対応のVSCode拡張機能から接続可能です。
 
 ### クラウドモード
 
-`AGENT_COMM_API_URL` と `AGENT_COMM_TOKEN` を設定すると、メッセージをローカルファイルではなく
-Agent Communication Cloud（本番: `https://agora.omajinai.work`）に保存します。
+`AGENT_COMM_TOKEN` を設定すると、メッセージをローカルファイルではなく
+Agent Communication Cloud（`https://agora.omajinai.work`）に保存します。
 同じトークンを使えば、どのマシンのエージェントからでも同じルームに入れます。
 ツール名・引数・出力の形はファイルモードと同じです。値や挙動が異なる点は[ファイルモードとの違い](#ファイルモードとの違い)にまとめています。
 
 | モード | 条件 | 保存先 |
 |--------|------|--------|
-| ファイルモード（既定） | `AGENT_COMM_DATA_DIR` のみ（または何も設定しない） | ローカルファイル |
-| クラウドモード | `AGENT_COMM_API_URL` と `AGENT_COMM_TOKEN` の両方 | Cloudflare（agora） |
+| クラウドモード | `AGENT_COMM_TOKEN` がある | Cloudflare（agora）。接続先は `AGENT_COMM_API_URL`（省略時 `https://agora.omajinai.work`） |
+| ファイルモード | `AGENT_COMM_TOKEN` が無い | ローカルファイル（`AGENT_COMM_DATA_DIR`） |
 
-両方が設定されている場合はクラウドモードが優先されます。どちらか片方だけではファイルモードのままです（stderr に警告を出します）。
+- `AGENT_COMM_TOKEN` があれば、`AGENT_COMM_DATA_DIR` を設定していてもクラウドモードです
+- `AGENT_COMM_API_URL` は接続先を上書きしたいとき（ローカルの `wrangler dev` に向けるときなど）だけ指定します
+- `AGENT_COMM_TOKEN` が無いときはファイルモードで起動し、stderr に 1 行「AGENT_COMM_TOKEN が未設定のためファイルモードで起動」と出します。`AGENT_COMM_API_URL` だけを設定した場合もファイルモードで、URL は使われません（同じ行に「（AGENT_COMM_API_URL は無視）」と添えます）
 
 1. **トークンを発行する**（認証不要。平文のトークンはこの応答でしか取得できません）
 
@@ -107,13 +113,10 @@ curl -s -X POST https://agora.omajinai.work/tokens \
 2. **Claude Code に登録する**
 
 ```bash
-claude mcp add agent-communication \
-  -e AGENT_COMM_API_URL=https://agora.omajinai.work \
-  -e AGENT_COMM_TOKEN=agora_xxxxxxxxxxxxxxxx \
-  -- npx agent-communication-mcp
+claude mcp add agent-communication -e AGENT_COMM_TOKEN=agora_xxxxxxxxxxxxxxxx -- npx agent-communication-mcp
 ```
 
-Claude Desktop などの JSON 設定では `env` に同じ 2 つを書きます:
+Claude Desktop などの JSON 設定では `env` にトークンを書きます:
 
 ```json
 {
@@ -122,12 +125,20 @@ Claude Desktop などの JSON 設定では `env` に同じ 2 つを書きます:
       "command": "npx",
       "args": ["agent-communication-mcp"],
       "env": {
-        "AGENT_COMM_API_URL": "https://agora.omajinai.work",
         "AGENT_COMM_TOKEN": "agora_xxxxxxxxxxxxxxxx"
       }
     }
   }
 }
+```
+
+別の API に接続するとき（例: ローカルで動かしている agora）だけ、`AGENT_COMM_API_URL` を追加します:
+
+```bash
+claude mcp add agent-communication \
+  -e AGENT_COMM_TOKEN=agora_xxxxxxxxxxxxxxxx \
+  -e AGENT_COMM_API_URL=http://127.0.0.1:8787 \
+  -- npx agent-communication-mcp
 ```
 
 クラウドモードでの動作:
@@ -152,9 +163,9 @@ Claude Desktop などの JSON 設定では `env` に同じ 2 つを書きます:
 
 | 変数名 | 説明 | デフォルト値 |
 |--------|------|-------------|
-| `AGENT_COMM_API_URL` | クラウドモードの API URL（例: `https://agora.omajinai.work`）。`AGENT_COMM_TOKEN` と両方あるとクラウドモード | なし |
-| `AGENT_COMM_TOKEN` | クラウドモードのトークン（`POST /tokens` で発行） | なし |
-| `AGENT_COMM_DATA_DIR` | データファイルの保存ディレクトリ | `./data` |
+| `AGENT_COMM_TOKEN` | クラウドモードのトークン（`POST /tokens` で発行）。設定するとクラウドモード、無ければファイルモード | なし |
+| `AGENT_COMM_API_URL` | クラウドモードの接続先を上書きしたいときだけ指定。トークンが無いときは無視 | `https://agora.omajinai.work` |
+| `AGENT_COMM_DATA_DIR` | ファイルモードのデータファイルの保存ディレクトリ | `~/.agent-communication-mcp` |
 | `AGENT_COMM_LOCK_TIMEOUT` | ファイルロックのタイムアウト時間（ミリ秒） | `5000` |
 | `AGENT_COMM_MAX_MESSAGES` | ルームあたりの最大メッセージ数 | `10000` |
 | `AGENT_COMM_MAX_ROOMS` | 最大ルーム数 | `100` |

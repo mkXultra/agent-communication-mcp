@@ -1,10 +1,14 @@
 // The MCP server as MCP clients run it (stdio, JSON-RPC), in cloud mode against the real agora.
 // Two server processes share one room: a wait in one process is released by a message sent from the other.
+// Also the mode the server chooses at startup from its environment (docs/cloud-architecture.md §5.1), with what it
+// writes to stderr and nothing but JSON-RPC on stdout.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
+import { promises as fs } from 'fs';
+import os from 'os';
 import path from 'path';
-import { CloudApiClient } from '../../src/cloud/index.js';
+import { CloudApiClient, DEFAULT_API_URL } from '../../src/cloud/index.js';
 import { waitUntil } from './harness/mcp.js';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -14,6 +18,8 @@ const token = process.env.AGENT_COMM_TOKEN!;
 
 class StdioServer {
   stderr = '';
+  /** Every line written to stdout (the MCP channel), parsed or not. */
+  readonly stdoutLines: string[] = [];
   private stdout = '';
   private nextId = 1;
   private readonly pending = new Map<number, (message: any) => void>();
@@ -28,7 +34,14 @@ class StdioServer {
         const line = this.stdout.slice(0, newline).trim();
         this.stdout = this.stdout.slice(newline + 1);
         if (!line) continue;
-        const message = JSON.parse(line);
+        this.stdoutLines.push(line);
+        let message: { id?: number };
+        try {
+          message = JSON.parse(line);
+        } catch {
+          continue; // Not JSON-RPC: kept in stdoutLines for the assertions.
+        }
+        if (message.id === undefined) continue;
         this.pending.get(message.id)?.(message);
         this.pending.delete(message.id);
       }
@@ -213,4 +226,86 @@ describe('stdio MCP server in cloud mode', () => {
     expect(await server.waitForExit(20000)).toBe(1);
     expect(server.stderr).toContain('AGENT_COMM_API_URL must use http or https');
   }, 30000);
+});
+
+describe('stdio MCP server: the mode chosen at startup', () => {
+  const started: StdioServer[] = [];
+  const api = new CloudApiClient({ apiUrl: agoraUrl, token });
+  let dataDir: string;
+
+  beforeEach(async () => {
+    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-comm-startup-'));
+  });
+
+  afterEach(async () => {
+    for (const server of started.splice(0)) {
+      if (server.process.exitCode === null) server.process.kill('SIGKILL');
+    }
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  async function start(env: Record<string, string | undefined>): Promise<StdioServer> {
+    const server = await StdioServer.start(env);
+    started.push(server);
+    return server;
+  }
+
+  /** Stops a file-mode server the way an MCP client host does (it keeps running when stdin closes). */
+  async function stop(server: StdioServer): Promise<void> {
+    server.process.kill('SIGTERM');
+    expect(await server.waitForExit()).toBe(0);
+  }
+
+  function modeLines(server: StdioServer): string[] {
+    return server.stderr.split('\n').filter((line) => line.includes('ファイルモード') || line.startsWith('Cloud mode'));
+  }
+
+  function expectOnlyJsonRpcOnStdout(server: StdioServer): void {
+    expect(server.stdoutLines.length).toBeGreaterThan(0);
+    for (const line of server.stdoutLines) expect(JSON.parse(line)).toMatchObject({ jsonrpc: '2.0' });
+  }
+
+  it('starts in file mode without AGENT_COMM_TOKEN and says so in one stderr line', async () => {
+    const server = await start({ AGENT_COMM_TOKEN: undefined, AGENT_COMM_API_URL: undefined, AGENT_COMM_DATA_DIR: dataDir });
+    expect(await server.tool('create_room', { roomName: 'file-mode-room' })).toEqual({ success: true, roomName: 'file-mode-room' });
+    expect(Object.keys(JSON.parse(await fs.readFile(path.join(dataDir, 'rooms.json'), 'utf8')).rooms)).toEqual(['file-mode-room']);
+
+    expect(modeLines(server)).toEqual(['AGENT_COMM_TOKEN が未設定のためファイルモードで起動']);
+    expectOnlyJsonRpcOnStdout(server);
+    await stop(server);
+  }, 60000);
+
+  it('ignores AGENT_COMM_API_URL without a token: file mode, and the stderr line says the URL is ignored', async () => {
+    const server = await start({ AGENT_COMM_TOKEN: undefined, AGENT_COMM_API_URL: agoraUrl, AGENT_COMM_DATA_DIR: dataDir });
+    await server.tool('create_room', { roomName: 'url-only-room' });
+    expect(Object.keys(JSON.parse(await fs.readFile(path.join(dataDir, 'rooms.json'), 'utf8')).rooms)).toEqual(['url-only-room']);
+    expect((await api.listRooms()).map((room) => room.name)).not.toContain('url-only-room');
+
+    expect(modeLines(server)).toEqual(['AGENT_COMM_TOKEN が未設定のためファイルモードで起動（AGENT_COMM_API_URL は無視）']);
+    expectOnlyJsonRpcOnStdout(server);
+    await stop(server);
+  }, 60000);
+
+  it('starts in cloud mode at the default API URL with only AGENT_COMM_TOKEN', async () => {
+    // Only startup and tools/list: no tool call, so nothing is sent to the production API.
+    const server = await start({ AGENT_COMM_TOKEN: 'agora_startup_test_token', AGENT_COMM_API_URL: undefined, AGENT_COMM_DATA_DIR: dataDir });
+    const listed = await server.request('tools/list');
+    expect(listed.result.tools).toHaveLength(10);
+
+    expect(modeLines(server)).toEqual([`Cloud mode: ${DEFAULT_API_URL}`]);
+    expectOnlyJsonRpcOnStdout(server);
+    expect(await server.closeStdin()).toBe(0);
+    expect(await fs.readdir(dataDir)).toEqual([]);
+  }, 60000);
+
+  it('starts in cloud mode at AGENT_COMM_API_URL when it is set together with the token', async () => {
+    const server = await start({ AGENT_COMM_TOKEN: token, AGENT_COMM_API_URL: agoraUrl, AGENT_COMM_DATA_DIR: dataDir });
+    expect(await server.tool('create_room', { roomName: 'url-and-token-room' })).toEqual({ success: true, roomName: 'url-and-token-room' });
+    expect((await api.listRooms()).map((room) => room.name)).toContain('url-and-token-room');
+
+    expect(modeLines(server)).toEqual([`Cloud mode: ${agoraUrl}`]);
+    expectOnlyJsonRpcOnStdout(server);
+    expect(await server.closeStdin()).toBe(0);
+    expect(await fs.readdir(dataDir)).toEqual([]);
+  }, 60000);
 });

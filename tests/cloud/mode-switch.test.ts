@@ -1,13 +1,22 @@
 // Operating mode selection (docs/cloud-architecture.md §5.1)
-// - AGENT_COMM_DATA_DIR only           -> file mode
-// - AGENT_COMM_API_URL + AGENT_COMM_TOKEN -> cloud mode, also when AGENT_COMM_DATA_DIR is set
-// The cloud side is checked against the agora started by the harness, the file side on disk.
+// - AGENT_COMM_TOKEN set     -> cloud mode (also when AGENT_COMM_DATA_DIR is set), at AGENT_COMM_API_URL or else the
+//                               default https://agora.omajinai.work
+// - AGENT_COMM_TOKEN not set -> file mode (AGENT_COMM_API_URL alone is ignored), with one line about it on stderr
+// The cloud side is checked against the agora started by the harness, the file side on disk. Nothing here contacts the
+// default (production) URL: configurations without AGENT_COMM_API_URL are only resolved, never used for requests.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
-import { cloudFetch, getOperatingMode, resolveCloudConfig } from '../../src/cloud/index.js';
+import {
+  DEFAULT_API_URL,
+  cloudFetch,
+  fileModeNotice,
+  getCloudBackend,
+  getOperatingMode,
+  resolveCloudConfig,
+} from '../../src/cloud/index.js';
 import { createMcpClient, withEnv, type McpTestClient } from './harness/mcp.js';
 
 const apiUrl = process.env.AGENT_COMM_API_URL!;
@@ -38,27 +47,39 @@ describe('operating mode selection', () => {
   });
 
   describe('resolveCloudConfig', () => {
-    it('uses file mode when only AGENT_COMM_DATA_DIR is set', () => {
-      const env = { AGENT_COMM_DATA_DIR: '/tmp/data' };
+    it('uses cloud mode at the default API URL when only AGENT_COMM_TOKEN is set', () => {
+      expect(DEFAULT_API_URL).toBe('https://agora.omajinai.work');
+      const env = { AGENT_COMM_TOKEN: 'agora_x' };
+      expect(resolveCloudConfig(env)).toEqual({ apiUrl: 'https://agora.omajinai.work', token: 'agora_x' });
+      expect(getOperatingMode(env)).toBe('cloud');
+      // An empty AGENT_COMM_API_URL does not override the default either.
+      expect(resolveCloudConfig({ AGENT_COMM_API_URL: ' ', AGENT_COMM_TOKEN: 'agora_x' })?.apiUrl).toBe(DEFAULT_API_URL);
+    });
+
+    it('uses AGENT_COMM_API_URL when it is set together with the token', () => {
+      const env = { AGENT_COMM_API_URL: 'http://localhost:8787', AGENT_COMM_TOKEN: 'agora_x' };
+      expect(resolveCloudConfig(env)).toEqual({ apiUrl: 'http://localhost:8787', token: 'agora_x' });
+      expect(getOperatingMode(env)).toBe('cloud');
+    });
+
+    it('uses file mode without AGENT_COMM_TOKEN: AGENT_COMM_DATA_DIR only, nothing at all, or an empty token', () => {
+      for (const env of [{ AGENT_COMM_DATA_DIR: '/tmp/data' }, {}, { AGENT_COMM_TOKEN: '  ' }]) {
+        expect(resolveCloudConfig(env)).toBeNull();
+        expect(getOperatingMode(env)).toBe('file');
+      }
+    });
+
+    it('ignores AGENT_COMM_API_URL without a token (file mode)', () => {
+      const env = { AGENT_COMM_API_URL: 'http://localhost:8787' };
       expect(resolveCloudConfig(env)).toBeNull();
       expect(getOperatingMode(env)).toBe('file');
     });
 
-    it('uses cloud mode when AGENT_COMM_API_URL and AGENT_COMM_TOKEN are set', () => {
-      const env = { AGENT_COMM_API_URL: 'https://agora.omajinai.work', AGENT_COMM_TOKEN: 'agora_x' };
-      expect(resolveCloudConfig(env)).toEqual({ apiUrl: 'https://agora.omajinai.work', token: 'agora_x' });
-      expect(getOperatingMode(env)).toBe('cloud');
-    });
-
     it('prefers cloud mode when the data directory is configured as well', () => {
-      const env = { AGENT_COMM_DATA_DIR: '/tmp/data', AGENT_COMM_API_URL: 'http://localhost:8787', AGENT_COMM_TOKEN: 't' };
-      expect(getOperatingMode(env)).toBe('cloud');
-    });
-
-    it('needs both variables for cloud mode', () => {
-      expect(getOperatingMode({ AGENT_COMM_API_URL: 'http://localhost:8787' })).toBe('file');
-      expect(getOperatingMode({ AGENT_COMM_TOKEN: 't' })).toBe('file');
-      expect(getOperatingMode({ AGENT_COMM_API_URL: ' ', AGENT_COMM_TOKEN: 't' })).toBe('file');
+      expect(getOperatingMode({ AGENT_COMM_DATA_DIR: '/tmp/data', AGENT_COMM_TOKEN: 't' })).toBe('cloud');
+      expect(getOperatingMode({ AGENT_COMM_DATA_DIR: '/tmp/data', AGENT_COMM_API_URL: 'http://localhost:8787', AGENT_COMM_TOKEN: 't' })).toBe(
+        'cloud',
+      );
     });
 
     it('normalizes the API URL and rejects URLs that are not http(s)', () => {
@@ -67,6 +88,24 @@ describe('operating mode selection', () => {
       );
       expect(() => resolveCloudConfig({ AGENT_COMM_API_URL: 'ftp://example.com', AGENT_COMM_TOKEN: 't' })).toThrow(/http or https/);
       expect(() => resolveCloudConfig({ AGENT_COMM_API_URL: 'not a url', AGENT_COMM_TOKEN: 't' })).toThrow(/not a valid URL/);
+    });
+  });
+
+  describe('fileModeNotice (the stderr line at startup)', () => {
+    it('says that the server starts in file mode because AGENT_COMM_TOKEN is not set', () => {
+      expect(fileModeNotice({})).toBe('AGENT_COMM_TOKEN が未設定のためファイルモードで起動');
+      expect(fileModeNotice({ AGENT_COMM_DATA_DIR: '/tmp/data' })).toBe('AGENT_COMM_TOKEN が未設定のためファイルモードで起動');
+    });
+
+    it('adds that AGENT_COMM_API_URL is ignored when it is set without a token', () => {
+      expect(fileModeNotice({ AGENT_COMM_API_URL: 'http://localhost:8787' })).toBe(
+        'AGENT_COMM_TOKEN が未設定のためファイルモードで起動（AGENT_COMM_API_URL は無視）',
+      );
+    });
+
+    it('is not written in cloud mode', () => {
+      expect(fileModeNotice({ AGENT_COMM_TOKEN: 't' })).toBeNull();
+      expect(fileModeNotice({ AGENT_COMM_TOKEN: 't', AGENT_COMM_API_URL: 'http://localhost:8787' })).toBeNull();
     });
   });
 
@@ -99,7 +138,7 @@ describe('operating mode selection', () => {
       expect(await cloudRoomNames()).toEqual([]);
     });
 
-    it('keeps file mode when only one of the cloud variables is set', async () => {
+    it('keeps file mode when only AGENT_COMM_API_URL is set', async () => {
       client = await withEnv(
         { AGENT_COMM_DATA_DIR: dataDir, AGENT_COMM_API_URL: apiUrl, AGENT_COMM_TOKEN: undefined },
         () => createMcpClient(dataDir),
@@ -109,6 +148,18 @@ describe('operating mode selection', () => {
       await client.call('create_room', { roomName: 'still-file-room' });
       expect(await exists(path.join(dataDir, 'rooms.json'))).toBe(true);
       expect(await cloudRoomNames()).toEqual([]);
+    });
+
+    it('runs in cloud mode at the default API URL with only a token, without contacting it on start', async () => {
+      const onlyToken = { AGENT_COMM_DATA_DIR: dataDir, AGENT_COMM_API_URL: undefined, AGENT_COMM_TOKEN: 'agora_mode_switch_token' };
+      client = await withEnv(onlyToken, () => createMcpClient(dataDir));
+      expect(client.registry.mode).toBe('cloud');
+      // The backend the adapters share points at the default URL (no tool is called: that would reach production).
+      expect(getCloudBackend({ AGENT_COMM_TOKEN: 'agora_mode_switch_token' })!.config).toEqual({
+        apiUrl: DEFAULT_API_URL,
+        token: 'agora_mode_switch_token',
+      });
+      expect(await fs.readdir(dataDir)).toEqual([]);
     });
 
     it('lets file mode and cloud mode run side by side without sharing data', async () => {
