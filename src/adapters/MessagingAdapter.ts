@@ -3,10 +3,13 @@ import { RoomNotFoundError, AgentNotInRoomError } from '../errors/index.js';
 import { Message } from '../types/index.js';
 import type { IMessagingAPI } from '../features/messaging/index.js';
 import { getDataDirectory } from '../utils/dataDir.js';
+import { getCloudBackend, type CloudBackend } from '../cloud/index.js';
 
 export class MessagingAdapter {
   private api?: IMessagingAPI;
   private roomsAdapter?: any; // Will be injected
+  // Cloud mode (AGENT_COMM_API_URL + AGENT_COMM_TOKEN) replaces the features/ implementation with HTTP / WebSocket calls
+  private readonly cloud: CloudBackend | null = getCloudBackend();
   
   constructor(
     private readonly lockService: LockService
@@ -17,6 +20,10 @@ export class MessagingAdapter {
   }
   
   async initialize(): Promise<void> {
+    if (this.cloud) {
+      return;
+    }
+    
     // Dynamic import to avoid circular dependencies
     const { MessagingAPI } = await import('../features/messaging/index.js');
     // Use the dataDir from lockService instead of getDataDirectory()
@@ -25,6 +32,10 @@ export class MessagingAdapter {
   }
   
   async sendMessage(params: { agentName: string; roomName: string; message: string; metadata?: any }): Promise<{ success: boolean; messageId: string; timestamp: string; roomName: string; mentions: string[] }> {
+    if (this.cloud) {
+      return this.cloud.messaging.sendMessage(params);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }
@@ -57,6 +68,10 @@ export class MessagingAdapter {
   }
   
   async getMessages(params: { agentName?: string; roomName: string; limit?: number; offset?: number; mentionsOnly?: boolean }): Promise<{ roomName: string; messages: Message[]; count: number; hasMore: boolean }> {
+    if (this.cloud) {
+      return this.cloud.messaging.getMessages(params);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }
@@ -98,6 +113,10 @@ export class MessagingAdapter {
   }
   
   async waitForMessages(params: { agentName: string; roomName: string; timeout?: number }): Promise<{ messages: Message[]; hasNewMessages: boolean; timedOut: boolean; warning?: string; waitingAgents?: string[] }> {
+    if (this.cloud) {
+      return this.cloud.messaging.waitForMessages(params);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }

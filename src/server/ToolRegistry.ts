@@ -7,6 +7,7 @@ import { RoomsAdapter } from '../adapters/RoomsAdapter';
 import { ManagementAdapter } from '../adapters/ManagementAdapter';
 import { allTools, toolHandlers } from '../tools/index';
 import { AppError } from '../errors/index';
+import { getCloudBackend, type CloudBackend, type OperatingMode } from '../cloud/index';
 
 // Type guard for tool names
 function isValidToolName(name: string): name is keyof typeof toolHandlers {
@@ -18,6 +19,8 @@ export class ToolRegistry {
   private messagingAdapter: MessagingAdapter;
   private roomsAdapter: RoomsAdapter;
   private managementAdapter: ManagementAdapter;
+  // Cloud mode when AGENT_COMM_API_URL + AGENT_COMM_TOKEN are set (docs/cloud-architecture.md §5.1)
+  private readonly cloud: CloudBackend | null = getCloudBackend();
   
   constructor(dataDir?: string) {
     this.lockService = new LockService(dataDir);
@@ -141,8 +144,13 @@ export class ToolRegistry {
     }
   }
   
+  get mode(): OperatingMode {
+    return this.cloud ? 'cloud' : 'file';
+  }
+  
   async shutdown(): Promise<void> {
-    // Cleanup resources if needed
-    // Currently no explicit cleanup required
+    // Cloud mode keeps a WebSocket per room x agent for the process lifetime; close them.
+    // File mode has nothing to clean up.
+    await this.cloud?.close();
   }
 }

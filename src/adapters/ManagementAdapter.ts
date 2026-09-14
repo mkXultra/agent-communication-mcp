@@ -2,11 +2,14 @@ import { LockService } from '../services/LockService.js';
 import { RoomNotFoundError } from '../errors/index.js';
 import type { IManagementAPI, SystemStatus, RoomStats } from '../features/management/index.js';
 import { getDataDirectory } from '../utils/dataDir.js';
+import { getCloudBackend, type CloudBackend } from '../cloud/index.js';
 
 export class ManagementAdapter {
   private api?: IManagementAPI;
   private roomsAdapter?: any; // Will be injected
   private messageAdapter?: any; // Will be injected
+  // Cloud mode (AGENT_COMM_API_URL + AGENT_COMM_TOKEN): GET /status and DELETE /rooms/{room}/messages instead of DataScanner
+  private readonly cloud: CloudBackend | null = getCloudBackend();
   
   constructor(
     private readonly lockService: LockService
@@ -21,6 +24,10 @@ export class ManagementAdapter {
   }
   
   async initialize(): Promise<void> {
+    if (this.cloud) {
+      return;
+    }
+    
     // Dynamic import to avoid circular dependencies
     const { ManagementAPI } = await import('../features/management/index.js');
     // Use the dataDir from lockService instead of getDataDirectory()
@@ -29,6 +36,10 @@ export class ManagementAdapter {
   }
   
   async getStatus(params?: { roomName?: string }): Promise<{ rooms: any[]; totalRooms: number; totalOnlineUsers: number; totalMessages: number }> {
+    if (this.cloud) {
+      return this.cloud.management.getStatus(params);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }
@@ -51,6 +62,10 @@ export class ManagementAdapter {
   }
   
   async clearRoomMessages(params: { roomName: string; confirm: boolean }): Promise<{ success: boolean; roomName: string; clearedCount: number }> {
+    if (this.cloud) {
+      return this.cloud.management.clearRoomMessages(params);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }

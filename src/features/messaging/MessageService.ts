@@ -19,6 +19,7 @@ import {
 import { WAIT_CONSTANTS, READ_STATUS_FILENAME, WAITING_AGENTS_FILENAME } from './constants';
 import { RoomNotFoundError, AgentNotInRoomError } from '../../errors/AppError';
 import * as fs from 'fs/promises';
+import { writeFileAtomic } from '../../utils/atomicFile';
 import * as path from 'path';
 
 export class MessageService {
@@ -288,7 +289,7 @@ export class MessageService {
         lastReadTimestamp: new Date().toISOString()
       };
       
-      await fs.writeFile(readStatusPath, JSON.stringify(readStatuses, null, 2));
+      await writeFileAtomic(fs, readStatusPath, JSON.stringify(readStatuses, null, 2));
     });
   }
 
@@ -328,7 +329,7 @@ export class MessageService {
         timeout
       });
       
-      await fs.writeFile(waitingAgentsPath, JSON.stringify(waitingAgents, null, 2));
+      await writeFileAtomic(fs, waitingAgentsPath, JSON.stringify(waitingAgents, null, 2));
     });
   }
 
@@ -350,7 +351,7 @@ export class MessageService {
       // Remove agent from list
       waitingAgents = waitingAgents.filter(agent => agent.agentName !== agentName);
       
-      await fs.writeFile(waitingAgentsPath, JSON.stringify(waitingAgents, null, 2));
+      await writeFileAtomic(fs, waitingAgentsPath, JSON.stringify(waitingAgents, null, 2));
     });
   }
 

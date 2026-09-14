@@ -7,6 +7,7 @@ import { IRoomStorage, RoomsData, RoomData } from '../types/rooms.types';
 import { StorageError, FileNotFoundError } from '../../../errors';
 import { getDataDirectory } from '../../../utils/dataDir';
 import { LockService } from '../../../services/LockService';
+import { writeFileAtomic } from '../../../utils/atomicFile';
 
 export class RoomStorage implements IRoomStorage {
   private readonly dataDir: string;
@@ -45,7 +46,8 @@ export class RoomStorage implements IRoomStorage {
       await this.ensureDataDirectory();
       
       const jsonData = JSON.stringify(data, null, 2);
-      await fs.writeFile(this.roomsFilePath, jsonData, 'utf-8');
+      // 読み取りはロックを取らないので、書きかけのファイルを見せない
+      await writeFileAtomic(fs, this.roomsFilePath, jsonData);
     } catch (error: any) {
       throw new StorageError(`Failed to write rooms data: ${error.message}`);
     }

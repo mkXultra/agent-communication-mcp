@@ -9,6 +9,7 @@ import {
   ConfirmationRequiredError
 } from '../../errors/AppError';
 import { getDataDirectory } from '../../utils/dataDir';
+import { writeFileAtomic } from '../../utils/atomicFile';
 
 export class ManagementService {
   private statsCollector: StatsCollector;
@@ -128,7 +129,7 @@ export class ManagementService {
       if (rooms.rooms && rooms.rooms[roomName]) {
         rooms.rooms[roomName].messageCount = 0;
         
-        await fs.writeFile(roomsPath, JSON.stringify(rooms, null, 2));
+        await writeFileAtomic(fs, roomsPath, JSON.stringify(rooms, null, 2));
       }
     } catch (error) {
       // If we can't update the room stats, it's not critical

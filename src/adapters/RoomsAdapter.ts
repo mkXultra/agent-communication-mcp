@@ -3,10 +3,13 @@ import { RoomNotFoundError, RoomAlreadyExistsError, AgentNotInRoomError } from '
 import { Room } from '../types/index.js';
 import type { IRoomsAPI } from '../features/rooms/index.js';
 import { getDataDirectory } from '../utils/dataDir.js';
+import { getCloudBackend, type CloudBackend } from '../cloud/index.js';
 
 export class RoomsAdapter {
   private api?: IRoomsAPI;
   private messageAdapter?: any; // Will be injected to get message counts
+  // Cloud mode (AGENT_COMM_API_URL + AGENT_COMM_TOKEN) replaces the features/ implementation and LockService with HTTP calls
+  private readonly cloud: CloudBackend | null = getCloudBackend();
   
   constructor(
     private readonly lockService: LockService
@@ -17,6 +20,10 @@ export class RoomsAdapter {
   }
   
   async initialize(): Promise<void> {
+    if (this.cloud) {
+      return;
+    }
+    
     // Dynamic import to avoid circular dependencies
     const { RoomsAPI } = await import('../features/rooms/index.js');
     // Use the dataDir from lockService instead of getDataDirectory()
@@ -25,6 +32,10 @@ export class RoomsAdapter {
   }
   
   async listRooms(agentName?: string): Promise<{ rooms: Room[] }> {
+    if (this.cloud) {
+      return this.cloud.rooms.listRooms();
+    }
+    
     if (!this.api) {
       await this.initialize();
     }
@@ -43,6 +54,10 @@ export class RoomsAdapter {
   }
   
   async createRoom(params: { roomName: string; description?: string }): Promise<{ success: boolean; roomName: string }> {
+    if (this.cloud) {
+      return this.cloud.rooms.createRoom(params);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }
@@ -59,6 +74,10 @@ export class RoomsAdapter {
   }
   
   async enterRoom(params: { agentName: string; roomName: string; profile?: any }): Promise<{ success: boolean }> {
+    if (this.cloud) {
+      return this.cloud.rooms.enterRoom(params);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }
@@ -75,6 +94,10 @@ export class RoomsAdapter {
   }
   
   async leaveRoom(params: { agentName: string; roomName: string }): Promise<{ success: boolean }> {
+    if (this.cloud) {
+      return this.cloud.rooms.leaveRoom(params);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }
@@ -97,6 +120,10 @@ export class RoomsAdapter {
   }
   
   async listRoomUsers(params: { roomName: string }): Promise<{ roomName: string; users: any[]; onlineCount: number }> {
+    if (this.cloud) {
+      return this.cloud.rooms.listRoomUsers(params);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }
@@ -117,6 +144,10 @@ export class RoomsAdapter {
   }
   
   async roomExists(roomName: string): Promise<boolean> {
+    if (this.cloud) {
+      return this.cloud.rooms.roomExists(roomName);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }
@@ -125,6 +156,10 @@ export class RoomsAdapter {
   }
   
   async getRoomUsers(roomName: string): Promise<string[]> {
+    if (this.cloud) {
+      return this.cloud.rooms.getRoomUsers(roomName);
+    }
+    
     if (!this.api) {
       await this.initialize();
     }

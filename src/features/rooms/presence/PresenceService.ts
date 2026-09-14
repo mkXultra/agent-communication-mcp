@@ -278,7 +278,8 @@ export class PresenceService implements IPresenceService {
     for (const [userName, userData] of Object.entries(presenceData.users)) {
       if (userData.status === 'offline') {
         const joinedAt = new Date(userData.joinedAt);
-        if (joinedAt.getTime() < thresholdTime) {
+        // <=: with thresholdHours = 0 a user who joined in the same millisecond is also cleaned up
+        if (joinedAt.getTime() <= thresholdTime) {
           await this.presenceStorage.removeUser(roomName, userName);
           cleanedCount++;
         }

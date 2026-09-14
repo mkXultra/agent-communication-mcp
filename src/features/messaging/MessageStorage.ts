@@ -92,8 +92,9 @@ export class MessageStorage {
         );
       }
 
-      // Sort by timestamp (newest first)
-      filteredMessages.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      // Sort by timestamp (newest first). The file is in send order, so reverse it first: messages sent
+      // within the same millisecond then also come newest first (sort is stable).
+      filteredMessages.reverse().sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
       // Apply pagination
       const startIndex = offset;

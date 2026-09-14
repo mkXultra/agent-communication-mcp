@@ -8,6 +8,7 @@ import { AgentProfile } from '../../../types/entities';
 import { StorageError, FileNotFoundError } from '../../../errors';
 import { getDataDirectory } from '../../../utils/dataDir';
 import { LockService } from '../../../services/LockService';
+import { writeFileAtomic } from '../../../utils/atomicFile';
 
 export class PresenceStorage implements IPresenceStorage {
   private readonly dataDir: string;
@@ -50,7 +51,8 @@ export class PresenceStorage implements IPresenceStorage {
       
       const presenceFilePath = this.getPresenceFilePath(roomName);
       const jsonData = JSON.stringify(data, null, 2);
-      await fs.writeFile(presenceFilePath, jsonData, 'utf-8');
+      // 読み取りはロックを取らないので、書きかけのファイルを見せない
+      await writeFileAtomic(fs, presenceFilePath, jsonData);
     } catch (error: any) {
       throw new StorageError(`Failed to write presence data for room '${roomName}': ${error.message}`);
     }

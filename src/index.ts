@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ToolRegistry } from './server/ToolRegistry.js';
 import { ErrorHandler } from './server/ErrorHandler.js';
 import { getDataDirectory } from './utils/dataDir.js';
+import { resolveCloudConfig } from './cloud/index.js';
 
 async function main() {
   try {
@@ -57,6 +58,16 @@ async function main() {
     await server.connect(transport);
     
     console.error('Agent Communication MCP Server started on stdio');
+    
+    const cloudConfig = resolveCloudConfig();
+    if (cloudConfig) {
+      console.error(`Cloud mode: ${cloudConfig.apiUrl}`);
+      // WebSockets are held for the process lifetime; release them when the MCP client closes stdin.
+      process.stdin.once('end', async () => {
+        await toolRegistry.shutdown();
+        process.exit(0);
+      });
+    }
     
   } catch (error) {
     ErrorHandler.logError(error, 'Server startup');

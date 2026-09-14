@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { MemoryTransport } from '../helpers/MemoryTransport.js';
 import { ToolRegistry } from '../../src/server/ToolRegistry.js';
+import { CloudApiClient, resolveCloudConfig } from '../../src/cloud/index.js';
 import path from 'path';
 import { promises as fs } from 'fs';
 
@@ -274,6 +275,22 @@ describe('Real MCP Server E2E Tests', () => {
           }
         }
       });
+      
+      if (toolRegistry.mode === 'cloud') {
+        // Cloud mode (vitest project `cloud`) keeps nothing on disk: the same data has to be persisted by the API.
+        const api = new CloudApiClient(resolveCloudConfig()!);
+        const rooms = await api.listRooms();
+        expect(rooms.map(room => room.name)).toEqual(['persistent-room']);
+        expect(rooms[0].description || undefined).toBeUndefined();
+        const members = await api.listMembers('persistent-room');
+        expect(members.members.map(member => member.agentName)).toEqual(['persistent-agent']);
+        const stored = await api.getMessages('persistent-room', { since: 0 });
+        expect(stored.messages).toHaveLength(1);
+        expect(stored.messages[0].message).toBe('Persistent message');
+        expect(stored.messages[0].agentName).toBe('persistent-agent');
+        expect(await fs.access(path.join(testDataDir, 'rooms.json')).then(() => true).catch(() => false)).toBe(false);
+        return;
+      }
       
       // Verify files were created
       const roomsFile = path.join(testDataDir, 'rooms.json');
