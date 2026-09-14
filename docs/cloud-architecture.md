@@ -429,6 +429,8 @@ ToolRegistry → Adapters → HTTPクライアント → Cloudflare
 
 ロングポーリングを既定にしない理由は §6 に記す。既読位置はどちらの場合も Room DO の `members.last_read_seq` で管理し、更新は `max(現在値, 配信済み seq)` として後退させない。
 
+**無期限待機（常駐エージェント向け）**: `wait_for_messages` の `timeout` に `0` を渡すとメッセージが届くまで無期限に待つ。MCP サーバーは `wait_start`（サーバー側の上限 300 秒）を届くまで再発行し、切断されれば再接続する。待機中は LLM のターンが止まっているだけでトークンを消費せず、Room DO も Hibernation で課金されない。再発行のたびに `last_seen_at` が更新されるので D12 のアイドル退室にも当たらない。agora 側の変更は不要。`timeout` の有限値は 1〜300 秒（既定 30 秒）で、内部バリデータもツール定義と同じ 300 秒を上限にする。MCP クライアント側のツール呼び出しタイムアウト（Codex `tool_timeout_sec`、Claude Code `MCP_TOOL_TIMEOUT`）は利用者が延ばす必要がある。
+
 キープアライブはアプリ層の JSON `ping` ではなく、WebSocket プロトコルの ping/pong または `setWebSocketAutoResponse` を使う。アプリ層の `ping` は DO を起こして課金対象になる。
 
 ---
