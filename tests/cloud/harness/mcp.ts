@@ -15,10 +15,20 @@ export class McpCallError extends Error {
   }
 }
 
+export interface PendingToolCall<T> {
+  id: number;
+  /** As {@link McpTestClient.call}; rejects with `Request timeout` when no response comes. */
+  result: Promise<T>;
+  /** Sends notifications/cancelled for the call, as an MCP client does when a tool call times out or is interrupted. */
+  cancel(reason?: string): void;
+}
+
 export interface McpTestClient {
   registry: ToolRegistry;
   /** Calls a tool and returns the parsed JSON text content; JSON-RPC errors reject with {@link McpCallError}. */
   call<T = any>(name: string, args?: Record<string, unknown>): Promise<T>;
+  /** Starts a tool call that can be cancelled. */
+  start<T = any>(name: string, args?: Record<string, unknown>): PendingToolCall<T>;
   close(): Promise<void>;
 }
 
@@ -35,13 +45,13 @@ export async function createMcpClient(dataDir?: string): Promise<McpTestClient> 
   await server.connect(transport);
   await registry.registerAll(server);
 
-  return {
-    registry,
-    async call(name, args = {}) {
+  const start = <T>(name: string, args: Record<string, unknown> = {}): PendingToolCall<T> => {
+    const id = nextId++;
+    const result = (async () => {
       // MemoryTransport resolves with error responses too, although its type only describes results.
       const response = (await transport.simulateRequest({
         jsonrpc: '2.0',
-        id: nextId++,
+        id,
         method: 'tools/call',
         params: { name: `agent_communication_${name}`, arguments: args },
       })) as unknown as {
@@ -51,8 +61,21 @@ export async function createMcpClient(dataDir?: string): Promise<McpTestClient> 
       if (response.error) {
         throw new McpCallError(response.error.code, response.error.message, response.error.data);
       }
-      return JSON.parse(response.result!.content[0]!.text);
-    },
+      return JSON.parse(response.result!.content[0]!.text) as T;
+    })();
+    return {
+      id,
+      result,
+      cancel(reason = 'cancelled by the test') {
+        transport.onmessage!({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason } });
+      },
+    };
+  };
+
+  return {
+    registry,
+    call: (name, args) => start(name, args).result,
+    start,
     async close() {
       await transport.close();
       await registry.shutdown();

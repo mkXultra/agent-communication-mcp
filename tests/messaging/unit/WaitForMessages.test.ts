@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MessageService } from '../../../src/features/messaging/MessageService';
 import { RoomService } from '../../../src/features/rooms/room/RoomService';
 import { LockService } from '../../../src/services/LockService';
-import { ValidationError, RoomNotFoundError, AgentNotInRoomError } from '../../../src/errors/AppError';
+import { ValidationError, RoomNotFoundError, AgentNotInRoomError, WaitCancelledError } from '../../../src/errors/AppError';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 
@@ -403,11 +403,18 @@ describe('WaitForMessages', () => {
         timeout: 500
       })).rejects.toThrow(ValidationError);
 
-      // Timeout too high
+      // Timeout too high (the tool allows 300 seconds)
       await expect(messageService.waitForMessages({
         agentName: 'alice',
         roomName: 'test-room',
-        timeout: 150000
+        timeout: 300001
+      })).rejects.toThrow("Validation failed for field 'timeout': Timeout cannot exceed 300000ms");
+
+      // Negative
+      await expect(messageService.waitForMessages({
+        agentName: 'alice',
+        roomName: 'test-room',
+        timeout: -1000
       })).rejects.toThrow(ValidationError);
 
       // Valid timeout should work
@@ -437,8 +444,13 @@ describe('WaitForMessages', () => {
 
       const startTime = Date.now();
       
-      // Start waiting without timeout (should use default 120000ms)
+      // Start waiting without timeout (should use default 30000ms, the tool default)
       const waitPromise = messageService.waitForMessages(params);
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const waitingAgentsPath = path.join(testDataDir, 'rooms', 'test-room', 'waiting_agents.json');
+      const waitingAgents = JSON.parse(await fs.readFile(waitingAgentsPath, 'utf-8'));
+      expect(waitingAgents).toEqual([expect.objectContaining({ agentName: 'alice', timeout: 30000 })]);
 
       // Send message after 100ms to not wait for full default timeout
       setTimeout(async () => {
@@ -454,6 +466,121 @@ describe('WaitForMessages', () => {
 
       expect(result.hasNewMessages).toBe(true);
       expect(endTime - startTime).toBeLessThan(1000);
+    });
+
+    it('should accept the maximum timeout of 300000ms', async () => {
+      const waitPromise = messageService.waitForMessages({
+        agentName: 'alice',
+        roomName: 'test-room',
+        timeout: 300000
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const waitingAgentsPath = path.join(testDataDir, 'rooms', 'test-room', 'waiting_agents.json');
+      const waitingAgents = JSON.parse(await fs.readFile(waitingAgentsPath, 'utf-8'));
+      expect(waitingAgents).toEqual([expect.objectContaining({ agentName: 'alice', timeout: 300000 })]);
+
+      await messageService.sendMessage({ agentName: 'bob', roomName: 'test-room', message: 'Within five minutes' });
+      const result = await waitPromise;
+      expect(result.messages.map(m => m.message)).toEqual(['Within five minutes']);
+      expect(result.timedOut).toBe(false);
+    });
+  });
+
+  describe('Waiting without a time limit (timeout 0)', () => {
+    const waitingAgentsPath = () => path.join(testDataDir, 'rooms', 'test-room', 'waiting_agents.json');
+    const readWaitingAgents = async () => JSON.parse(await fs.readFile(waitingAgentsPath(), 'utf-8'));
+
+    it('should keep waiting until a message arrives', async () => {
+      let settled = false;
+      const startTime = Date.now();
+      const waitPromise = messageService.waitForMessages({
+        agentName: 'alice',
+        roomName: 'test-room',
+        timeout: 0
+      }).finally(() => { settled = true; });
+
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      expect(settled).toBe(false);
+      expect(await readWaitingAgents()).toEqual([expect.objectContaining({ agentName: 'alice', timeout: 0 })]);
+      const messages = await messageService.getMessages({ roomName: 'test-room' });
+      expect(messages.messages.map(m => m.message)).toContain('alice is waiting for new messages (timeout: none)');
+
+      await messageService.sendMessage({ agentName: 'bob', roomName: 'test-room', message: 'After three seconds' });
+      const result = await waitPromise;
+      expect(Date.now() - startTime).toBeGreaterThanOrEqual(3000);
+      expect(result).toEqual({
+        messages: [expect.objectContaining({ agentName: 'bob', message: 'After three seconds' })],
+        hasNewMessages: true,
+        timedOut: false,
+        warning: undefined,
+        waitingAgents: undefined
+      });
+      expect(await readWaitingAgents()).toEqual([]);
+    });
+
+    it('should end at once when the signal aborts, removing the waiting entry and consuming nothing', async () => {
+      const controller = new AbortController();
+      const waitPromise = messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 0 }, controller.signal);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      expect(await readWaitingAgents()).toHaveLength(1);
+
+      const abortedAt = Date.now();
+      controller.abort();
+      await expect(waitPromise).rejects.toThrow(WaitCancelledError);
+      expect(Date.now() - abortedAt).toBeLessThan(500);
+      expect(await readWaitingAgents()).toEqual([]);
+      await expect(fs.readFile(path.join(testDataDir, 'rooms', 'test-room', 'read_status.json'), 'utf-8')).rejects.toThrow();
+
+      // Nothing keeps polling for alice: the next message is left for her next call.
+      await messageService.sendMessage({ agentName: 'bob', roomName: 'test-room', message: 'For the next call' });
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      const next = await messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 1000 });
+      expect(next.messages.map(m => m.message)).toEqual(['For the next call']);
+    });
+
+    it('should not start when the signal has already aborted', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 5000 }, controller.signal)
+      ).rejects.toThrow(WaitCancelledError);
+      await expect(fs.readFile(waitingAgentsPath(), 'utf-8')).rejects.toThrow();
+    });
+
+    it('should be taken over by a newer wait for the same agent and room', async () => {
+      const first = messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 0 });
+      const firstOutcome = first.then(() => 'resolved', (error: unknown) => error);
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      const second = messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 5000 });
+      const error = await firstOutcome;
+      expect(error).toBeInstanceOf(WaitCancelledError);
+      expect((error as Error).message).toBe(
+        'Waiting for messages ended without a result: a newer wait_for_messages call for the same agent and room took over'
+      );
+
+      // The first wait removed its entry before the second one added its own.
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(await readWaitingAgents()).toEqual([expect.objectContaining({ agentName: 'alice', timeout: 5000 })]);
+
+      await messageService.sendMessage({ agentName: 'bob', roomName: 'test-room', message: 'For the newer call' });
+      const result = await second;
+      expect(result.messages.map(m => m.message)).toEqual(['For the newer call']);
+    });
+
+    it('should not take over from a wait for another agent, or from a wait with a time limit', async () => {
+      const aliceWithoutLimit = messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 0 });
+      const bobWithLimit = messageService.waitForMessages({ agentName: 'bob', roomName: 'test-room', timeout: 3000 });
+      await new Promise(resolve => setTimeout(resolve, 200));
+      // Two waits with a time limit for the same agent run side by side, as before (the first to see a message marks it read).
+      const bobAgain = messageService.waitForMessages({ agentName: 'bob', roomName: 'test-room', timeout: 3000 });
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      await messageService.sendMessage({ agentName: 'charlie', roomName: 'test-room', message: 'For everyone' });
+      const [alice, ...bob] = await Promise.all([aliceWithoutLimit, bobWithLimit, bobAgain]);
+      expect(alice.messages.map(m => m.message)).toEqual(['For everyone']);
+      expect(bob.flatMap(result => result.messages.map(m => m.message))).toContain('For everyone');
     });
   });
 

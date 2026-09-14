@@ -82,6 +82,8 @@ interface PendingRequest {
 
 /** How long to wait for the `waiting` frame the server sends right after `backlog_end` or a `wait_start` ack. */
 const WAITING_FRAME_GRACE_MS = 1000;
+/** Node.js fires a timer at once when its delay does not fit in 32 bits. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 const WAITING_HISTORY_SIZE = 32;
 const MISSED_PONGS_BEFORE_TERMINATE = 2;
 
@@ -94,6 +96,8 @@ export class RoomSocket {
   initialLastReadSeq = 0;
   /** Highest seq delivered on this connection. `read` frames must not go beyond it. */
   deliveredUpToSeq = 0;
+  /** When the connection became usable (the backlog was received). */
+  connectedAt = 0;
 
   private buffer: ApiMessage[] = [];
   /** `ready.latestSeq`: the newest message when the connection was made, i.e. where the backlog ends. */
@@ -154,6 +158,7 @@ export class RoomSocket {
         settled = true;
         clearTimeout(overallTimer);
         clearTimeout(graceTimer);
+        socket.connectedAt = Date.now();
         socket.startKeepalive(options.pingIntervalMs ?? 30000);
         resolve(socket);
       };
@@ -326,10 +331,15 @@ export class RoomSocket {
   }
 
   /**
-   * Resolves `'messages'` as soon as there is something to return, `'timeout'` at `deadline`.
-   * Frames that arrive in the same turn are batched. Rejects with {@link RoomSocketClosedError}.
+   * Resolves `'messages'` as soon as there is something to return, `'timeout'` at `deadline`, `'cancelled'` once
+   * `signal` aborts. Frames that arrive in the same turn are batched. Rejects with {@link RoomSocketClosedError}.
    */
-  waitForUnread(agentName: string, cursor: number, deadline: number): Promise<'messages' | 'timeout'> {
+  waitForUnread(
+    agentName: string,
+    cursor: number,
+    deadline: number,
+    signal?: AbortSignal,
+  ): Promise<'messages' | 'timeout' | 'cancelled'> {
     return new Promise((resolve, reject) => {
       let settled = false;
       let timer: NodeJS.Timeout | undefined;
@@ -340,8 +350,10 @@ export class RoomSocket {
         clearTimeout(timer);
         if (batch) clearImmediate(batch);
         unsubscribe();
+        signal?.removeEventListener('abort', cancel);
         action();
       };
+      const cancel = (): void => settle(() => resolve('cancelled'));
       const check = (): void => {
         if (this.closedError) {
           const error = this.closedError;
@@ -357,9 +369,14 @@ export class RoomSocket {
           settle(() => resolve('timeout'));
           return;
         }
-        timer = setTimeout(arm, remaining);
+        timer = setTimeout(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
       };
       const unsubscribe = this.subscribe(check);
+      if (signal?.aborted) {
+        cancel();
+        return;
+      }
+      signal?.addEventListener('abort', cancel, { once: true });
       check();
       if (!settled) arm();
     });

@@ -21,7 +21,14 @@ export const getMessagesSchema = z.object({
 export const waitForMessagesSchema = z.object({
   agentName: z.string().min(1).max(50).regex(/^[a-zA-Z0-9-_]+$/),
   roomName: z.string().min(1).regex(/^[a-zA-Z0-9-_]+$/),
-  timeout: z.number().int().min(WAIT_CONSTANTS.MIN_TIMEOUT).max(WAIT_CONSTANTS.MAX_TIMEOUT).optional()
+  // Milliseconds: the tool's 1..300 seconds, or 0 to wait until a message arrives
+  timeout: z.number().int()
+    .refine(
+      (timeout) => timeout === WAIT_CONSTANTS.NO_TIMEOUT || timeout >= WAIT_CONSTANTS.MIN_TIMEOUT,
+      `Timeout must be at least ${WAIT_CONSTANTS.MIN_TIMEOUT}ms, or 0 to wait until a message arrives`
+    )
+    .refine((timeout) => timeout <= WAIT_CONSTANTS.MAX_TIMEOUT, `Timeout cannot exceed ${WAIT_CONSTANTS.MAX_TIMEOUT}ms`)
+    .optional()
 });
 
 export class MessageValidator {

@@ -4,7 +4,7 @@
 // - drop, delay or hold responses (a lost response, a slow server, a hanging connection)
 // - black-hole the WebSocket connections that are open, without closing them (a NAT that forgot the mapping)
 // - add agora's test-only headers (x-agora-fault / x-agora-test-vars, effective with FAULT_INJECTION=1)
-// - record requests and the client -> server WebSocket frames
+// - record requests and the client -> server WebSocket frames (with the time each arrived)
 // - cut proxied WebSocket connections
 
 import http from 'http';
@@ -30,6 +30,8 @@ export class AgoraProxy {
   readonly requests: RecordedRequest[] = [];
   /** Text frames sent by clients over proxied WebSockets, parsed as JSON. */
   readonly clientFrames: Array<Record<string, unknown>> = [];
+  /** The same frames with the time (ms since the epoch) the proxy received each. */
+  readonly clientFrameLog: Array<{ at: number; frame: Record<string, unknown> }> = [];
   webSocketPolicy: WebSocketPolicy = 'pass';
   /** Extra headers added to every forwarded request, WebSocket upgrades included. */
   extraHeaders: Record<string, string> = {};
@@ -63,6 +65,7 @@ export class AgoraProxy {
   reset(): void {
     this.requests.length = 0;
     this.clientFrames.length = 0;
+    this.clientFrameLog.length = 0;
     this.webSocketPolicy = 'pass';
     this.extraHeaders = {};
     this.headersFor = () => undefined;
@@ -250,7 +253,9 @@ export class AgoraProxy {
       if (mask) for (let i = 0; i < payload.length; i++) payload[i] = payload[i]! ^ mask[i % 4]!;
       if (opcode === 0x1) {
         try {
-          this.clientFrames.push(JSON.parse(payload.toString('utf8')) as Record<string, unknown>);
+          const frame = JSON.parse(payload.toString('utf8')) as Record<string, unknown>;
+          this.clientFrames.push(frame);
+          this.clientFrameLog.push({ at: Date.now(), frame });
         } catch {
           // Not JSON; not interesting here.
         }

@@ -5,7 +5,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getCloudBackend, CloudApiClient, CloudBackend } from '../../src/cloud/index.js';
 import { issueToken, startAgora, type AgoraInstance } from './harness/agora.js';
-import { createMcpClient, sleep, waitUntil, withEnv, type McpTestClient } from './harness/mcp.js';
+import { createMcpClient, McpCallError, sleep, waitUntil, withEnv, type McpTestClient } from './harness/mcp.js';
 import { AgoraProxy } from './harness/proxy.js';
 
 const agoraUrl = process.env.AGENT_COMM_API_URL!;
@@ -118,6 +118,61 @@ describe('wait_for_messages over WebSocket', () => {
     const stored = await api.getMessages('frames', { since: 0 });
     expect(proxy.clientFrames[2]).toEqual({ type: 'read', seq: stored.latestSeq, requestId: expect.any(String) });
     expect((await membersOf(api, 'frames')).alice!.lastReadSeq).toBe(stored.latestSeq);
+  });
+
+  it('declares up to 300 seconds (the tool maximum) and 30 seconds when no timeout is given; 301 is rejected', async () => {
+    await setupRoom('timeouts', ['alice', 'bob']);
+    const aliceWaiting = async () => (await membersOf(api, 'timeouts')).alice!.waiting === true;
+
+    const longest = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'timeouts', timeout: 300 });
+    await waitUntil(aliceWaiting, 5000, 'alice waiting (300 s)');
+    expect(proxy.clientFrames).toEqual([{ type: 'wait_start', requestId: expect.any(String), timeoutSeconds: 300 }]);
+    await client.call('send_message', { agentName: 'bob', roomName: 'timeouts', message: 'within 300 seconds' });
+    expect((await longest).messages.map((m) => m.message)).toEqual(['within 300 seconds']);
+
+    proxy.clientFrames.length = 0;
+    const byDefault = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'timeouts' });
+    await waitUntil(aliceWaiting, 5000, 'alice waiting (default)');
+    expect(proxy.clientFrames).toEqual([{ type: 'wait_start', requestId: expect.any(String), timeoutSeconds: 30 }]);
+    await client.call('send_message', { agentName: 'bob', roomName: 'timeouts', message: 'within 30 seconds' });
+    expect((await byDefault).messages.map((m) => m.message)).toEqual(['within 30 seconds']);
+
+    proxy.clientFrames.length = 0;
+    await expect(client.call('wait_for_messages', { agentName: 'alice', roomName: 'timeouts', timeout: 301 })).rejects.toThrow(
+      "Validation failed for field 'timeout': Timeout cannot exceed 300000ms",
+    );
+    expect(proxy.clientFrames).toEqual([]);
+  });
+
+  it('ends a wait without a time limit when the MCP client cancels the call, and leaves the next message for the next call', async () => {
+    await setupRoom('cancelled', ['alice', 'bob']);
+    const aliceWaiting = async () => (await membersOf(api, 'cancelled')).alice!.waiting === true;
+
+    const pending = client.start<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'cancelled', timeout: 0 });
+    let answered = false;
+    pending.result.then(
+      () => {
+        answered = true;
+      },
+      (error: unknown) => {
+        if (error instanceof McpCallError) answered = true;
+      },
+    );
+    await waitUntil(aliceWaiting, 5000, 'alice waiting');
+    // This agora keeps a declared wait 300 s: only wait_end makes it stop listing alice this soon.
+    pending.cancel('tool call timed out');
+    await waitUntil(async () => !(await aliceWaiting()), 3000, 'wait ended on the server');
+    const [start, end, ...rest] = proxy.clientFrames;
+    expect(start).toEqual({ type: 'wait_start', requestId: expect.any(String), timeoutSeconds: 300 });
+    expect(end).toEqual({ type: 'wait_end', requestId: start!.requestId });
+    expect(rest).toEqual([]);
+
+    await client.call('send_message', { agentName: 'bob', roomName: 'cancelled', message: 'for the next call' });
+    await sleep(300);
+    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'cancelled', timeout: 3 });
+    expect(next.messages.map((m) => m.message)).toEqual(['for the next call']);
+    // No response is sent for a cancelled call.
+    expect(answered).toBe(false);
   });
 
   it('returns messages that arrived while no wait was running, then only new ones', async () => {

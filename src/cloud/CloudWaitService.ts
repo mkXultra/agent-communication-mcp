@@ -5,6 +5,11 @@
 //   by the next call after it drops.
 // - Every call declares its wait with `wait_start` / `wait_end` and returns when a message from
 //   another agent arrives (live, or buffered since the previous call), or when the timeout passes.
+// - `timeout: 0` waits until a message arrives (§5.4): the wait is declared again (same requestId) before the server
+//   drops it, a dropped connection is made again, and a wait that has to long poll goes back to the WebSocket after
+//   each cooldown. Failures another attempt may get past are retried; the others (4xx) end the wait.
+// - A call ends without a result, consuming nothing, when its signal aborts (the MCP request was cancelled, the server
+//   shuts down) or when a newer call for the same room x agent takes over from one without a time limit.
 // - The client keeps its own read cursor per room x agent, taken before the agent's first send: from the join
 //   response, or from the member list when the agent joined in an earlier process. Before api 0.4.2 agora moved
 //   `last_read_seq` when the agent *sent*, which hid messages that arrived before the agent's own message (the file
@@ -17,7 +22,10 @@
 //   is started after that.
 
 import { randomUUID } from 'crypto';
-import { AgentNotInRoomError, AppError } from '../errors/index.js';
+import { AgentNotInRoomError, AppError, WaitCancelledError } from '../errors/index.js';
+import { WAIT_CONSTANTS } from '../features/messaging/constants.js';
+import { OpenEndedWaits } from '../features/messaging/OpenEndedWaits.js';
+import { settledOrAborted, sleep } from '../utils/abort.js';
 import { createLogger } from '../utils/logger.js';
 import { CloudApiClient } from './CloudApiClient.js';
 import { toWaitResult, type WaitForMessagesResult } from './mappers.js';
@@ -39,6 +47,11 @@ export interface CloudWaitServiceOptions {
   pingIntervalMs?: number;
   /** After the WebSocket could not be established, use long polling for this long before trying again. */
   webSocketRetryCooldownMs?: number;
+  /**
+   * How long the server keeps a declared wait (agora's WAIT_TIMEOUT_MAX_SECONDS; the API allows at most 300). A wait that
+   * goes on longer is declared again shortly before this runs out. Only a server configured below 300 needs less.
+   */
+  serverWaitMaxSeconds?: number;
 }
 
 export interface ReadCursor {
@@ -49,6 +62,15 @@ export interface ReadCursor {
 
 /** docs/api.yaml `getMessages.wait`: at most 30 seconds (values above are a 400). */
 const LONG_POLL_MAX_SECONDS = 30;
+/** docs/api.yaml `WaitStartFrame.timeoutSeconds`: the server keeps a wait at most 300 seconds. */
+const WAIT_START_MAX_SECONDS = 300;
+/** A wait that goes on is declared again this long before the server drops it (at most a quarter of the declared time). */
+const REDECLARE_MARGIN_MS = 10000;
+/** A long-polling round of a wait without a time limit lasts at least this long, however soon the WebSocket may be tried. */
+const MIN_LONG_POLL_ROUND_MS = 1000;
+/** Pause before a wait without a time limit tries again after a failure; doubles with each failure in a row. */
+const RETRY_BASE_DELAY_MS = 500;
+const RETRY_MAX_DELAY_MS = 30000;
 const PAGE_LIMIT = 1000;
 const MAX_RECONNECTS_PER_CALL = 1;
 const CLOSE_GRACE_MS = 1000;
@@ -64,10 +86,6 @@ const HTTP_TIMEOUT_MS = 30000;
 
 const logger = createLogger('agent-communication-mcp:cloud');
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export function socketKey(roomName: string, agentName: string): string {
   return `${roomName}\u0000${agentName}`;
 }
@@ -76,6 +94,27 @@ export function socketKey(roomName: string, agentName: string): string {
 function cursorFromMembers(list: ApiMemberList, agentName: string): ReadCursor | undefined {
   const member = list.members.find((candidate) => candidate.agentName === agentName);
   return typeof member?.lastReadSeq === 'number' ? { seq: member.lastReadSeq, epoch: list.epoch } : undefined;
+}
+
+/** One wait_for_messages call, across the connections and long polls it uses. */
+interface WaitCall {
+  key: string;
+  roomName: string;
+  agentName: string;
+  /** 0: no time limit. */
+  timeoutMs: number;
+  /** `Infinity` without a time limit. */
+  deadline: number;
+  signal: AbortSignal;
+  /** The other agents waiting when the wait began: what the first connection or long poll that told reported. */
+  waiting: { waitingAgents?: string[] } | undefined;
+  waitingKnown: boolean;
+}
+
+function noteWaiting(call: WaitCall, waiting: { waitingAgents?: string[] } | undefined): void {
+  if (call.waitingKnown) return;
+  call.waiting = waiting;
+  call.waitingKnown = true;
 }
 
 /** Messages to return: newer than the cursor already, from others than the agent and `system`, one per seq. */
@@ -93,14 +132,16 @@ export class CloudWaitService {
   private readonly sockets = new Map<string, RoomSocket>();
   private readonly cursors = new Map<string, ReadCursor>();
   private readonly locks = new Map<string, Promise<void>>();
+  private readonly openEndedWaits = new OpenEndedWaits();
   private webSocketRetryAt = 0;
   private readonly connectTimeoutMs: number;
   private readonly ackTimeoutMs: number;
   private readonly pingIntervalMs: number;
   private readonly webSocketRetryCooldownMs: number;
+  private readonly serverWaitMaxSeconds: number;
 
   /** Counters for diagnostics and tests. */
-  readonly stats = { webSocketConnects: 0, webSocketFallbacks: 0, longPollRequests: 0 };
+  readonly stats = { webSocketConnects: 0, webSocketFallbacks: 0, longPollRequests: 0, waitRedeclarations: 0 };
 
   constructor(
     private readonly api: CloudApiClient,
@@ -110,38 +151,35 @@ export class CloudWaitService {
     this.ackTimeoutMs = options.ackTimeoutMs ?? 10000;
     this.pingIntervalMs = options.pingIntervalMs ?? 30000;
     this.webSocketRetryCooldownMs = options.webSocketRetryCooldownMs ?? 30000;
+    this.serverWaitMaxSeconds = Math.max(1, Math.min(WAIT_START_MAX_SECONDS, options.serverWaitMaxSeconds ?? WAIT_START_MAX_SECONDS));
   }
 
-  async waitForMessages(agentName: string, roomName: string, timeoutMs: number): Promise<WaitForMessagesResult> {
-    const deadline = Date.now() + timeoutMs;
+  /**
+   * Waits up to `timeoutMs` (0: until a message arrives). Rejects with WaitCancelledError, consuming nothing, when
+   * `signal` aborts or a newer call for the same room x agent takes over from a wait without a time limit.
+   */
+  async waitForMessages(agentName: string, roomName: string, timeoutMs: number, signal?: AbortSignal): Promise<WaitForMessagesResult> {
     const key = socketKey(roomName, agentName);
-    // Calls for the same room x agent share one connection and one server-side waiter; run them one at a time.
-    return this.withLock(key, async () => {
-      for (let reconnects = 0; ; reconnects++) {
-        const socket = await this.acquireSocket(key, roomName, agentName, deadline);
-        if (!socket) return this.waitWithLongPoll(key, roomName, agentName, deadline);
-        try {
-          return await this.waitOnSocket(key, socket, roomName, agentName, timeoutMs, deadline);
-        } catch (error) {
-          if (!(error instanceof RoomSocketClosedError)) throw error;
-          this.forget(key, socket);
-          if (Date.now() >= deadline) {
-            // No time left to reconnect. Nothing was consumed, so the next call still returns what is unread.
-            logger.warn('Room WebSocket dropped at the end of a wait', { roomName, agentName, reason: error.message });
-            return toWaitResult(agentName, [], true, undefined);
-          }
-          if (reconnects >= MAX_RECONNECTS_PER_CALL) {
-            logger.warn('Room WebSocket keeps dropping; long polling for the rest of this wait', {
-              roomName,
-              agentName,
-              reason: error.message,
-            });
-            return this.waitWithLongPoll(key, roomName, agentName, deadline);
-          }
-          logger.warn('Room WebSocket dropped during a wait; reconnecting', { roomName, agentName, reason: error.message });
-        }
-      }
-    });
+    const noTimeLimit = timeoutMs === WAIT_CONSTANTS.NO_TIMEOUT;
+    const turn = this.openEndedWaits.start(key, noTimeLimit, signal);
+    const call: WaitCall = {
+      key,
+      roomName,
+      agentName,
+      timeoutMs,
+      deadline: noTimeLimit ? Infinity : Date.now() + timeoutMs,
+      signal: turn.signal,
+      waiting: undefined,
+      waitingKnown: false,
+    };
+    try {
+      // Calls for the same room x agent share one connection and one server-side waiter; run them one at a time.
+      return await this.withLock(key, call.signal, () =>
+        noTimeLimit ? this.waitWithoutTimeLimit(call) : this.waitWithTimeLimit(call),
+      );
+    } finally {
+      turn.end();
+    }
   }
 
   /**
@@ -200,6 +238,83 @@ export class CloudWaitService {
     const sockets = [...this.sockets.values()];
     this.sockets.clear();
     await Promise.all(sockets.map((socket) => socket.closeAndWait(1000, 'shutdown', CLOSE_GRACE_MS)));
+  }
+
+  /* ---------------------------------------------------------------------
+   * The two kinds of wait
+   * ------------------------------------------------------------------ */
+
+  private async waitWithTimeLimit(call: WaitCall): Promise<WaitForMessagesResult> {
+    const { key, roomName, agentName, deadline, signal } = call;
+    for (let reconnects = 0; ; reconnects++) {
+      const socket = await this.acquireSocket(key, roomName, agentName, deadline);
+      if (!socket) return this.waitWithLongPoll(call, deadline);
+      try {
+        return await this.waitOnSocket(call, socket);
+      } catch (error) {
+        if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
+        if (!(error instanceof RoomSocketClosedError)) throw error;
+        this.forget(key, socket);
+        if (Date.now() >= deadline) {
+          // No time left to reconnect. Nothing was consumed, so the next call still returns what is unread.
+          logger.warn('Room WebSocket dropped at the end of a wait', { roomName, agentName, reason: error.message });
+          return toWaitResult(agentName, [], true, call.waiting);
+        }
+        if (reconnects >= MAX_RECONNECTS_PER_CALL) {
+          logger.warn('Room WebSocket keeps dropping; long polling for the rest of this wait', {
+            roomName,
+            agentName,
+            reason: error.message,
+          });
+          return this.waitWithLongPoll(call, deadline);
+        }
+        logger.warn('Room WebSocket dropped during a wait; reconnecting', { roomName, agentName, reason: error.message });
+      }
+    }
+  }
+
+  /**
+   * `timeout: 0`. Over the WebSocket the wait is declared again before the server drops it (waitOnSocket). A dropped
+   * connection is made again at once, unless it did not last the cooldown: then, as when the WebSocket cannot be
+   * established, long polling (each request declares the wait) until the cooldown is over. Failures that another
+   * attempt may get past (network, 5xx, 429) are retried after a pause that grows while they keep coming.
+   */
+  private async waitWithoutTimeLimit(call: WaitCall): Promise<WaitForMessagesResult> {
+    const { key, roomName, agentName, signal } = call;
+    let failures = 0;
+    let lastFailureAt = 0;
+    for (;;) {
+      if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
+      let socket: RoomSocket | null = null;
+      try {
+        socket = await this.acquireSocket(key, roomName, agentName, call.deadline);
+        if (socket) return await this.waitOnSocket(call, socket);
+        const result = await this.waitWithLongPoll(call, Math.max(this.webSocketRetryAt, Date.now() + MIN_LONG_POLL_ROUND_MS));
+        if (result.hasNewMessages) return result;
+        failures = 0;
+      } catch (error) {
+        if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
+        if (error instanceof RoomSocketClosedError && socket) {
+          this.forget(key, socket);
+          if (Date.now() - socket.connectedAt < this.webSocketRetryCooldownMs) {
+            this.webSocketRetryAt = Date.now() + this.webSocketRetryCooldownMs;
+          }
+          logger.warn('Room WebSocket dropped during a wait without a time limit; reconnecting', {
+            roomName,
+            agentName,
+            reason: error.message,
+          });
+          continue;
+        }
+        if (isDefinitiveAppError(error)) throw error;
+        // Failures in a row make the pause grow; after a quiet spell it starts small again.
+        failures = Date.now() - lastFailureAt > RETRY_MAX_DELAY_MS * 2 ? 1 : failures + 1;
+        lastFailureAt = Date.now();
+        const retryInMs = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failures - 1));
+        logger.warn('Waiting for messages failed; trying again', { roomName, agentName, retryInMs, reason: String(error) });
+        await sleep(retryInMs, signal);
+      }
+    }
   }
 
   /* ---------------------------------------------------------------------
@@ -262,29 +377,38 @@ export class CloudWaitService {
     return socket;
   }
 
-  private async waitOnSocket(
-    key: string,
-    socket: RoomSocket,
-    roomName: string,
-    agentName: string,
-    timeoutMs: number,
-    deadline: number,
-  ): Promise<WaitForMessagesResult> {
+  private async waitOnSocket(call: WaitCall, socket: RoomSocket): Promise<WaitForMessagesResult> {
+    const { key, roomName, agentName, deadline, signal } = call;
+    if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
     const context = { roomName, agentName };
     const requestId = randomUUID();
-    let started: AckResult;
-    try {
-      started = await socket.request(
-        // The tool timeout (ms) in whole seconds; the server clamps anything above 300.
-        { type: 'wait_start', requestId, timeoutSeconds: Math.max(1, Math.ceil(timeoutMs / 1000)) },
-        this.boundedTimeout(this.ackTimeoutMs, deadline),
-      );
-    } catch (error) {
-      throw frameErrorToAppError(error, context);
-    }
+    // The tool timeout (ms) in whole seconds, no longer than the server keeps a wait; without a time limit, that long.
+    const timeoutSeconds =
+      call.timeoutMs > 0
+        ? Math.min(this.serverWaitMaxSeconds, Math.max(1, Math.ceil(call.timeoutMs / 1000)))
+        : this.serverWaitMaxSeconds;
+    let declaredUntil = 0;
+    // `wait_start` again with the same requestId replaces the server's waiter: the wait lasts `timeoutSeconds` from then.
+    const declare = async (): Promise<AckResult> => {
+      const sentAt = Date.now();
+      try {
+        const started = await socket.request(
+          { type: 'wait_start', requestId, timeoutSeconds },
+          this.boundedTimeout(this.ackTimeoutMs, deadline),
+        );
+        declaredUntil = sentAt + timeoutSeconds * 1000;
+        return started;
+      } catch (error) {
+        throw frameErrorToAppError(error, context);
+      }
+    };
+    const redeclareMarginMs = Math.min(REDECLARE_MARGIN_MS, (timeoutSeconds * 1000) / 4);
 
-    // Like the file mode, the deadlock warning describes the other agents waiting when this wait began.
-    const waiting = await socket.firstWaitingAfter(started.waitingVersion);
+    const started = await declare();
+    if (!call.waitingKnown) {
+      // Like the file mode, the deadlock warning describes the other agents waiting when this wait began.
+      noteWaiting(call, await socket.firstWaitingAfter(started.waitingVersion));
+    }
 
     let cursor = this.cursors.get(key)?.seq;
     if (cursor === undefined) {
@@ -299,25 +423,34 @@ export class CloudWaitService {
     let timedOut = false;
     try {
       for (;;) {
-        const outcome = await socket.waitForUnread(agentName, cursor, deadline);
+        // A wait that lasts longer than the server keeps it is declared again shortly before the server would drop it.
+        const redeclareAt = deadline > declaredUntil ? declaredUntil - redeclareMarginMs : Infinity;
+        const outcome = await socket.waitForUnread(agentName, cursor, Math.min(deadline, redeclareAt), signal);
+        if (outcome === 'cancelled') throw WaitCancelledError.fromSignal(signal);
         // Take the buffer, its high-water mark and what needs HTTP in the same turn; later frames stay for the next call.
         const buffered = socket.unreadMessages(agentName, cursor);
         let through = Math.max(cursor, socket.highestBufferedSeq());
         const fetches = socket.pendingFetches(cursor);
         const fetched: ApiMessage[] = [];
         for (const range of fetches) {
-          fetched.push(...(await this.fetchRange(roomName, range, deadline)));
+          fetched.push(...(await this.fetchRange(roomName, range, deadline, signal)));
           through = Math.max(through, range.through);
         }
+        // A cancelled wait consumes nothing: what it fetched stays pending for the next call.
+        if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
         // Resolved only after every fetch succeeded: a failure leaves them all pending for the next call.
         for (const range of fetches) socket.resolveFetch(range);
 
         messages = mergeUnread(agentName, buffered, fetched);
         consumedThrough = Math.max(consumedThrough, through);
         if (messages.length > 0) break;
-        if (outcome === 'timeout') {
+        if (outcome === 'timeout' && Date.now() >= deadline) {
           timedOut = true;
           break;
+        }
+        if (outcome === 'timeout' && Date.now() >= redeclareAt) {
+          await declare();
+          this.stats.waitRedeclarations += 1;
         }
       }
     } catch (error) {
@@ -328,7 +461,7 @@ export class CloudWaitService {
     socket.consumeThrough(consumedThrough);
     this.cursors.set(key, { seq: consumedThrough, epoch: socket.epoch });
     await this.finishWait(socket, requestId, roomName, agentName, messages.length > 0 ? consumedThrough : 0);
-    return toWaitResult(agentName, messages, timedOut, waiting);
+    return toWaitResult(agentName, messages, timedOut, call.waiting);
   }
 
   /**
@@ -373,7 +506,7 @@ export class CloudWaitService {
   }
 
   /** Messages in `(after, through]` that did not fit a WebSocket frame, fetched over HTTP as the server asks. */
-  private async fetchRange(roomName: string, range: FetchRange, deadline: number): Promise<ApiMessage[]> {
+  private async fetchRange(roomName: string, range: FetchRange, deadline: number, signal: AbortSignal): Promise<ApiMessage[]> {
     const found: ApiMessage[] = [];
     let since = range.after;
     while (since < range.through) {
@@ -381,7 +514,7 @@ export class CloudWaitService {
       const page = await this.api.getMessages(
         roomName,
         { since, limit: Math.min(PAGE_LIMIT, range.through - since) },
-        { timeoutMs: this.boundedTimeout(HTTP_TIMEOUT_MS, deadline), retry: false },
+        { timeoutMs: this.boundedTimeout(HTTP_TIMEOUT_MS, deadline), retry: false, signal },
       );
       for (const message of page.messages) {
         if (message.seq <= range.through) found.push(message);
@@ -402,23 +535,23 @@ export class CloudWaitService {
    * Long polling (fallback only)
    * ------------------------------------------------------------------ */
 
-  private async waitWithLongPoll(
-    key: string,
-    roomName: string,
-    agentName: string,
-    deadline: number,
-  ): Promise<WaitForMessagesResult> {
+  /**
+   * Long polls until `deadline`: the wait's own, or for a wait without a time limit the end of one round (when the
+   * WebSocket may be tried again).
+   */
+  private async waitWithLongPoll(call: WaitCall, deadline: number): Promise<WaitForMessagesResult> {
+    const { key, roomName, agentName, signal } = call;
     const context = { roomName, agentName };
-    let waiting: { waitingAgents?: string[] } | undefined;
     let lastError: unknown;
     let epochChecked = false;
 
     // The first request always goes out, so messages that are already unread are returned even at the deadline.
     let attempts = 0;
     while (attempts === 0 || Date.now() < deadline) {
+      if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
       attempts += 1;
       try {
-        const cursor = await this.longPollCursor(key, roomName, agentName, deadline, !epochChecked);
+        const cursor = await this.longPollCursor(key, roomName, agentName, deadline, !epochChecked, signal);
         epochChecked = true;
         const remaining = deadline - Date.now();
         // Whole seconds up to 30, at least one while any time is left: the request declares the wait (and a `wait=0`
@@ -432,9 +565,11 @@ export class CloudWaitService {
           // that started from the server-side position could not be repeated after a lost response.
           { agentName, since: cursor.seq, wait: waitSeconds, limit: PAGE_LIMIT, excludeSelf: true, markRead: true },
           // This loop retries until the deadline; one request never runs much past its own wait, nor past the hard stop.
-          { timeoutMs: Math.min(waitSeconds * 1000 + LONG_POLL_GRACE_MS, this.untilHardStop(deadline)), retry: false, context },
+          { timeoutMs: Math.min(waitSeconds * 1000 + LONG_POLL_GRACE_MS, this.untilHardStop(deadline)), retry: false, context, signal },
         );
         lastError = undefined;
+        // A cancelled wait keeps its cursor: what this request marked read comes again with the next call.
+        if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
 
         if (page.epoch !== cursor.epoch) {
           // The room was deleted and created again since the cursor was taken. This request has already marked the
@@ -446,16 +581,18 @@ export class CloudWaitService {
           continue;
         }
         // The server reports the waiters at the end of each long poll; keep the first one, closest to the start.
-        if (waitSeconds > 0) waiting ??= { waitingAgents: page.waitingAgents };
+        if (waitSeconds > 0) noteWaiting(call, { waitingAgents: page.waitingAgents });
 
-        const { messages, cursor: after } = await this.remainingPages(page, roomName, agentName, deadline);
+        const { messages, cursor: after } = await this.remainingPages(page, roomName, agentName, deadline, signal);
+        if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
         this.cursors.set(key, after);
-        if (messages.length > 0) return toWaitResult(agentName, messages, false, waiting);
+        if (messages.length > 0) return toWaitResult(agentName, messages, false, call.waiting);
       } catch (error) {
+        if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
         if (isDefinitiveAppError(error)) throw error;
         lastError = error;
         const remaining = deadline - Date.now();
-        if (remaining > 0) await sleep(Math.min(500, remaining));
+        if (remaining > 0) await sleep(Math.min(500, remaining), signal);
       }
     }
 
@@ -464,7 +601,7 @@ export class CloudWaitService {
         ? lastError
         : new AppError(`Waiting for messages failed: ${String(lastError)}`, 'SERVICE_UNAVAILABLE', 503);
     }
-    return toWaitResult(agentName, [], true, waiting);
+    return toWaitResult(agentName, [], true, call.waiting);
   }
 
   /**
@@ -477,6 +614,7 @@ export class CloudWaitService {
     roomName: string,
     agentName: string,
     deadline: number,
+    signal: AbortSignal,
   ): Promise<{ messages: ApiMessage[]; cursor: ReadCursor }> {
     const epoch = first.epoch ?? '';
     let messages = first.messages;
@@ -488,15 +626,17 @@ export class CloudWaitService {
         page = await this.api.getMessages(
           roomName,
           { agentName, since: cursor.seq, limit: PAGE_LIMIT, excludeSelf: true, markRead: true },
-          { timeoutMs: this.boundedTimeout(HTTP_TIMEOUT_MS, deadline), retry: false, context: { roomName, agentName } },
+          { timeoutMs: this.boundedTimeout(HTTP_TIMEOUT_MS, deadline), retry: false, context: { roomName, agentName }, signal },
         );
       } catch (error) {
-        logger.warn('Could not fetch the next page of unread messages; returning the ones received', {
-          roomName,
-          agentName,
-          received: messages.length,
-          reason: String(error),
-        });
+        if (!signal.aborted) {
+          logger.warn('Could not fetch the next page of unread messages; returning the ones received', {
+            roomName,
+            agentName,
+            received: messages.length,
+            reason: String(error),
+          });
+        }
         break;
       }
       if (page.epoch !== first.epoch) {
@@ -523,12 +663,14 @@ export class CloudWaitService {
     agentName: string,
     deadline: number,
     checkEpoch: boolean,
+    signal: AbortSignal,
   ): Promise<ReadCursor> {
     const held = this.cursors.get(key);
     if (held && !checkEpoch) return held;
     const list = await this.api.listMembers(roomName, true, {
       timeoutMs: this.boundedTimeout(HTTP_TIMEOUT_MS, deadline),
       retry: false,
+      signal,
     });
     // A cursor of the current room is more precise than the server's read position. (A server before api 0.5.1 does
     // not report the epoch here; the long poll's own response still does, and catches a room created again.)
@@ -558,7 +700,7 @@ export class CloudWaitService {
     return left;
   }
 
-  private async withLock<T>(key: string, task: () => Promise<T>): Promise<T> {
+  private async withLock<T>(key: string, signal: AbortSignal, task: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(key) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolve) => {
@@ -566,8 +708,10 @@ export class CloudWaitService {
     });
     const tail = previous.then(() => current);
     this.locks.set(key, tail);
-    await previous;
     try {
+      // A call cancelled while it waits for its turn gives the turn up.
+      await settledOrAborted(previous, signal);
+      if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
       return await task();
     } finally {
       release();

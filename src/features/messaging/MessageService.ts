@@ -17,15 +17,18 @@ import {
   Message
 } from './types/messaging.types';
 import { WAIT_CONSTANTS, READ_STATUS_FILENAME, WAITING_AGENTS_FILENAME } from './constants';
-import { RoomNotFoundError, AgentNotInRoomError } from '../../errors/AppError';
+import { OpenEndedWaits } from './OpenEndedWaits';
+import { RoomNotFoundError, AgentNotInRoomError, WaitCancelledError } from '../../errors/AppError';
 import * as fs from 'fs/promises';
 import { writeFileAtomic } from '../../utils/atomicFile';
+import { settledOrAborted, sleep } from '../../utils/abort';
 import * as path from 'path';
 
 export class MessageService {
   private readonly storage: MessageStorage;
   private readonly cache: MessageCache;
   private readonly lockService: LockService;
+  private readonly openEndedWaits = new OpenEndedWaits();
 
   constructor(dataDir: string = getDataDirectory(), cacheCapacity?: number, lockService?: LockService) {
     this.lockService = lockService || new LockService(dataDir);
@@ -114,15 +117,41 @@ export class MessageService {
     this.cache.clear(roomName);
   }
 
-  async waitForMessages(params: WaitForMessagesParams): Promise<WaitForMessagesResponse> {
+  /**
+   * Returns the unread messages as soon as there are any, or none once `timeout` ms have passed (0: no time limit).
+   * When `signal` aborts, or a newer wait for the same agent and room takes over from one without a time limit, it
+   * rejects with WaitCancelledError and the messages stay unread.
+   */
+  async waitForMessages(params: WaitForMessagesParams, signal?: AbortSignal): Promise<WaitForMessagesResponse> {
     // Validate input parameters
     const validatedParams = MessageValidator.validateWaitForMessages(params);
     
     // Note: Room existence and agent membership checks should be done by the adapter layer
     // The MessageService itself doesn't have access to room data
     
-    const timeout = validatedParams.timeout || WAIT_CONSTANTS.DEFAULT_TIMEOUT;
-    const startTime = Date.now();
+    const timeout = validatedParams.timeout ?? WAIT_CONSTANTS.DEFAULT_TIMEOUT;
+    const turn = this.openEndedWaits.start(
+      `${validatedParams.roomName}\u0000${validatedParams.agentName}`,
+      timeout === WAIT_CONSTANTS.NO_TIMEOUT,
+      signal
+    );
+    try {
+      // The wait taken over from removes its waiting-list entry first, so that it cannot remove this one's
+      await settledOrAborted(turn.previousDone, turn.signal);
+      return await this.pollForMessages(validatedParams, timeout, turn.signal);
+    } finally {
+      turn.end();
+    }
+  }
+
+  private async pollForMessages(
+    validatedParams: WaitForMessagesParams,
+    timeout: number,
+    signal: AbortSignal
+  ): Promise<WaitForMessagesResponse> {
+    if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
+    
+    const deadline = timeout === WAIT_CONSTANTS.NO_TIMEOUT ? Infinity : Date.now() + timeout;
     let pollInterval = WAIT_CONSTANTS.INITIAL_POLL_INTERVAL;
     
     // Add agent to waiting list
@@ -131,7 +160,7 @@ export class MessageService {
     // Send system message about waiting
     await this.sendSystemMessage(
       validatedParams.roomName,
-      `${validatedParams.agentName} is waiting for new messages (timeout: ${timeout}ms)`
+      `${validatedParams.agentName} is waiting for new messages (timeout: ${timeout === WAIT_CONSTANTS.NO_TIMEOUT ? 'none' : `${timeout}ms`})`
     );
     
     // Check for deadlock
@@ -147,12 +176,17 @@ export class MessageService {
     
     try {
       // Poll for new messages
-      while (Date.now() - startTime < timeout) {
+      while (Date.now() < deadline) {
         // Get unread messages
         const unreadMessages = await this.getUnreadMessages(
           validatedParams.roomName,
           validatedParams.agentName
         );
+        
+        // A cancelled wait returns nothing and leaves the messages unread
+        if (signal.aborted) {
+          throw WaitCancelledError.fromSignal(signal);
+        }
         
         if (unreadMessages.length > 0) {
           // Update read status
@@ -176,7 +210,7 @@ export class MessageService {
         }
         
         // Wait before next poll with exponential backoff
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        await sleep(pollInterval, signal);
         pollInterval = Math.min(pollInterval * WAIT_CONSTANTS.BACKOFF_FACTOR, WAIT_CONSTANTS.MAX_POLL_INTERVAL);
       }
       

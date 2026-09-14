@@ -216,6 +216,36 @@ describe('stdio MCP server in cloud mode', () => {
     await waitUntil(async () => (await api.listMembers('sigterm-room')).members[0]!.connected === false, 10000, 'disconnected');
   }, 60000);
 
+  it('ends waits without a time limit and exits with 0 on SIGTERM and when stdin closes', async () => {
+    const bySignal = await start();
+    const byStdin = await start();
+    await bySignal.tool('create_room', { roomName: 'no-limit-exit' });
+    await bySignal.tool('enter_room', { agentName: 'alice', roomName: 'no-limit-exit' });
+    await byStdin.tool('enter_room', { agentName: 'bob', roomName: 'no-limit-exit' });
+    const waitWithoutLimit = (server: StdioServer, agentName: string) =>
+      server
+        .request('tools/call', {
+          name: 'agent_communication_wait_for_messages',
+          arguments: { agentName, roomName: 'no-limit-exit', timeout: 0 },
+        })
+        .catch(() => undefined);
+    void waitWithoutLimit(bySignal, 'alice');
+    void waitWithoutLimit(byStdin, 'bob');
+    const members = async () => (await api.listMembers('no-limit-exit')).members;
+    await waitUntil(async () => (await members()).every((member) => member.waiting && member.connected), 10000, 'both waiting');
+
+    let startedAt = Date.now();
+    bySignal.process.kill('SIGTERM');
+    expect(await bySignal.waitForExit(5000)).toBe(0);
+    expect(Date.now() - startedAt).toBeLessThan(3000);
+
+    startedAt = Date.now();
+    expect(await byStdin.closeStdin()).toBe(0);
+    expect(Date.now() - startedAt).toBeLessThan(3000);
+
+    await waitUntil(async () => (await members()).every((member) => !member.waiting && !member.connected), 10000, 'released');
+  }, 60000);
+
   it('refuses to start with an API URL that is not http(s)', async () => {
     const child = spawn(TSX, ['src/index.ts'], {
       cwd: REPO_ROOT,
@@ -285,6 +315,30 @@ describe('stdio MCP server: the mode chosen at startup', () => {
     expectOnlyJsonRpcOnStdout(server);
     await stop(server);
   }, 60000);
+
+  it('ends a wait without a time limit in file mode and exits with 0 on SIGTERM and when stdin closes', async () => {
+    for (const stopBy of ['SIGTERM', 'stdin'] as const) {
+      const server = await start({ AGENT_COMM_TOKEN: undefined, AGENT_COMM_API_URL: undefined, AGENT_COMM_DATA_DIR: dataDir });
+      const roomName = `file-no-limit-${stopBy.toLowerCase()}`;
+      await server.tool('create_room', { roomName });
+      await server.tool('enter_room', { agentName: 'alice', roomName });
+      void server
+        .request('tools/call', { name: 'agent_communication_wait_for_messages', arguments: { agentName: 'alice', roomName, timeout: 0 } })
+        .catch(() => undefined);
+      const waitingFile = path.join(dataDir, 'rooms', roomName, 'waiting_agents.json');
+      const waitingAgents = async () => JSON.parse(await fs.readFile(waitingFile, 'utf8').catch(() => '[]')) as Array<{ agentName: string; timeout: number }>;
+      await waitUntil(async () => (await waitingAgents()).length === 1, 10000, `alice waiting (${stopBy})`);
+      expect(await waitingAgents()).toEqual([expect.objectContaining({ agentName: 'alice', timeout: 0 })]);
+
+      const startedAt = Date.now();
+      if (stopBy === 'SIGTERM') server.process.kill('SIGTERM');
+      else server.process.stdin!.end();
+      expect(await server.waitForExit(5000)).toBe(0);
+      expect(Date.now() - startedAt).toBeLessThan(3000);
+      // The wait took alice off the waiting list on the way out.
+      expect(await waitingAgents()).toEqual([]);
+    }
+  }, 90000);
 
   it('starts in cloud mode at the default API URL with only AGENT_COMM_TOKEN', async () => {
     // Only startup and tools/list: no tool call, so nothing is sent to the production API.

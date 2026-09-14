@@ -72,8 +72,8 @@ export const waitForMessagesTool: Tool = {
       },
       timeout: {
         type: 'number',
-        description: 'Maximum time to wait for new messages in seconds',
-        minimum: 1,
+        description: 'Maximum time to wait for new messages in seconds (1-300). 0 = メッセージが届くまで無期限に待つ（常駐エージェント向け）',
+        minimum: 0,
         maximum: 300,
         default: 30
       }
@@ -113,16 +113,17 @@ export async function handleGetMessages(
 
 export async function handleWaitForMessages(
   args: any,
-  messagingAdapter: any
+  messagingAdapter: any,
+  signal?: AbortSignal
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  // Convert timeout from seconds to milliseconds
-  const timeoutMs = args.timeout ? args.timeout * 1000 : undefined;
+  // Convert timeout from seconds to milliseconds; 0 (wait until a message arrives) stays 0
+  const timeoutMs = args.timeout === 0 ? 0 : args.timeout ? args.timeout * 1000 : undefined;
   
   const result = await messagingAdapter.waitForMessages({
     agentName: args.agentName,
     roomName: args.roomName,
     timeout: timeoutMs
-  });
+  }, signal);
   
   return {
     content: [{

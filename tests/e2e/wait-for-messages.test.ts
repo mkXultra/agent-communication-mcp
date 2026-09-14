@@ -457,6 +457,102 @@ describe('Wait For Messages E2E Tests', () => {
     });
   });
   
+  describe('Wait For Messages Timeout Range', () => {
+    let nextId = 9000;
+    
+    async function callTool(name: string, args: Record<string, unknown>, timeoutMs?: number) {
+      const response = await transport.simulateRequest({
+        jsonrpc: '2.0',
+        id: nextId++,
+        method: 'tools/call',
+        params: { name: `agent_communication_${name}`, arguments: args }
+      }, timeoutMs);
+      if (response.error) throw new Error(response.error.message);
+      return JSON.parse(response.result!.content[0].text);
+    }
+    
+    async function setupRoom(roomName: string): Promise<void> {
+      await callTool('create_room', { roomName });
+      await callTool('enter_room', { agentName: 'sender', roomName });
+      await callTool('enter_room', { agentName: 'waiter', roomName });
+    }
+    
+    it('should wait without a time limit (timeout 0) until a message arrives', async () => {
+      await setupRoom('no-limit-room');
+      
+      let settled = false;
+      const startTime = Date.now();
+      const waiting = callTool('wait_for_messages', { agentName: 'waiter', roomName: 'no-limit-room', timeout: 0 }).finally(() => {
+        settled = true;
+      });
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      expect(settled).toBe(false);
+      
+      await callTool('send_message', { agentName: 'sender', roomName: 'no-limit-room', message: 'Worth the wait' });
+      const result = await waiting;
+      expect(Date.now() - startTime).toBeGreaterThanOrEqual(3000);
+      expect(result.hasNewMessages).toBe(true);
+      expect(result.timedOut).toBe(false);
+      expect(result.messages.map((m: { message: string }) => m.message)).toEqual(['Worth the wait']);
+    });
+    
+    it('should accept a timeout of 300 seconds and reject 301', async () => {
+      await setupRoom('max-timeout-room');
+      
+      const waiting = callTool('wait_for_messages', { agentName: 'waiter', roomName: 'max-timeout-room', timeout: 300 });
+      setTimeout(() => {
+        void callTool('send_message', { agentName: 'sender', roomName: 'max-timeout-room', message: 'Within 300 seconds' });
+      }, 500);
+      const result = await waiting;
+      expect(result.messages.map((m: { message: string }) => m.message)).toEqual(['Within 300 seconds']);
+      
+      await expect(
+        callTool('wait_for_messages', { agentName: 'waiter', roomName: 'max-timeout-room', timeout: 301 })
+      ).rejects.toThrow("Validation failed for field 'timeout': Timeout cannot exceed 300000ms");
+    });
+    
+    it('should wait 30 seconds when no timeout is given', async () => {
+      await setupRoom('default-timeout-room');
+      
+      const startTime = Date.now();
+      const result = await callTool('wait_for_messages', { agentName: 'waiter', roomName: 'default-timeout-room' }, 40000);
+      const duration = Date.now() - startTime;
+      
+      expect(result).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+      expect(duration).toBeGreaterThanOrEqual(30000);
+      expect(duration).toBeLessThan(33000);
+    }, 45000);
+    
+    it('should end a wait whose request was cancelled and leave the next message for the next call', async () => {
+      await setupRoom('cancelled-wait-room');
+      
+      const requestId = nextId++;
+      let answered = false;
+      void transport.simulateRequest({
+        jsonrpc: '2.0',
+        id: requestId,
+        method: 'tools/call',
+        params: { name: 'agent_communication_wait_for_messages', arguments: { agentName: 'waiter', roomName: 'cancelled-wait-room', timeout: 0 } }
+      }, 10000).then(() => { answered = true; }, () => undefined);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // What an MCP client sends when a tool call times out or the user interrupts it
+      transport.onmessage!({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId, reason: 'client timeout' } });
+      
+      // A wait still running would pick this message up within a second and mark it read.
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      await callTool('send_message', { agentName: 'sender', roomName: 'cancelled-wait-room', message: 'For the next call' });
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      const startTime = Date.now();
+      const result = await callTool('wait_for_messages', { agentName: 'waiter', roomName: 'cancelled-wait-room', timeout: 5 });
+      expect(result.messages.map((m: { message: string }) => m.message)).toEqual(['For the next call']);
+      expect(Date.now() - startTime).toBeLessThan(1000);
+      // No response is sent for a cancelled request.
+      expect(answered).toBe(false);
+    });
+  });
+  
   describe('Wait For Messages Error Handling', () => {
     it('should handle room not found error', async () => {
       const response = await transport.simulateRequest({

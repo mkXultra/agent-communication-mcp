@@ -57,8 +57,8 @@ export class MemoryTransport implements Transport {
   }
   
   
-  // For testing: simulate sending a request to the server
-  async simulateRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
+  // For testing: simulate sending a request to the server (rejects when no response comes within timeoutMs)
+  async simulateRequest(request: JSONRPCRequest, timeoutMs = 20000): Promise<JSONRPCResponse> {
     if (!this.onmessage) {
       throw new Error('No message handler registered');
     }
@@ -73,7 +73,7 @@ export class MemoryTransport implements Transport {
           this.pendingRequests.delete(request.id!);
           reject(new Error('Request timeout'));
         }
-      }, 20000); // Match vitest timeout (20s)
+      }, timeoutMs); // Matches the vitest timeout (20s) by default
       
       // Override the resolver to clear the timeout
       const originalResolve = resolve;

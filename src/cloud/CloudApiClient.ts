@@ -30,6 +30,8 @@ export interface CloudRequestOptions {
   /** The request may be sent again after a transient failure (idempotent or idempotency-keyed). */
   retry?: boolean;
   timeoutMs?: number;
+  /** Abandons the request (and any retry) when it aborts. */
+  signal?: AbortSignal;
 }
 
 /** Per-call overrides for requests made on behalf of a wait with a deadline. */
@@ -37,6 +39,8 @@ export interface CallOptions {
   timeoutMs?: number;
   /** `false` when the caller retries on its own (and must not overrun its deadline). */
   retry?: boolean;
+  /** Abandons the request when it aborts (a wait that was cancelled). */
+  signal?: AbortSignal;
 }
 
 export interface CloudApiClientOptions {
@@ -126,6 +130,7 @@ export class CloudApiClient {
       context: { roomName },
       retry: options.retry ?? true,
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
     });
   }
 
@@ -155,6 +160,7 @@ export class CloudApiClient {
       context: options.context ?? { roomName, agentName: query.agentName },
       retry: options.retry ?? true,
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
     });
   }
 
@@ -215,14 +221,14 @@ export class CloudApiClient {
     }
 
     for (let attempt = 0; ; attempt++) {
-      const canRetry = options.retry === true && attempt < this.maxRetries;
+      const canRetry = options.retry === true && attempt < this.maxRetries && !options.signal?.aborted;
       let status: number;
       let text: string;
       let retryAfter: string | null;
       try {
-        ({ status, text, retryAfter } = await this.send(url, method, headers, body, options.timeoutMs));
+        ({ status, text, retryAfter } = await this.send(url, method, headers, body, options.timeoutMs, options.signal));
       } catch (error) {
-        if (!canRetry) throw error;
+        if (!canRetry || options.signal?.aborted) throw error;
         await sleep(this.backoff(attempt));
         continue;
       }
@@ -253,24 +259,31 @@ export class CloudApiClient {
     headers: Record<string, string>,
     body: string | undefined,
     requestTimeoutMs: number | undefined,
+    signal: AbortSignal | undefined,
   ): Promise<{ status: number; text: string; retryAfter: string | null }> {
     const controller = new AbortController();
     const timeoutMs = requestTimeoutMs ?? this.requestTimeoutMs;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const cancel = (): void => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener('abort', cancel, { once: true });
 
     try {
       const response = await cloudFetch(url, { method, headers, body, signal: controller.signal });
       const text = await response.text();
       return { status: response.status, text, retryAfter: response.headers.get('retry-after') };
     } catch (error) {
-      const reason = controller.signal.aborted
-        ? `timed out after ${timeoutMs}ms`
-        : error instanceof Error
-          ? (error.cause instanceof Error ? error.cause.message : error.message)
-          : String(error);
+      const reason = signal?.aborted
+        ? 'cancelled'
+        : controller.signal.aborted
+          ? `timed out after ${timeoutMs}ms`
+          : error instanceof Error
+            ? (error.cause instanceof Error ? error.cause.message : error.message)
+            : String(error);
       throw new CloudTransportError(`Cloud API request ${method} ${url.pathname} failed: ${reason}`);
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
     }
   }
 

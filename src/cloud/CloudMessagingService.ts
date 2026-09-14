@@ -125,8 +125,14 @@ export class CloudMessagingService {
     return { roomName, messages, count: messages.length, hasMore: collected.length > offset + limit };
   }
 
-  /** wait_for_messages: WebSocket wait with long polling as the fallback (CloudWaitService). */
-  async waitForMessages(params: { agentName: string; roomName: string; timeout?: number }): Promise<WaitForMessagesResult> {
+  /**
+   * wait_for_messages: WebSocket wait with long polling as the fallback (CloudWaitService). `timeout` 0 waits until a
+   * message arrives; `signal` ends the wait without a result.
+   */
+  async waitForMessages(
+    params: { agentName: string; roomName: string; timeout?: number },
+    signal?: AbortSignal,
+  ): Promise<WaitForMessagesResult> {
     const { agentName, roomName } = params;
     if (!isValidName(roomName)) throw new RoomNotFoundError(String(roomName));
 
@@ -138,6 +144,6 @@ export class CloudMessagingService {
       throw error;
     }
     const timeoutMs = validated.timeout ?? WAIT_CONSTANTS.DEFAULT_TIMEOUT;
-    return this.waits.waitForMessages(validated.agentName, validated.roomName, timeoutMs);
+    return this.waits.waitForMessages(validated.agentName, validated.roomName, timeoutMs, signal);
   }
 }

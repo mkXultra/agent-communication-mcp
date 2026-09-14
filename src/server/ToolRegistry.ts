@@ -5,9 +5,13 @@ import { LockService } from '../services/LockService';
 import { MessagingAdapter } from '../adapters/MessagingAdapter';
 import { RoomsAdapter } from '../adapters/RoomsAdapter';
 import { ManagementAdapter } from '../adapters/ManagementAdapter';
-import { allTools, toolHandlers } from '../tools/index';
-import { AppError } from '../errors/index';
+import { allTools, handleWaitForMessages, toolHandlers } from '../tools/index';
+import { AppError, WaitCancelledError } from '../errors/index';
 import { getCloudBackend, type CloudBackend, type OperatingMode } from '../cloud/index';
+import { linkAbortSignals, settledOrAborted } from '../utils/abort';
+
+/** How long shutdown() gives the waits it ends to finish (wait_end, the waiting-agents entry) before it returns. */
+const SHUTDOWN_GRACE_MS = 2000;
 
 // Type guard for tool names
 function isValidToolName(name: string): name is keyof typeof toolHandlers {
@@ -21,6 +25,8 @@ export class ToolRegistry {
   private managementAdapter: ManagementAdapter;
   // Cloud mode when AGENT_COMM_TOKEN is set (docs/cloud-architecture.md §5.1)
   private readonly cloud: CloudBackend | null = getCloudBackend();
+  // wait_for_messages calls in progress; shutdown() ends them (a wait without a time limit never ends on its own)
+  private readonly waits = new Set<{ abort: (reason: unknown) => void; settled: Promise<unknown> }>();
   
   constructor(dataDir?: string) {
     this.lockService = new LockService(dataDir);
@@ -66,7 +72,7 @@ export class ToolRegistry {
       }));
       
       // Register tool call handler
-      server.setRequestHandler(callToolRequestSchema, async (request) => {
+      server.setRequestHandler(callToolRequestSchema, async (request, extra) => {
         const { name, arguments: args } = request.params;
         
         try {
@@ -89,8 +95,12 @@ export class ToolRegistry {
               
             case 'agent_communication_send_message':
             case 'agent_communication_get_messages':
-            case 'agent_communication_wait_for_messages':
               result = await handler(args, this.messagingAdapter);
+              break;
+              
+            case 'agent_communication_wait_for_messages':
+              // Ends early when the client cancels the request (notifications/cancelled) or the server shuts down
+              result = await this.waitForMessages(args, extra.signal);
               break;
               
             case 'agent_communication_get_status':
@@ -149,8 +159,27 @@ export class ToolRegistry {
   }
   
   async shutdown(): Promise<void> {
-    // Cloud mode keeps a WebSocket per room x agent for the process lifetime; close them.
-    // File mode has nothing to clean up.
-    await this.cloud?.close();
+    // End the waits in progress. A cancelled wait returns nothing and consumes nothing: what arrived stays unread.
+    const waits = [...this.waits];
+    for (const wait of waits) wait.abort(new WaitCancelledError('the server is shutting down'));
+    await Promise.all([
+      // Cloud mode keeps a WebSocket per room x agent for the process lifetime; close them.
+      this.cloud?.close(),
+      // AbortSignal.timeout does not keep the process alive once the waits are done.
+      settledOrAborted(Promise.all(waits.map((wait) => wait.settled)), AbortSignal.timeout(SHUTDOWN_GRACE_MS)),
+    ]);
+  }
+  
+  private async waitForMessages(args: unknown, requestSignal: AbortSignal): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const link = linkAbortSignals(requestSignal);
+    const result = handleWaitForMessages(args, this.messagingAdapter, link.signal);
+    const wait = { abort: link.abort, settled: result.catch(() => undefined) };
+    this.waits.add(wait);
+    try {
+      return await result;
+    } finally {
+      this.waits.delete(wait);
+      link.dispose();
+    }
   }
 }

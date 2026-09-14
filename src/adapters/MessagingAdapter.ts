@@ -112,9 +112,9 @@ export class MessagingAdapter {
     this.api.clearRoomCache(roomName);
   }
   
-  async waitForMessages(params: { agentName: string; roomName: string; timeout?: number }): Promise<{ messages: Message[]; hasNewMessages: boolean; timedOut: boolean; warning?: string; waitingAgents?: string[] }> {
+  async waitForMessages(params: { agentName: string; roomName: string; timeout?: number }, signal?: AbortSignal): Promise<{ messages: Message[]; hasNewMessages: boolean; timedOut: boolean; warning?: string; waitingAgents?: string[] }> {
     if (this.cloud) {
-      return this.cloud.messaging.waitForMessages(params);
+      return this.cloud.messaging.waitForMessages(params, signal);
     }
     
     if (!this.api) {
@@ -138,7 +138,7 @@ export class MessagingAdapter {
     }
     
     // Call the API method
-    const result = await this.api!.waitForMessages(params);
+    const result = await this.api!.waitForMessages(params, signal);
     return result;
   }
 }

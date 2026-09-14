@@ -208,7 +208,7 @@ describe('tool outputs in cloud mode', () => {
       "Agent 'bad name' is not in room 'validation'",
     );
     await client.call('enter_room', { agentName: 'alice', roomName: 'validation' });
-    // wait_for_messages has no tool schema: the timeout is checked like MessageValidator does (1 s .. 120 s).
+    // wait_for_messages has no tool schema: the timeout is checked like MessageValidator does (1 s .. 300 s, or 0).
     await expect(client.call('wait_for_messages', { agentName: 'alice', roomName: 'validation', timeout: 500 })).rejects.toThrow(
       /Validation failed for field 'timeout'/,
     );

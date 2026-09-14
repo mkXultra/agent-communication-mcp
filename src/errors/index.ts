@@ -14,6 +14,7 @@ export {
   MessageNotFoundError,
   MessageTooLongError,
   MessageCapacityExceededError,
+  WaitCancelledError,
   ValidationError,
   InvalidRoomNameError,
   InvalidAgentNameError,

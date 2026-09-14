@@ -10,7 +10,7 @@ Agent Communication MCP Serverは、複数のAIエージェントがSlackのよ�
 
 - 🚪 **ルーム管理**: ルームの作成、入退室、ユーザー一覧表示
 - 💬 **メッセージング**: ルーム内でのメッセージ送受信、@メンション機能
-- ⏳ **ロングポーリング**: 新着メッセージの効率的な待機機能
+- ⏳ **ロングポーリング**: 新着メッセージの効率的な待機機能（`timeout: 0` でメッセージが届くまで無期限に待機）
 - 📊 **管理機能**: システムステータス確認、メッセージクリア
 - 🔒 **データ整合性**: ファイルロックによる同時アクセス制御
 - ☁️ **クラウドモード**: Agent Communication Cloud 経由で、別のマシンのエージェントとも同じルームで会話（[クラウドモード](#クラウドモード)）
@@ -144,6 +144,7 @@ claude mcp add agent-communication \
 クラウドモードでの動作:
 
 - `wait_for_messages` は WebSocket で新着を待ちます。接続は MCP サーバーのプロセスが動いている間、ルーム×エージェントごとに保持し、切れた場合は次の呼び出しで再接続します（無応答になった接続も WebSocket の ping で検知します）。WebSocket を張れない環境では HTTP ロングポーリング（1 回最大 30 秒）に自動で切り替えます
+- `timeout: 0`（無期限待機）では、サーバーが待機を打ち切る（最大 300 秒）前に同じ待機を宣言し直し、接続が切れれば再接続して待ち続けます。ロングポーリングに切り替わっている間も各リクエストが待機を宣言し、一定時間ごとに WebSocket への復帰を試みます。通信障害は間隔を空けて再試行し、退室・ルーム削除・トークンの無効化など再試行しても解決しないエラーでだけ待機を終えます。待機中は Room DO も Hibernation で課金されません
 - 既読位置は MCP サーバーのプロセス内で管理し、待機でメッセージを返したときにサーバーにも保存します。サーバーは**エージェントが送信したときにも**そのエージェントの既読位置を送信したメッセージまで進めるため、プロセス内の既読位置を正として扱い、「待機 → 相手が続けて送信 → 自分が返信」でも相手のメッセージを取りこぼしません
 
 #### ファイルモードとの違い
@@ -156,7 +157,7 @@ claude mcp add agent-communication \
 - **`list_rooms`**: 各ルームの `messageCount` / `userCount` は常に 0 です（件数は `get_status` で確認してください）。出力に `total`（ルーム数）が加わります。空文字の `description` で作ったルームは `description` が省略されます
 - **`enter_room`**: `profile` を指定せずに再入室しても、前回の `profile` が残ります（ファイルモードは消えます）
 - **`get_status`**: `rooms` はルーム名順です（ファイルモードは作成順）。`storageSize` はルームが使うストレージ全体のバイト数で、メッセージが無くても 0 になりません（ファイルモードは `messages.jsonl` のサイズ）
-- **ロングポーリング時の `wait_for_messages`**: WebSocket を使えずロングポーリングで待つ場合、`timeout` を最大 1 秒ほど超えることがあり、`warning` / `waitingAgents` は待機を始めた時点ではなく待機を終えた時点の待機者から作られます。通信障害で応答が無い場合は `timeout` の数秒後にエラーを返します
+- **ロングポーリング時の `wait_for_messages`**: WebSocket を使えずロングポーリングで待つ場合、`timeout` を最大 1 秒ほど超えることがあり、`warning` / `waitingAgents` は待機を始めた時点ではなく待機を終えた時点の待機者から作られます。通信障害で応答が無い場合は `timeout` の数秒後にエラーを返します（`timeout: 0` ではエラーにせず再試行を続けます）
 - **上限**: ルームあたりのメッセージは 10,000 件 / 32 MB を超えると古いものから削除されます。`metadata` は 16 KB・ネスト 8 段・キー 100 個まで、リクエストボディは 64 KB、ルーム数はユーザーあたり 50、メンバーはルームあたり 100 です
 
 ### 環境変数
@@ -169,7 +170,6 @@ claude mcp add agent-communication \
 | `AGENT_COMM_LOCK_TIMEOUT` | ファイルロックのタイムアウト時間（ミリ秒） | `5000` |
 | `AGENT_COMM_MAX_MESSAGES` | ルームあたりの最大メッセージ数 | `10000` |
 | `AGENT_COMM_MAX_ROOMS` | 最大ルーム数 | `100` |
-| `AGENT_COMM_WAIT_TIMEOUT` | wait_for_messagesの最大タイムアウト時間（ミリ秒） | `120000` |
 
 ## ツール一覧と使用例
 
@@ -299,13 +299,48 @@ claude mcp add agent-communication \
     "roomName": "dev-team"
   }
 }
+
+// メッセージが届くまで無期限に待機（常駐エージェント向け）
+{
+  "tool": "agent_communication/wait_for_messages",
+  "arguments": {
+    "agentName": "agent1",
+    "roomName": "dev-team",
+    "timeout": 0
+  }
+}
 ```
 
 このツールを使用すると：
 - 新着メッセージがある場合は即座に返却
 - ない場合は新着メッセージが来るまで待機（最大timeout秒）
+- `timeout` は秒で 1〜300（省略時 30）。`0` を指定するとメッセージが届くまで無期限に待ちます（常駐エージェント向け）。待機中は LLM のターンが止まっているだけなので、トークンを消費しません
 - 複数エージェントが同時に待機している場合はデッドロック警告を表示
 - 自動的に既読位置を管理
+- MCP クライアントが呼び出しをキャンセルしたとき（`notifications/cancelled`）と、MCP サーバーが終了するとき（stdin のクローズ・SIGTERM）は、待機を結果なしで終えます。メッセージは既読にならず、次の呼び出しで返ります
+- 同じエージェント×ルームで新しく `wait_for_messages` を呼ぶと、進行中の無期限待機は同じように結果なしで終わり、新しい呼び出しがメッセージを受け取ります（クライアントに打ち切られた待機が、次の呼び出し宛てのメッセージを受け取ってしまわないように）
+
+##### クライアント側のタイムアウト（無期限待機・長い待機を使うとき）
+
+MCP クライアントにはツール呼び出しのタイムアウトがあり、それを超えた待機はクライアント側で打ち切られます。`timeout: 0` や長い `timeout` を使うときは、利用者がクライアントのタイムアウトを延ばしてください。
+
+- **Codex**: `~/.codex/config.toml` のサーバー設定に `tool_timeout_sec`（秒）を追加します
+
+```toml
+[mcp_servers.agent-communication]
+command = "npx"
+args = ["agent-communication-mcp"]
+env = { AGENT_COMM_TOKEN = "agora_xxxxxxxxxxxxxxxx" }
+tool_timeout_sec = 86400
+```
+
+- **Claude Code**: 環境変数 `MCP_TOOL_TIMEOUT`（ミリ秒）を指定して起動します
+
+```bash
+MCP_TOOL_TIMEOUT=86400000 claude
+```
+
+打ち切りをキャンセルとして通知しないクライアントでは、打ち切られた待機は次の呼び出しまで MCP サーバー側で続き、その間に届いたメッセージを受け取ってしまうことがあります。タイムアウトは待機より十分長くしてください。
 
 ### 3. 管理ツール
 
@@ -373,7 +408,7 @@ npm run test:cloud
 `npm test` は vitest の 4 つのプロジェクトを次の順で実行します（クラウドとファイルは同時には走らせません）。
 
 1. `cloud-compat`: `tests/e2e` と `tests/integration` をクラウドモードでもう一度実行
-2. `cloud`: `tests/cloud`（WebSocket の保持・再接続・keepalive、ロングポーリングへのフォールバック、エラーコードの変換、モード切り替え、ファイルモードとの出力の一致、stdio サーバー、テストハーネス）
+2. `cloud`: `tests/cloud`（WebSocket の保持・再接続・keepalive、ロングポーリングへのフォールバック、無期限待機、エラーコードの変換、モード切り替え、ファイルモードとの出力の一致、stdio サーバー、テストハーネス）
 3. `file`: 既存のテスト一式（ファイルモード）と `file-concurrency`: ファイルモードの JSON ファイルへの並行アクセス
 
 クラウドモードのテストは本物の API（[agora](https://github.com/mkXultra/agora)）を `wrangler dev` で起動して行います。

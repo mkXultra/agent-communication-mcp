@@ -75,6 +75,18 @@ export class MessageCapacityExceededError extends AppError {
   }
 }
 
+// wait_for_messages が結果を返さずに終わった（MCP のキャンセル、サーバーの終了、同じエージェント×ルームの新しい待機）
+export class WaitCancelledError extends AppError {
+  constructor(reason = 'the request was cancelled') {
+    super(`Waiting for messages ended without a result: ${reason}`, 'WAIT_CANCELLED', 499);
+  }
+
+  /** The error for a wait whose `signal` aborted: the abort reason when it is one, otherwise a plain cancellation. */
+  static fromSignal(signal: AbortSignal | undefined): WaitCancelledError {
+    return signal?.reason instanceof WaitCancelledError ? signal.reason : new WaitCancelledError();
+  }
+}
+
 // バリデーション関連のエラー
 export class ValidationError extends AppError {
   constructor(field: string, message: string) {
@@ -192,6 +204,7 @@ export const ERROR_CODES = {
   MESSAGE_NOT_FOUND: 'MESSAGE_NOT_FOUND',
   MESSAGE_TOO_LONG: 'MESSAGE_TOO_LONG',
   MESSAGE_CAPACITY_EXCEEDED: 'MESSAGE_CAPACITY_EXCEEDED',
+  WAIT_CANCELLED: 'WAIT_CANCELLED',
   
   // バリデーション関連
   VALIDATION_ERROR: 'VALIDATION_ERROR',

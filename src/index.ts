@@ -63,14 +63,17 @@ async function main() {
     const cloudConfig = resolveCloudConfig();
     if (cloudConfig) {
       console.error(`Cloud mode: ${cloudConfig.apiUrl}`);
-      // WebSockets are held for the process lifetime; release them when the MCP client closes stdin.
-      process.stdin.once('end', async () => {
-        await toolRegistry.shutdown();
-        process.exit(0);
-      });
     } else {
       console.error(fileModeNotice());
     }
+    
+    // The MCP client closed stdin: end the waits in progress (one without a time limit would keep the process alive).
+    // Cloud mode also releases the WebSockets it holds for the process lifetime and exits; file mode exits by itself
+    // once the file operations under way are done.
+    process.stdin.once('end', async () => {
+      await toolRegistry.shutdown();
+      if (cloudConfig) process.exit(0);
+    });
     
   } catch (error) {
     ErrorHandler.logError(error, 'Server startup');

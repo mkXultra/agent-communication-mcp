@@ -17,7 +17,7 @@ export interface IMessagingAPI {
   getMessages(params: GetMessagesParams): Promise<MessageListResponse>;
   getMessageCount(roomName: string): Promise<number>;
   clearRoomCache(roomName: string): void;
-  waitForMessages(params: WaitForMessagesParams): Promise<WaitForMessagesResponse>;
+  waitForMessages(params: WaitForMessagesParams, signal?: AbortSignal): Promise<WaitForMessagesResponse>;
 }
 
 // Implementation of the public API
@@ -46,8 +46,8 @@ export class MessagingAPI implements IMessagingAPI {
     this.messageService.clearRoomCache(roomName);
   }
 
-  async waitForMessages(params: WaitForMessagesParams): Promise<WaitForMessagesResponse> {
-    return await this.messageService.waitForMessages(params);
+  async waitForMessages(params: WaitForMessagesParams, signal?: AbortSignal): Promise<WaitForMessagesResponse> {
+    return await this.messageService.waitForMessages(params, signal);
   }
 }
 

@@ -60,16 +60,16 @@ export const getMessagesOutputSchema = z.object({
   hasMore: z.boolean(),
 });
 
-// wait_for_messages ツール
+// wait_for_messages ツール（timeout はミリ秒。ツール定義の 1〜300 秒・既定 30 秒と同じ範囲で、0 はメッセージが届くまで無期限に待つ）
 export const waitForMessagesInputSchema = z.object({
   agentName: agentNameSchema,
   roomName: roomNameSchema,
   timeout: z.number()
     .int()
-    .min(1000, 'Timeout must be at least 1000ms')
-    .max(120000, 'Timeout cannot exceed 120000ms')
+    .refine((timeout) => timeout === 0 || timeout >= 1000, 'Timeout must be at least 1000ms, or 0 to wait until a message arrives')
+    .refine((timeout) => timeout <= 300000, 'Timeout cannot exceed 300000ms')
     .optional()
-    .default(120000),
+    .default(30000),
 });
 
 export const waitForMessagesOutputSchema = z.object({
