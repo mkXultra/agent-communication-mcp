@@ -4,12 +4,14 @@
 // Writing to a temporary file and renaming it over the target means a reader sees the old content or the new
 // content, never something in between.
 //
-// The update keeps what a plain fs.writeFile kept: a symbolic link is followed and its target is updated, an
-// existing file keeps its permission bits (and its owner, where the process may set it), and a new file gets the
-// permissions fs.writeFile would give it. Where a rename cannot keep that (a file with several hard links, a
-// directory the process may not create files in, an owner the process cannot restore), the file is written in
-// place exactly as before. A temporary file never outlives a failed update.
+// The update keeps what a plain fs.writeFile kept: a symbolic link is followed and its target is updated (resolved
+// the way the operating system resolves it), an existing file keeps its permission bits (and its owner, where the
+// process may set it), and a new file gets the permissions fs.writeFile would give it. Where a rename cannot keep
+// that (a file the process may not write, a file with several hard links, a directory the process may not create
+// files in, an owner the process cannot restore), the file is written in place exactly as before, with the same
+// result and error. A temporary file never outlives a failed update.
 
+import { constants } from 'fs';
 import path from 'path';
 
 interface FileStats {
@@ -29,6 +31,8 @@ export interface AtomicFileSystem {
   stat(path: string): Promise<FileStats>;
   lstat(path: string): Promise<FileStats>;
   readlink(path: string): Promise<string>;
+  realpath(path: string): Promise<string>;
+  access(path: string, mode?: number): Promise<void>;
   chmod(path: string, mode: number): Promise<void>;
   chown(path: string, uid: number, gid: number): Promise<void>;
 }
@@ -58,10 +62,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** The file fs.writeFile would write: symbolic links in the last path component are followed (even dangling ones). */
+/**
+ * The file fs.writeFile would write: symbolic links in the last path component are followed (even dangling ones).
+ * A relative link is resolved from the real directory that holds it: the operating system resolves links in the
+ * directory part before it applies a `..` of the link, which `path.resolve` alone would drop against the link's name.
+ */
 async function resolveWriteTarget(fs: AtomicFileSystem, filePath: string): Promise<string | undefined> {
   let current = filePath;
   for (let hop = 0; hop < MAX_SYMLINK_HOPS; hop++) {
+    let directory: string;
+    try {
+      directory = await fs.realpath(path.dirname(current));
+    } catch (error) {
+      // The directory does not exist (or cannot be resolved): the write fails there the way fs.writeFile does.
+      if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') return current;
+      throw error;
+    }
+    current = path.join(directory, path.basename(current));
     let stats: FileStats;
     try {
       stats = await fs.lstat(current);
@@ -70,10 +87,20 @@ async function resolveWriteTarget(fs: AtomicFileSystem, filePath: string): Promi
       throw error;
     }
     if (!stats.isSymbolicLink()) return current;
-    current = path.resolve(path.dirname(current), await fs.readlink(current));
+    current = path.resolve(directory, await fs.readlink(current));
   }
   // A link loop: let the in-place write report it the way fs.writeFile does.
   return undefined;
+}
+
+/** Whether this process may write the existing file (fs.writeFile opens it for writing; a rename would not ask). */
+async function mayWrite(fs: AtomicFileSystem, filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function statIfExists(fs: AtomicFileSystem, filePath: string): Promise<FileStats | undefined> {
@@ -123,12 +150,16 @@ async function renameWithRetry(fs: AtomicFileSystem, tmp: string, target: string
   }
 }
 
-/** Replaces the content of `filePath` with `data` so that readers never see a partial file. */
+/**
+ * Replaces the content of `filePath` with `data` so that readers never see a partial file. Where the file is written
+ * in place instead, it is written through `filePath` itself, so results and error messages are those of fs.writeFile.
+ */
 export async function writeFileAtomic(fs: AtomicFileSystem, filePath: string, data: string): Promise<void> {
   const target = await resolveWriteTarget(fs, filePath);
   const existing = target === undefined ? undefined : await statIfExists(fs, target);
-  // A rename would detach the other hard links (or replace something that is not a regular file).
-  if (target === undefined || (existing && (existing.nlink > 1 || !existing.isFile()))) {
+  // A rename would replace a file the process may not write (fs.writeFile fails with EACCES / EPERM there), detach the
+  // other hard links, or replace something that is not a regular file.
+  if (target === undefined || (existing && (existing.nlink > 1 || !existing.isFile() || !(await mayWrite(fs, target))))) {
     await fs.writeFile(filePath, data, 'utf-8');
     return;
   }
@@ -141,7 +172,7 @@ export async function writeFileAtomic(fs: AtomicFileSystem, filePath: string, da
     await removeQuietly(fs, tmp);
     const code = errorCode(error);
     if (code && IN_PLACE_FALLBACK_CODES.has(code)) {
-      await fs.writeFile(target, data, 'utf-8');
+      await fs.writeFile(filePath, data, 'utf-8');
       return;
     }
     throw error;
@@ -150,7 +181,7 @@ export async function writeFileAtomic(fs: AtomicFileSystem, filePath: string, da
   try {
     if (existing && !(await copyAttributes(fs, tmp, existing))) {
       await removeQuietly(fs, tmp);
-      await fs.writeFile(target, data, 'utf-8');
+      await fs.writeFile(filePath, data, 'utf-8');
       return;
     }
     await renameWithRetry(fs, tmp, target);

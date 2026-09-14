@@ -15,6 +15,8 @@ const realFs: AtomicFileSystem = {
   stat: fs.stat,
   lstat: fs.lstat,
   readlink: (file) => fs.readlink(file),
+  realpath: (file) => fs.realpath(file),
+  access: (file, mode) => fs.access(file, mode),
   chmod: fs.chmod,
   chown: fs.chown,
 };
@@ -24,6 +26,40 @@ function errnoError(code: string, syscall: string): NodeJS.ErrnoException {
 }
 
 const isTemporary = (file: string): boolean => path.basename(file).endsWith('.tmp');
+
+/** The error code of a write, or 'ok'. */
+function outcome(write: Promise<unknown>): Promise<string> {
+  return write.then(
+    () => 'ok',
+    (error: NodeJS.ErrnoException) => error.code ?? String(error),
+  );
+}
+
+/**
+ * <root>/physical/data/rooms.json -> ../rooms.json (a relative link), and <root>/data-link -> <root>/physical/data.
+ * Through <root>/data-link/rooms.json the operating system reaches <root>/physical/rooms.json: the link's `..` is
+ * applied in physical/data, not next to data-link.
+ */
+async function linkedDataDirectory(root: string, withTarget: boolean): Promise<string> {
+  await fs.mkdir(path.join(root, 'physical', 'data'), { recursive: true });
+  if (withTarget) await fs.writeFile(path.join(root, 'physical', 'rooms.json'), JSON.stringify({ rooms: {} }));
+  await fs.symlink('../rooms.json', path.join(root, 'physical', 'data', 'rooms.json'));
+  await fs.symlink(path.join(root, 'physical', 'data'), path.join(root, 'data-link'));
+  return path.join(root, 'data-link');
+}
+
+/** Every file below `root` with its content; links are listed as links (not followed), their targets relative to `root`. */
+async function snapshot(root: string, dir = root): Promise<Record<string, string>> {
+  const files: Record<string, string> = {};
+  for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    const name = path.relative(root, full);
+    if (entry.isSymbolicLink()) files[name] = `-> ${(await fs.readlink(full)).replace(root, '<root>')}`;
+    else if (entry.isDirectory()) Object.assign(files, await snapshot(root, full));
+    else files[name] = await fs.readFile(full, 'utf8');
+  }
+  return files;
+}
 
 describe('writeFileAtomic keeps what fs.writeFile kept', () => {
   let dir: string;
@@ -97,6 +133,65 @@ describe('writeFileAtomic keeps what fs.writeFile kept', () => {
     expect((await fs.lstat(path.join(dir, 'b'))).isSymbolicLink()).toBe(true);
     expect(await fs.readFile(path.join(dir, 'a'), 'utf8')).toBe('two');
     expect(await temporaryFiles()).toEqual([]);
+  });
+
+  it('fails like fs.writeFile, and leaves the file as it was, when the existing file may not be written', async () => {
+    // A read-only file: fs.writeFile opens it for writing and fails (EACCES), a rename would have replaced it.
+    // The comparison with fs.writeFile keeps the test right for any user (root may write it; both then succeed).
+    const control = path.join(dir, 'control.json');
+    const file = path.join(dir, 'rooms.json');
+    for (const target of [control, file]) {
+      await fs.writeFile(target, JSON.stringify({ rooms: { first: {} } }));
+      await fs.chmod(target, 0o444);
+    }
+
+    const plain = await outcome(fs.writeFile(control, '{"v":2}'));
+    const atomic = await outcome(writeFileAtomic(realFs, file, '{"v":2}'));
+    expect(atomic).toBe(plain);
+    expect(await fs.readFile(file, 'utf8')).toBe(await fs.readFile(control, 'utf8'));
+    expect((await fs.stat(file)).mode & 0o777).toBe(0o444);
+    expect(await temporaryFiles()).toEqual([]);
+
+    // Through the storage: creating a room fails exactly when the plain write fails, and the rooms stay as they were.
+    const storage = new RoomStorage(dir);
+    const created = await outcome(storage.createRoom('second'));
+    expect(created === 'ok').toBe(plain === 'ok');
+    if (plain !== 'ok') expect(await storage.getAllRoomNames()).toEqual(['first']);
+    await fs.chmod(file, 0o644);
+    await fs.chmod(control, 0o644);
+  });
+
+  it('follows a relative link from the real directory when a parent directory is itself a link', async () => {
+    const atomicRoot = path.join(dir, 'atomic');
+    const plainRoot = path.join(dir, 'plain');
+    const atomicData = await linkedDataDirectory(atomicRoot, true);
+    const plainData = await linkedDataDirectory(plainRoot, true);
+
+    await new RoomStorage(atomicData).createRoom('linked');
+    const storage = new RoomStorage(atomicData);
+    expect(await storage.getAllRoomNames()).toEqual(['linked']);
+
+    // The same content reached the same files as a plain fs.writeFile through the same logical path.
+    const written = await fs.readFile(path.join(atomicRoot, 'physical', 'rooms.json'), 'utf8');
+    await fs.writeFile(path.join(plainData, 'rooms.json'), written);
+    expect(await snapshot(atomicRoot)).toEqual(await snapshot(plainRoot));
+    // No other rooms.json appeared next to the directory link, and the link itself is still a link.
+    await expect(fs.access(path.join(atomicRoot, 'rooms.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await fs.lstat(path.join(atomicRoot, 'physical', 'data', 'rooms.json'))).isSymbolicLink()).toBe(true);
+    expect(JSON.parse(await fs.readFile(path.join(atomicData, 'rooms.json'), 'utf8'))).toEqual(JSON.parse(written));
+  });
+
+  it('creates the target of such a link where fs.writeFile creates it, when it does not exist yet', async () => {
+    const atomicRoot = path.join(dir, 'atomic');
+    const plainRoot = path.join(dir, 'plain');
+    const atomicData = await linkedDataDirectory(atomicRoot, false);
+    const plainData = await linkedDataDirectory(plainRoot, false);
+
+    await writeFileAtomic(realFs, path.join(atomicData, 'rooms.json'), 'first write');
+    await fs.writeFile(path.join(plainData, 'rooms.json'), 'first write');
+
+    expect(await snapshot(atomicRoot)).toEqual(await snapshot(plainRoot));
+    expect(await fs.readFile(path.join(atomicRoot, 'physical', 'rooms.json'), 'utf8')).toBe('first write');
   });
 
   it('updates a file with several hard links in place, so every link sees the update', async () => {

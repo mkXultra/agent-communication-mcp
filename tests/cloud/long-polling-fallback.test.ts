@@ -353,6 +353,59 @@ describe('wait_for_messages falls back to long polling', () => {
     expect(rest.messages.map((m) => m.id)).toEqual(inOrder.slice(1000));
   }, 60000);
 
+  it('gives each request of the read position look-up only the time left, also after a slow one', async () => {
+    const roomName = 'fallback-slow-lookup';
+    await setupRoom(roomName, ['alice', 'bob']);
+    // A new process without a read cursor: before its first long poll it reads the room epoch, then the member list.
+    const fresh = new CloudBackend({ apiUrl: proxy.url, token });
+    try {
+      proxy.delayResponses((r) => r.method === 'GET' && r.path === `/rooms/${roomName}/messages?limit=1`, 4500);
+      proxy.holdRequests((r) => r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/members`));
+
+      const started = Date.now();
+      const error = await fresh.messaging
+        .waitForMessages({ agentName: 'alice', roomName, timeout: 5000 })
+        .then(() => undefined, (e: unknown) => e);
+      const elapsed = Date.now() - started;
+
+      expect(error).toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+      // The member list starts at 4.5 s and gets the 3 s that are left then, not the 6 s the look-up had when it
+      // began: 7.5 s in all, within the hard stop (timeout + 3 s). It is not resent, and no long poll follows.
+      expect(elapsed).toBeGreaterThanOrEqual(7000);
+      expect(elapsed).toBeLessThan(8500);
+      expect(proxy.countRequests('GET', `/rooms/${roomName}/members`)).toBe(1);
+      expect(longPolls()).toHaveLength(0);
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  it('ends the check made after the deadline at the hard stop (timeout + 3 s)', async () => {
+    const roomName = 'fallback-hard-stop';
+    proxy.webSocketPolicy = 'hang';
+    await setupRoom(roomName, ['alice', 'bob']);
+    const fresh = new CloudBackend({ apiUrl: proxy.url, token });
+    try {
+      // The handshake that is never answered uses 3 s of a 1 s wait; the epoch read of the check that follows is slow.
+      proxy.delayResponses((r) => r.method === 'GET' && r.path === `/rooms/${roomName}/messages?limit=1`, 2000);
+
+      const started = Date.now();
+      const error = await fresh.messaging
+        .waitForMessages({ agentName: 'alice', roomName, timeout: 1000 })
+        .then(() => undefined, (e: unknown) => e);
+      const elapsed = Date.now() - started;
+
+      expect(error).toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+      // The epoch read gets the 1 s left until the hard stop (not another 3 s), and nothing starts after it.
+      expect(elapsed).toBeGreaterThanOrEqual(3900);
+      expect(elapsed).toBeLessThan(4700);
+      expect(proxy.countRequests('GET', `/rooms/${roomName}/members`)).toBe(0);
+      expect(longPolls()).toHaveLength(0);
+    } finally {
+      await fresh.close();
+    }
+  });
+
   it('keeps the messages of a room created again between the epoch check and the long poll', async () => {
     const roomName = 'fallback-epoch-race';
     await setupRoom(roomName, ['alice', 'bob']);
