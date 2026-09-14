@@ -145,7 +145,7 @@ Cloudflare Workers と Durable Objects (DO) だけで構成する。外部デー
 | `status` | TEXT | `online` / `offline`。既存実装と同じく、退室は行の削除ではなく `offline` 化 |
 | `joined_at` | INTEGER | 入室時刻 |
 | `last_seen_at` | INTEGER | 最終アクティビティ |
-| `last_read_seq` | INTEGER | 既読位置（`messages.seq`）。`wait_for_messages` の起点 |
+| `last_read_seq` | INTEGER | 既読位置（`messages.seq`）。`wait_for_messages` の起点。**送信では進めない**（進めると送信者が未読の他者のメッセージまで既読になる。api 0.4.2） |
 
 WebSocket 接続中かどうか（`connected`）はこのテーブルに持たない。接続状態から実行時に導出する。`status` と `connected` は別の軸である点に注意（curl だけで使うエージェントは `online` だが `connected` にはならない）。
 
@@ -317,7 +317,18 @@ workers.dev の URL は推測・漏洩しやすく、401 を返すだけのリ�
 - ルームあたりのメンバー数にも上限を設ける（`profile.metadata` が 16KB まで許されるため、メンバー数が無制限だと 1 ルームで DO ストレージを埋められる）
 - `/status` の fan-out はルーム数の上限と並列数の上限を設ける（具体値は §9）
 
-### 3.7 DO 内スキーマの版管理
+### 3.7 Web UI
+
+人がブラウザからルームを覗き、参加して発言するための最小の UI。**同じ Worker から Workers Static Assets で配信**する（`public/` 配下、ビルド不要の単一 HTML + JS、外部依存なし）。`/` が UI、それ以外のパスは従来どおり API。
+
+- トークンは入力して `localStorage` に保存。UI は API の一クライアントに過ぎず、Worker 側に UI 専用のエンドポイントは持たない
+- **peek**（入室せずに読む）: `GET /rooms/{room}/messages` を数秒間隔で再取得。`agentName` を伴わないので既読位置や待機に影響しない
+- **chat**（参加して発言）: 名前を決めて `join` → `POST /messages` で送信。新着は WebSocket ではなく `GET /messages` の再取得（手動リロード＋数秒間隔の自動更新）で反映する。`agentName` 付きの取得は既読位置を進めないよう `markRead=false` のまま呼ぶ
+- ルーム作成・削除・退室・メンバー一覧・ステータスも UI から呼べる
+- WebSocket は使わない（ブラウザからの認証経路を持たないため。§9）。ロングポーリング（`?wait=`）も使わない（D6）
+- 認証エラー（401）はトークン入力画面に戻す。429 は `Retry-After` を表示
+
+### 3.8 DO 内スキーマの版管理
 
 `wrangler.toml` の `[[migrations]]` は DO クラスの namespace を管理するだけで、**DO 内の SQLite テーブルには何もしない**。`CREATE TABLE IF NOT EXISTS` も既存テーブルの列を変えない。既にデプロイ済みの DO のスキーマを更新するには、アプリ側で版管理が要る。
 
@@ -552,13 +563,12 @@ R2 や D1 は使わない（履歴アーカイブが必要になったら R2 を
 
 ### ブラウザからの WebSocket（先送り）
 
-`Sec-WebSocket-Protocol` サブプロトコル経由でトークンを受ける経路は、§10 のブラウザUI着手時に追加する。Run 1 では実装しない。
+`Sec-WebSocket-Protocol` サブプロトコル経由でトークンを受ける経路は実装しない。Web UI（§3.7）は HTTP のみで動く。
 
 ## 10. 将来の拡張
 
 - **チーム共有**: UserIndex に `shared_with` を追加し、Worker のルーム解決で所有者を引く
 - **リモートMCP対応**: 同じチャットAPIの上に Cloudflare の `McpAgent` を1枚載せれば、ローカルMCPなしで `claude mcp add --transport http` でも接続できる。現在の分離設計なら後から足せる
-- **ブラウザUI**: Worker に静的ページを同居させ、人間がルームを覗ける画面を追加
 - **履歴アーカイブ**: 古いメッセージを R2 に退避
 - **強整合な認証**: トークン解決を Auth DO に移し、失効を即時化する
 - **長期間 `offline` のメンバー行の削除**: 一定期間（例 30 日）`offline` のままの行を Alarm で削除し、`MAX_MEMBERS_PER_ROOM` の枠を解放する

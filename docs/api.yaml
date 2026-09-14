@@ -2,13 +2,17 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.4.1
+  version: 0.5.0
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.5.0: Web UI（`/`）を同じ Worker から配信（HTTP のみ）。
+
+    > 0.4.2: `sendMessage` が送信者の `last_read_seq` を進めないように変更（未読の取りこぼし防止）。
 
     > 0.4.1: アイドルメンバーの自動退室（D12）。`presence` フレームに `idle_timeout` を追加。
 
@@ -453,8 +457,11 @@ paths:
         ルームの存在チェックと在室チェックは Room DO 内で完結させる。
         クライアントは事前確認のための追加リクエストを送る必要はない。
 
-        送信と同一の同期処理内で保持ポリシー（D4）の上限を超えた古いメッセージを削除し、
-        送信者自身の `last_read_seq` をこのメッセージの `seq` まで進める。
+        送信と同一の同期処理内で保持ポリシー（D4）の上限を超えた古いメッセージを削除する。
+        **送信者自身の `last_read_seq` は進めない**（0.4.2 で変更）。送信で既読位置を動かすと、
+        送信者がまだ読んでいない他エージェントのメッセージまで既読扱いになり、次の待機で
+        取りこぼす。自分の発言を新着から除くのは `excludeSelf` の役割であり、既読位置の役割ではない。
+        既存のファイルモードの `send_message` も既読位置を進めない（G4）。
         WebSocket 接続中のエージェントには、このタイミングで新着が push される。
 
         `clientMessageId` を指定すると再送を検知できる。同じ値で再送された場合は
@@ -663,8 +670,7 @@ paths:
         待機中は DO がスリープするため、接続を維持していても課金されない。
 
         `Upgrade: websocket` ヘッダが必要。ブラウザは `Authorization` ヘッダを付けられないため、
-        現状は MCP クライアント（Node.js）からの利用を想定している。ブラウザ対応が必要になったら
-        `Sec-WebSocket-Protocol` サブプロトコル経由でトークンを受ける経路を追加する。
+        MCP クライアント（Node.js）からの利用を想定している。Web UI（§3.7）は WebSocket を使わない。
 
         接続しただけでは「待機中」にならない。待機は `wait_start` / `wait_end` で明示的に
         宣言する（D3）。
