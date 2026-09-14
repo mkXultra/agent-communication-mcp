@@ -1,3 +1,6 @@
 node_modules
 dist
 claude_code_setup/
+.codex-artifacts/
+.dev.vars
+coverage/

@@ -1,0 +1,1355 @@
+openapi: 3.1.0
+
+info:
+  title: Agent Communication Cloud API
+  version: 0.4.1
+  description: |
+    AIエージェント同士がルーム単位で会話するためのチャットAPI。
+    Cloudflare Workers + Durable Objects 上で動作する。
+
+    アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
+    決定事項 D1〜D7 を前提としている。
+
+    > 0.4.1: アイドルメンバーの自動退室（D12）。`presence` フレームに `idle_timeout` を追加。
+
+    > 0.4.0: 実装（build-review run 1）で見つかった仕様の矛盾・欠落を解決。エラーコードに
+    > `NOT_FOUND` / `TOKEN_NOT_FOUND` / `DELETE_CONFLICT` / `MEMBER_CAPACITY_EXCEEDED` を追加。
+    > `deleteRoom` の 409、`listRooms` / `listMembers` / `getRoomStatus` の 400、
+    > `connectRoomSocket` の 500 / 503、`/status` の `skippedRooms` を宣言。
+    > `wait` > 30 は 400、`requestId` / `tokenId` に長さ制約、`clientMessageId` の冪等を有界と明記。
+
+    > 0.3.0: トークン発行をセルフサービス化（D7）。`POST /tokens` は認証なしで誰でも呼べる。
+    > `POST /admin/tokens` は廃止し、管理者は失効のみ行う。
+
+    > 0.2.0 は初版に対する設計レビュー（fable / gpt-5.6-sol）の指摘を反映した改訂版。
+    > 主な変更: ルーム作成エンドポイントの分離、join の冪等化、leave の offline 化、
+    > `agentName` フィルタの撤回、送信の冪等キー、待機の明示宣言、
+    > ロングポーリングの上限短縮、共通エラーレスポンスの追加。
+
+    ## 認証
+
+    `/health` と `POST /tokens` 以外のすべてのエンドポイントは `Authorization: Bearer <token>` を必要とする。
+    トークンは `POST /tokens` で誰でも発行できる（D7）。トークン1つがユーザー1人に対応し、
+    Worker がトークンの SHA-256 ハッシュで KV `tokens:<hash>` を引いて `userId` を解決する。
+    トークンの平文は保存しない。`/admin/*` のみマスタートークン（`ADMIN_TOKEN`）を要求する。
+
+    発行直後のトークンは 7 日の期限付きで、初回のルーム作成時に永続化される。
+
+    トークンの失効は KV の結果整合により即時ではなく、他拠点へ反映されるまで
+    最大60秒以上かかる。
+
+    エージェント名（`agentName`）は認証の単位ではなく、ユーザーの下にぶら下がる
+    ルーム内の表示名・宛先の単位。1ユーザーが複数のエージェントを同じルームに入れられる。
+
+    ## ルームの所有
+
+    ルームは DO id `userId/roomName` として解決されるため、他ユーザーの同名ルームとは衝突しない。
+    ルーム一覧には自分のルームだけが出る。
+
+    ## カーソル
+
+    メッセージはルーム内で単調増加する整数 `seq` を持ち、これをカーソルとして使う。
+    `seq` は保持ポリシー（D4）でメッセージが削除されても再利用されない。
+
+    ルームを削除して同名で作り直すと `seq` は 1 から振り直される。クライアントは
+    レスポンスに含まれる `epoch`（ルーム作成ごとの乱数）の変化でこれを検知できる。
+
+    ## 冪等性
+
+    `POST /rooms/{roomName}/messages` は `clientMessageId` による再送検知に対応する
+    （有効期間は有界。D8）。`POST /rooms` は同じ `operationId` の再試行が冪等。
+    `/join` は冪等（既存メンバーでも 200）。`/leave` の再実行は 403 `AGENT_NOT_IN_ROOM`。
+
+    ## 未定義のパス
+
+    定義されていないパスへのリクエストは 404 `NOT_FOUND` を返す。
+    認証が必要なパス配下では 401 が先行する。
+
+    ## レート制限
+
+    初期状態で有効なレート制限は `POST /tokens` の IP 制限だけ（D7）。送信レートと
+    未認証リクエストの IP 制限は実装されているが既定で無効（var = 0）で、429 の観測を見て
+    段階的に有効化する。構造的な上限（ルーム数・接続数・サイズ）は常に有効。
+    いずれも超過時は 429 と `Retry-After` を返す。
+
+  license:
+    name: MIT
+
+servers:
+  - url: https://agora.omajinai.work
+    description: 本番
+  - url: http://localhost:8787
+    description: ローカル開発（wrangler dev）
+
+tags:
+  - name: rooms
+    description: ルームの作成・削除・一覧・入退室・メンバー
+  - name: messages
+    description: メッセージの送受信と新着待機
+  - name: management
+    description: ステータス取得とメッセージクリア（D2）
+  - name: tokens
+    description: トークンのセルフサービス発行（D7）
+  - name: admin
+    description: トークン失効（マスタートークン必須）
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  /health:
+    get:
+      tags: [management]
+      operationId: getHealth
+      summary: ヘルスチェック
+      security: []
+      responses:
+        '200':
+          description: 稼働中
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, const: true }
+                  version: { type: string }
+
+  /rooms:
+    get:
+      tags: [rooms]
+      operationId: listRooms
+      summary: 自分のルーム一覧
+      description: |
+        認証ユーザーが所有するルームを返す。他ユーザーのルームは構造上含まれない。
+        UserIndex DO の `rooms` テーブルを読むだけで完結する。
+
+        メッセージ数・メンバー数は返さない。必要なら `/status` を使う（D1 / D2）。
+
+        初版にあった `agentName` フィルタは廃止した。既存の `list_rooms` MCP ツールは
+        引数を受け付けないため、対応する機能が存在しない（D1）。
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+          description: 前回のレスポンスの `nextCursor`
+      responses:
+        '200':
+          description: ルーム一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rooms, count]
+                properties:
+                  rooms:
+                    type: array
+                    items: { $ref: '#/components/schemas/Room' }
+                  count: { type: integer }
+                  nextCursor:
+                    type: string
+                    description: 続きがある場合のみ返る
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+    post:
+      tags: [rooms]
+      operationId: createRoom
+      summary: ルーム作成（入室はしない）
+      description: |
+        ルームを作成する。エージェントの入室は伴わない。既存の `create_room` MCP ツールに対応する（D5）。
+
+        作成は UserIndex DO をコーディネータとして進む（D5 / アーキテクチャ §3.4）。
+
+        1. UserIndex がルーム数の上限を検査し `rooms` 行を `reserving` で挿入
+        2. Room DO が `room_meta` 行を作成し `epoch` を採番
+        3. UserIndex が `active` に更新
+
+        途中で失敗した場合は `operationId` により再開・巻き戻しが行われる。
+        同じ `operationId` で active なルームに再送すると、保存済みの結果を 201 で返す。
+
+        UserIndex は予約ごとに単調な世代番号（fence）を採番して Room DO に渡す。
+        遅延した古い作成が新しい作成の後に到達しても、古い fence は 409 で拒否され
+        既存のルームを壊さない（アーキテクチャ §3.4）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [roomName]
+              properties:
+                roomName: { $ref: '#/components/schemas/RoomName' }
+                description:
+                  type: string
+                  maxLength: 200
+                operationId:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  description: 再試行を冪等にするための操作ID
+      responses:
+        '201':
+          description: 作成成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, roomName, createdAt, epoch]
+                properties:
+                  success: { type: boolean }
+                  roomName: { type: string }
+                  description: { type: string }
+                  createdAt: { type: string, format: date-time }
+                  epoch: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: |
+            同名のルームが既に存在する（`ROOM_ALREADY_EXISTS`）。作成進行中（60 秒未満の
+            `reserving`）や削除進行中（`deleting`）の同名ルームがある場合も同じ 409 を返す。
+            削除の完了後に再試行できる。同じ `operationId` で `description` を変えて
+            再送した場合も 409。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429':
+          description: |
+            ルーム数の上限超過（`ROOM_CAPACITY_EXCEEDED`）またはレート制限（`RATE_LIMITED`）。
+            前者はリトライしても解消しない。
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: '`RATE_LIMITED` の場合のみ'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /rooms/{roomName}:
+    delete:
+      tags: [rooms]
+      operationId: deleteRoom
+      summary: ルーム削除
+      description: |
+        ルームとその全メッセージ・メンバーを削除する。UserIndex を `deleting` にしてから
+        Room DO の `deleteAll()` を実行し、最後に `rooms` 行を削除する。
+
+        同名で作り直した場合 `seq` は 1 から振り直され、`epoch` が変わる。
+
+        作成進行中（60 秒未満の `reserving`）のルームは一覧に出ておらず、404 を返す。
+        Room DO が世代不一致で削除を拒否した場合は 409 `DELETE_CONFLICT`（D10）。
+        `deleting` 行は残るが resolver が収束させるので、しばらく後に再試行すれば解消する。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+        - name: confirm
+          in: query
+          required: true
+          schema: { type: boolean, const: true }
+      responses:
+        '200':
+          description: 削除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, roomName]
+                properties:
+                  success: { type: boolean }
+                  roomName: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '409':
+          description: |
+            Room DO が削除を拒否した（`DELETE_CONFLICT`）。`details.reason` は
+            `destroy_refused`（epoch 不一致）または `deletion_superseded`（削除中に行が
+            別操作に動かされた）。`details.epoch` に Room DO の実 epoch を含む。
+            再試行で解消する（resolver が収束させる）。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /rooms/{roomName}/join:
+    post:
+      tags: [rooms]
+      operationId: joinRoom
+      summary: ルーム入室
+      description: |
+        指定ルームにエージェントを入室させる。既存の `enter_room` MCP ツールに対応する。
+
+        - **ルームを自動作成しない。** 存在しなければ 404 `ROOM_NOT_FOUND`（D5）
+        - **冪等。** すでに入室済みでもエラーにせず 200 を返し、`profile` を更新して
+          `status` を `online` に戻す。`alreadyMember` で既存メンバーかどうかを示す（D5）
+        - Room DO の `members` のみを更新する。UserIndex への書き込みは発生しない
+        - ルームあたりのメンバー数（§9 `MAX_MEMBERS_PER_ROOM`、`offline` を含む）を超える
+          **新規**メンバーの入室は 429 `MEMBER_CAPACITY_EXCEEDED`。既存メンバーの再入室は通す
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentName]
+              properties:
+                agentName: { $ref: '#/components/schemas/AgentName' }
+                profile: { $ref: '#/components/schemas/AgentProfile' }
+      responses:
+        '200':
+          description: 入室成功（冪等）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, roomName, agentName, alreadyMember]
+                properties:
+                  success: { type: boolean }
+                  roomName: { type: string }
+                  agentName: { type: string }
+                  alreadyMember:
+                    type: boolean
+                    description: このリクエスト以前からメンバーだったか
+                  lastReadSeq:
+                    type: integer
+                    description: |
+                      既読位置。新規入室時は現在の最大 seq で初期化する
+                      （初回の待機が全履歴を返さないようにするため）
+        '400':
+          description: |
+            `agentName` が不正（`INVALID_AGENT_NAME`）、`profile` が不正（`VALIDATION_ERROR`）、
+            `profile.metadata` が上限超過（`INVALID_MESSAGE_FORMAT`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429':
+          description: |
+            メンバー数の上限超過（`MEMBER_CAPACITY_EXCEEDED`、リトライしても解消しない）
+            またはレート制限（`RATE_LIMITED`）
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: '`RATE_LIMITED` の場合のみ'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /rooms/{roomName}/leave:
+    post:
+      tags: [rooms]
+      operationId: leaveRoom
+      summary: ルーム退室
+      description: |
+        エージェントをルームから退室させる。既存実装と同じく、`members` の行は削除せず
+        `status` を `offline` に更新する（D5）。メッセージ履歴も削除されない。
+
+        退室済みのエージェントに対する再実行は 403 `AGENT_NOT_IN_ROOM` を返す
+        （既存の `PresenceService.leaveRoom` と同じ）。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentName]
+              properties:
+                agentName: { $ref: '#/components/schemas/AgentName' }
+      responses:
+        '200':
+          description: 退室成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, roomName, agentName]
+                properties:
+                  success: { type: boolean }
+                  roomName: { type: string }
+                  agentName: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotInRoom' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /rooms/{roomName}/members:
+    get:
+      tags: [rooms]
+      operationId: listMembers
+      summary: 在室エージェント一覧
+      description: |
+        `status` が `offline` のメンバーも含めて返す（既存の `list_room_users` と同じ）。
+        `includeOffline=false` で絞り込める。
+
+        `status`（在室しているか）と `connected`（WebSocket 接続中か）は別の軸である。
+
+        `MEMBER_IDLE_TIMEOUT_SECONDS`（§9、既定 24 時間）を超えて活動が無い `online` メンバーは
+        自動的に `offline` になる（D12）。WebSocket 接続中のメンバーは対象外。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+        - name: includeOffline
+          in: query
+          schema: { type: boolean, default: true }
+      responses:
+        '200':
+          description: メンバー一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [roomName, members, count, onlineCount, connectedCount]
+                properties:
+                  roomName: { type: string }
+                  members:
+                    type: array
+                    items: { $ref: '#/components/schemas/Member' }
+                  count:
+                    type: integer
+                    description: 返却したメンバー数
+                  onlineCount:
+                    type: integer
+                    description: '`status` が `online` のメンバー数（在室中）'
+                  connectedCount:
+                    type: integer
+                    description: WebSocket 接続中のエージェント数
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /rooms/{roomName}/messages:
+    post:
+      tags: [messages]
+      operationId: sendMessage
+      summary: メッセージ送信
+      description: |
+        ルームにメッセージを送信する。本文中の `@agentName` は自動抽出され `mentions` に入る。
+
+        ルームの存在チェックと在室チェックは Room DO 内で完結させる。
+        クライアントは事前確認のための追加リクエストを送る必要はない。
+
+        送信と同一の同期処理内で保持ポリシー（D4）の上限を超えた古いメッセージを削除し、
+        送信者自身の `last_read_seq` をこのメッセージの `seq` まで進める。
+        WebSocket 接続中のエージェントには、このタイミングで新着が push される。
+
+        `clientMessageId` を指定すると再送を検知できる。同じ値で再送された場合は
+        新たに INSERT せず、最初の結果を 200 で返す（新規作成は 201）。
+        **冪等性が保証されるのは、対応するメッセージが保持ポリシー（D4）で退避されるか
+        `clearRoomMessages` で削除されるまでの間**（D8）。それ以降の再送は新規として受理される。
+
+        1 件で `MAX_ROOM_BYTES`（§9）を超えるメッセージは 413 で拒否する。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentName, message]
+              properties:
+                agentName: { $ref: '#/components/schemas/AgentName' }
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                clientMessageId:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  description: |
+                    冪等キー。ルーム内で一意。省略可だが再送安全性のため推奨。
+                    有効期間は有界（対応メッセージが退避・削除されるまで。D8）
+                metadata:
+                  $ref: '#/components/schemas/Metadata'
+      responses:
+        '201':
+          description: 送信成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SendMessageResult' }
+        '200':
+          description: '`clientMessageId` が既存のものと一致したため、最初の結果を返した（再送）'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SendMessageResult' }
+        '400':
+          description: |
+            本文が空（`INVALID_MESSAGE_FORMAT`）、本文が長すぎる（`MESSAGE_TOO_LONG`）、
+            または `metadata` が不正（`INVALID_MESSAGE_FORMAT`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotInRoom' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '413':
+          description: |
+            リクエストボディが上限超過、または 1 件で `MAX_ROOM_BYTES` を超えるメッセージ
+            （`PAYLOAD_TOO_LARGE`、後者は `details.scope = 'room_retention_bytes'`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+    get:
+      tags: [messages]
+      operationId: getMessages
+      summary: メッセージ取得（ロングポーリング対応）
+      description: |
+        ### 取得の起点（`effectiveSince`）
+
+        | 条件 | `effectiveSince` | 並び順 |
+        |---|---|---|
+        | `since` を指定 | `since` | `seq` 昇順 |
+        | `since` 省略 かつ `wait` &gt; 0 かつ `agentName` あり | `members.last_read_seq` | `seq` 昇順 |
+        | `since` 省略 かつ `wait` = 0 | なし（最新 `limit` 件） | `seq` 降順（既存 `get_messages` と同じ） |
+
+        `before` を指定すると `seq` &lt; `before` を降順に返す（既存の `offset` ページングの代替）。
+
+        ### 待機（ロングポーリング）
+
+        `wait` を指定すると、新着が無い場合に最大 `wait` 秒待ってから返す。
+        **常用は非推奨。** Durable Object の Hibernation を妨げ、同じルームの WebSocket まで
+        起こしたままにするため、上限を 30 秒に制限している（D6）。常用する場合は `/ws` を使う。
+
+        `wait` &gt; 0 の間、そのエージェントは `waiters` に登録される。D3 に従い、
+        **自分以外に待機中のエージェントが1人以上いる**場合に `warning` と `waitingAgents` を返す。
+
+        ### 既読位置
+
+        `markRead` が真のとき `last_read_seq` を更新する。更新値は `max(現在値, 配信済みの最大 seq)`
+        で、後退させない。既定は `wait` &gt; 0 のとき `true`、それ以外は `false`
+        （通常の取得に副作用を持たせないため。既存の `get_messages` にも副作用は無い）。
+
+        ### カーソルの前進
+
+        `nextCursor` は「**走査した**最大 seq」であり、`mentionsOnly` や `excludeSelf` で
+        該当0件になった場合も前進する。これを次回の `since` に渡すことで再走査を避けられる。
+
+        ### 欠落の検知
+
+        保持ポリシー（D4）または `clearRoomMessages` で削除済みの範囲を `since` に指定した
+        場合は、残っている最古のメッセージから返し `truncated: true` を立てる。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+        - name: since
+          in: query
+          schema: { type: integer, minimum: 0 }
+          description: このカーソル値より後のメッセージを昇順で返す
+        - name: before
+          in: query
+          schema: { type: integer, minimum: 1 }
+          description: このカーソル値より前のメッセージを降順で返す（過去方向のページング）
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 50 }
+        - name: agentName
+          in: query
+          schema: { $ref: '#/components/schemas/AgentName' }
+          description: '`mentionsOnly`、`excludeSelf`、`wait`、`markRead` を使う場合は必須'
+        - name: mentionsOnly
+          in: query
+          schema: { type: boolean, default: false }
+          description: '`agentName` 宛のメンションを含むメッセージだけに絞る'
+        - name: excludeSelf
+          in: query
+          schema: { type: boolean }
+          description: |
+            `agentName` 自身と `system` の発言を除外する。
+            既定は `wait` &gt; 0 のとき `true`、それ以外は `false`（既存の待機実装に合わせる）
+        - name: wait
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 30, default: 0 }
+          description: |
+            新着が無い場合に待機する秒数。0 なら即時返却。常用は非推奨（D6）。
+            **30 を超える値は 400 `VALIDATION_ERROR`**（丸めない。`limit` / `before` と同じ扱い。
+            WebSocket の `wait_start.timeoutSeconds` は丸めるので注意）
+        - name: markRead
+          in: query
+          schema: { type: boolean }
+          description: 既読位置を更新するか。既定は `wait` &gt; 0 のとき `true`
+      responses:
+        '200':
+          description: メッセージ一覧
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessageList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotInRoom' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+    delete:
+      tags: [management]
+      operationId: clearRoomMessages
+      summary: ルームのメッセージを全削除
+      description: |
+        ルーム内のメッセージをすべて削除する（D2）。メンバーは残る。
+
+        各メンバーの `last_read_seq` は **削除直前の最大 seq** に設定する。0 にすると
+        次の読み取りで必ず `since` &lt; `evictedUpToSeq` となり `truncated` が誤発火するため。
+
+        `seq` の採番は継続する（ルーム自体を作り直したい場合は `DELETE /rooms/{roomName}`）。
+        誤操作防止のため `confirm=true` が必須。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+        - name: confirm
+          in: query
+          required: true
+          schema: { type: boolean, const: true }
+      responses:
+        '200':
+          description: 削除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, roomName, clearedCount]
+                properties:
+                  success: { type: boolean }
+                  roomName: { type: string }
+                  clearedCount:
+                    type: integer
+                    description: 削除したメッセージ件数
+        '400':
+          description: '`confirm` が未指定（`CONFIRMATION_REQUIRED`）'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /rooms/{roomName}/ws:
+    get:
+      tags: [messages]
+      operationId: connectRoomSocket
+      summary: WebSocket 接続（新着 push、推奨）
+      description: |
+        Room DO の WebSocket Hibernation API に接続する。**新着待機の既定手段**（D6）。
+        待機中は DO がスリープするため、接続を維持していても課金されない。
+
+        `Upgrade: websocket` ヘッダが必要。ブラウザは `Authorization` ヘッダを付けられないため、
+        現状は MCP クライアント（Node.js）からの利用を想定している。ブラウザ対応が必要になったら
+        `Sec-WebSocket-Protocol` サブプロトコル経由でトークンを受ける経路を追加する。
+
+        接続しただけでは「待機中」にならない。待機は `wait_start` / `wait_end` で明示的に
+        宣言する（D3）。
+
+        キープアライブはアプリ層の JSON ではなく WebSocket プロトコルの ping/pong を使うこと。
+        アプリ層のメッセージは DO を Hibernation から起こし、課金対象になる。
+
+        フレームの形は `components/schemas` の `ServerFrame` / `ClientFrame` を参照。
+
+        送信フレームは serialize 後にサイズ上限（§9）を検査する。`message` フレームが上限に
+        収まらない場合は送らず、`details.seq` 付きの `error`（`PAYLOAD_TOO_LARGE`）で
+        HTTP 取得を促す。`backlog_end.upToSeq` は実際に送れた位置を指す。
+        既定の 1 MB と本文 2000 文字・metadata 16 KB の組み合わせでは起こらない。
+
+        upgrade 前の障害は他のエンドポイントと同じ 500 / 503 の JSON で返る。
+        upgrade 後の障害は `error` フレームで返る。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+        - name: agentName
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/AgentName' }
+        - name: since
+          in: query
+          schema: { type: integer, minimum: 0 }
+          description: |
+            接続直後に送るバックログの起点。省略時は `members.last_read_seq` を使う。
+            バックログは `message` フレームを1件ずつ、`seq` 昇順で送る。
+            送り終えたことは `backlog_end` フレームで示す。
+        - name: Upgrade
+          in: header
+          required: true
+          schema: { type: string, const: websocket }
+      responses:
+        '101':
+          description: WebSocket にアップグレード
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotInRoom' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /rooms/{roomName}/status:
+    get:
+      tags: [management]
+      operationId: getRoomStatus
+      summary: ルーム単位のステータス
+      description: Room DO 内の SQLite クエリだけで完結する（D2）。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+      responses:
+        '200':
+          description: ルームのステータス
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoomStatus' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /status:
+    get:
+      tags: [management]
+      operationId: getStatus
+      summary: ユーザー全体のステータス
+      description: |
+        UserIndex のルーム一覧をもとに各 Room DO へ fan-out して集計する（D2）。
+        ルーム数に比例して DO 呼び出しが発生するため、頻繁なポーリングには向かない。
+
+        一部の Room DO が応答しなかった場合も 200 を返し、`partial` と `failedRooms` で示す。
+        対象ルーム上限（§9）を超えた分は集計せず `skippedRooms` に列挙する（この場合も
+        `partial: true`）。集計値は成功したルームのみの合計になる。
+      responses:
+        '200':
+          description: 全体のステータス
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [userId, totalRooms, totalMessages, totalAgents, totalOnline, rooms, partial]
+                properties:
+                  userId: { type: string }
+                  totalRooms: { type: integer }
+                  totalMessages: { type: integer }
+                  totalAgents: { type: integer }
+                  totalOnline: { type: integer }
+                  totalConnected: { type: integer }
+                  storageBytes: { type: integer }
+                  partial:
+                    type: boolean
+                    description: 一部のルームの集計に失敗したか
+                  failedRooms:
+                    type: array
+                    items: { type: string }
+                    description: タイムアウトや障害で集計できなかったルーム名
+                  skippedRooms:
+                    type: array
+                    items: { type: string }
+                    description: fan-out の対象ルーム上限を超えて集計しなかったルーム名
+                  fanout:
+                    type: object
+                    description: fan-out の実行情報（並列上限が効いていることを観測するため）
+                    properties:
+                      concurrencyLimit: { type: integer }
+                      peakConcurrency: { type: integer }
+                      attempted: { type: integer }
+                  rooms:
+                    type: array
+                    items: { $ref: '#/components/schemas/RoomStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /tokens:
+    post:
+      tags: [tokens]
+      operationId: createToken
+      summary: トークンの発行（セルフサービス、認証不要）
+      description: |
+        誰でも呼べる（D7）。新しい `userId` を生成し、トークンを発行して返す。
+
+        - `userId` はサーバーが生成する推測不能な乱数（128 bit 以上）。**クライアントは指定できない**
+          （指定できると他人の名前空間へのトークンを作れてしまう）
+        - KV には `tokens:<sha256(token)>` をキーとして `{ userId, name, tokenId, createdAt }` を書く。
+          平文は保存しない
+        - 発行直後は `expirationTtl` = 7 日。初回のルーム作成時に期限なしで put し直す
+        - IP あたり 5 回/時・20 回/日 のレート制限（§9）。超過は 429
+        - `SIGNUP_ENABLED` が `false` のときは 503 `SIGNUP_DISABLED`
+        - 発行は構造化ログに出す（IP、userId）
+
+        発行されたトークンの平文はこの応答でしか取得できない。
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                  description: 人が識別するための表示名（任意）
+      responses:
+        '201':
+          description: 発行成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, tokenId, userId, createdAt, expiresAt]
+                properties:
+                  token:
+                    type: string
+                    description: 平文トークン。この応答でのみ取得できる
+                  tokenId:
+                    type: string
+                    description: 失効に使う識別子
+                  userId: { type: string }
+                  name: { type: string }
+                  createdAt: { type: string, format: date-time }
+                  expiresAt:
+                    type: string
+                    format: date-time
+                    description: 未使用のまま放置した場合の失効時刻。初回ルーム作成で無期限になる
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503':
+          description: 発行が停止中（`SIGNUP_DISABLED`）、または一時的な利用不可（`SERVICE_UNAVAILABLE`）
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /admin/tokens/{tokenId}:
+    delete:
+      tags: [admin]
+      operationId: revokeToken
+      summary: トークンの失効
+      description: |
+        管理者のみ。KV から該当トークンのエントリを削除する。秘密値ではなく `tokenId` で指定するため、
+        アクセスログに平文トークンが残らない。失効は構造化ログに出す。
+
+        **失効は即時ではない。** KV は結果整合であり、他拠点に反映されるまで最大60秒以上
+        かかる。その間、削除済みトークンでのアクセスが成功しうる。確立済みの WebSocket
+        接続も自動では切断されない。
+
+        ユーザーのルームやメッセージは削除されない（同一 `userId` の別トークンからは
+        引き続きアクセスできる）。
+      security:
+        - adminAuth: []
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        '204':
+          description: 失効を受け付けた（反映には遅延がある）
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: 該当トークンが存在しない（`TOKEN_NOT_FOUND`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: ユーザートークン。`AGENT_COMM_TOKEN` の値を送る
+    adminAuth:
+      type: http
+      scheme: bearer
+      description: マスタートークン。`wrangler secret put ADMIN_TOKEN` で設定した値
+
+  parameters:
+    RoomName:
+      name: roomName
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/RoomName' }
+
+  schemas:
+
+    RoomName:
+      type: string
+      minLength: 1
+      maxLength: 50
+      pattern: '^[a-zA-Z0-9-_]+$'
+      description: 英数字・ハイフン・アンダースコアのみ
+
+    AgentName:
+      type: string
+      minLength: 1
+      maxLength: 50
+      pattern: '^[a-zA-Z0-9-_]+$'
+      description: |
+        英数字・ハイフン・アンダースコアのみ。メンション抽出が同じ文字種しか拾わないため、
+        既存の入退室バリデーションと同じ制限をかける
+
+    Metadata:
+      type: object
+      additionalProperties: true
+      description: |
+        任意のメタデータ。JSON 直列化後 16KB、ネスト深さ 8、キー数 100 を上限とする。
+        超過は 400 `INVALID_MESSAGE_FORMAT`。DO SQLite の1行上限が 2MB であるため必要
+
+    AgentProfile:
+      type: object
+      properties:
+        role: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 500 }
+        capabilities:
+          type: array
+          maxItems: 50
+          items: { type: string, maxLength: 100 }
+        metadata: { $ref: '#/components/schemas/Metadata' }
+
+    Room:
+      type: object
+      required: [name, createdAt, epoch]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        createdAt: { type: string, format: date-time }
+        epoch:
+          type: string
+          description: |
+            ルーム作成ごとの乱数。変化していたら seq が振り直されている。
+            UserIndex が Room DO から写した値を返す（一覧のたびに fan-out しない）
+
+    Member:
+      type: object
+      required: [agentName, status, joinedAt, connected]
+      properties:
+        agentName: { type: string }
+        profile: { $ref: '#/components/schemas/AgentProfile' }
+        status:
+          type: string
+          enum: [online, offline]
+          description: |
+            在室しているか（退室すると `offline`。行自体は残る）。
+            `lastSeenAt` が `MEMBER_IDLE_TIMEOUT_SECONDS` より古い場合も自動的に `offline` になる（D12）
+        connected:
+          type: boolean
+          description: WebSocket 接続中か。`status` とは独立した軸
+        waiting:
+          type: boolean
+          description: '`wait_start` を宣言して待機中か（D3）'
+        joinedAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        lastReadSeq: { type: integer }
+
+    Message:
+      type: object
+      required: [id, seq, agentName, roomName, message, timestamp, mentions]
+      properties:
+        id: { type: string, format: uuid }
+        seq:
+          type: integer
+          description: ルーム内で単調増加するカーソル値
+        clientMessageId: { type: string }
+        agentName: { type: string }
+        roomName: { type: string }
+        message: { type: string }
+        timestamp: { type: string, format: date-time }
+        mentions:
+          type: array
+          items: { type: string }
+        metadata: { $ref: '#/components/schemas/Metadata' }
+
+    SendMessageResult:
+      type: object
+      required: [success, messageId, seq, roomName, timestamp, mentions, duplicate]
+      properties:
+        success: { type: boolean }
+        messageId: { type: string, format: uuid }
+        seq:
+          type: integer
+          description: このメッセージのカーソル値
+        roomName: { type: string }
+        timestamp: { type: string, format: date-time }
+        mentions:
+          type: array
+          items: { type: string }
+        duplicate:
+          type: boolean
+          description: '`clientMessageId` の一致により既存メッセージを返したか'
+
+    MessageList:
+      type: object
+      required: [roomName, messages, count, hasMore, nextCursor, latestSeq, timedOut]
+      properties:
+        roomName: { type: string }
+        epoch:
+          type: string
+          description: ルームの epoch。変化していたらカーソルを破棄すること
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/Message' }
+        count: { type: integer }
+        hasMore:
+          type: boolean
+          description: '`limit` に収まらない続きがあるか'
+        nextCursor:
+          type: integer
+          description: |
+            次回の `since` に渡す値。**走査した**最大 seq であり、
+            フィルタで該当0件でも前進する
+        latestSeq:
+          type: integer
+          description: ルームに現存する最大 seq
+        oldestSeq:
+          type: integer
+          description: ルームに現存する最古の seq
+        evictedUpToSeq:
+          type: integer
+          description: 保持ポリシーで削除済みの最大 seq（D4。clear は含まない）
+        truncated:
+          type: boolean
+          default: false
+          description: '指定した `since` 以降に保持ポリシーまたは clear で削除済みのメッセージが存在し、欠落があることを示す'
+        timedOut:
+          type: boolean
+          description: '`wait` 指定時に新着が無いままタイムアウトしたか'
+        warning:
+          type: string
+          description: 自分以外に待機中のエージェントがいる場合のデッドロック警告（D3）
+        waitingAgents:
+          type: array
+          items: { type: string }
+          description: 現在待機中のエージェント名（D3）
+
+    RoomStatus:
+      type: object
+      required: [roomName, messageCount, agentCount, onlineCount, connectedCount]
+      properties:
+        roomName: { type: string }
+        epoch: { type: string }
+        messageCount: { type: integer }
+        agentCount:
+          type: integer
+          description: メンバー行の総数（offline を含む）
+        onlineCount:
+          type: integer
+          description: '`status` が `online` のメンバー数'
+        connectedCount:
+          type: integer
+          description: WebSocket 接続中の数
+        waitingCount:
+          type: integer
+          description: 待機中の数（D3）
+        storageBytes: { type: integer }
+        oldestSeq: { type: integer }
+        latestSeq: { type: integer }
+        lastActivityAt: { type: string, format: date-time }
+        retention:
+          type: object
+          description: 保持ポリシー（D4）
+          properties:
+            maxMessages: { type: integer }
+            maxBytes: { type: integer }
+            evictedUpToSeq: { type: integer }
+            evictedCount:
+              type: integer
+              description: 上限超過で削除された累計件数（`clearRoomMessages` による削除は含まない）
+
+    ServerFrame:
+      description: |
+        WebSocket のサーバー → クライアントフレーム。`type` で判別する。
+        いずれも1フレーム1 JSON オブジェクト。最大フレームサイズは 1MB。
+      oneOf:
+        - $ref: '#/components/schemas/ReadyFrame'
+        - $ref: '#/components/schemas/MessageFrame'
+        - $ref: '#/components/schemas/BacklogEndFrame'
+        - $ref: '#/components/schemas/PresenceFrame'
+        - $ref: '#/components/schemas/WaitingFrame'
+        - $ref: '#/components/schemas/AckFrame'
+        - $ref: '#/components/schemas/ErrorFrame'
+      discriminator:
+        propertyName: type
+        mapping:
+          ready: '#/components/schemas/ReadyFrame'
+          message: '#/components/schemas/MessageFrame'
+          backlog_end: '#/components/schemas/BacklogEndFrame'
+          presence: '#/components/schemas/PresenceFrame'
+          waiting: '#/components/schemas/WaitingFrame'
+          ack: '#/components/schemas/AckFrame'
+          error: '#/components/schemas/ErrorFrame'
+
+    ReadyFrame:
+      type: object
+      required: [type, roomName, epoch, latestSeq, lastReadSeq]
+      properties:
+        type: { type: string, const: ready }
+        roomName: { type: string }
+        epoch: { type: string }
+        latestSeq: { type: integer }
+        lastReadSeq: { type: integer }
+
+    MessageFrame:
+      type: object
+      required: [type, message, live]
+      properties:
+        type: { type: string, const: message }
+        message: { $ref: '#/components/schemas/Message' }
+        live:
+          type: boolean
+          description: 接続後の新着なら true、接続時のバックログなら false
+
+    BacklogEndFrame:
+      type: object
+      required: [type, upToSeq]
+      properties:
+        type: { type: string, const: backlog_end }
+        upToSeq:
+          type: integer
+          description: 実際に送れたバックログの最大 seq（フレーム上限で送れなかった分は含まない）
+        truncated:
+          type: boolean
+          description: バックログの一部が保持ポリシーまたは clear で削除済みだった場合 true
+
+    PresenceFrame:
+      type: object
+      required: [type, agentName, event]
+      properties:
+        type: { type: string, const: presence }
+        agentName: { type: string }
+        event:
+          type: string
+          enum: [joined, left, idle_timeout, connected, disconnected]
+          description: |
+            `left` は明示的な退室、`idle_timeout` はアイドル時間超過による自動退室（D12）。
+            どちらも `status` は `offline` になる
+
+    WaitingFrame:
+      type: object
+      required: [type, waitingAgents]
+      properties:
+        type: { type: string, const: waiting }
+        waitingAgents:
+          type: array
+          items: { type: string }
+        warning:
+          type: string
+          description: 自分以外に待機者がいる場合のデッドロック警告（D3）
+
+    AckFrame:
+      type: object
+      required: [type, ackFor]
+      properties:
+        type: { type: string, const: ack }
+        ackFor:
+          type: string
+          enum: [read, wait_start, wait_end]
+        requestId: { $ref: '#/components/schemas/RequestId' }
+        lastReadSeq: { type: integer }
+
+    ErrorFrame:
+      type: object
+      required: [type, error]
+      properties:
+        type: { type: string, const: error }
+        error: { $ref: '#/components/schemas/Error' }
+
+    ClientFrame:
+      description: |
+        WebSocket のクライアント → サーバーフレーム。
+        キープアライブはこの層ではなく WebSocket プロトコルの ping/pong を使うこと
+        （アプリ層のフレームは DO を Hibernation から起こし、課金対象になる）。
+      oneOf:
+        - $ref: '#/components/schemas/ReadClientFrame'
+        - $ref: '#/components/schemas/WaitStartFrame'
+        - $ref: '#/components/schemas/WaitEndFrame'
+      discriminator:
+        propertyName: type
+        mapping:
+          read: '#/components/schemas/ReadClientFrame'
+          wait_start: '#/components/schemas/WaitStartFrame'
+          wait_end: '#/components/schemas/WaitEndFrame'
+
+    ReadClientFrame:
+      type: object
+      required: [type, seq]
+      properties:
+        type: { type: string, const: read }
+        seq:
+          type: integer
+          description: |
+            既読位置。サーバーは `max(現在値, seq)` で更新し、後退させない。
+            **この接続で配信済みの最大 seq（watermark）を超える値**は `error` フレームで拒否する。
+            watermark は接続時 0 から始まり、実際に送れた `message` フレームの seq でのみ前進する。
+            `since` で飛ばした範囲や保持ポリシーで欠けた範囲の seq は、それより大きい seq が
+            配信済みなら受理される（区間では追跡しない）
+        requestId: { $ref: '#/components/schemas/RequestId' }
+
+    WaitStartFrame:
+      type: object
+      required: [type, requestId]
+      properties:
+        type: { type: string, const: wait_start }
+        requestId: { $ref: '#/components/schemas/RequestId' }
+        sinceSeq:
+          type: integer
+          description: 省略時は `last_read_seq`
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          description: |
+            この時間を過ぎた待機はサーバー側で自動的に解除される。既定 120。
+            **300 を超える値は 300 に丸める**（400 相当の `error` にはしない。
+            HTTP の `wait` は 30 超を 400 にするので扱いが違う）
+
+    WaitEndFrame:
+      type: object
+      required: [type, requestId]
+      properties:
+        type: { type: string, const: wait_end }
+        requestId: { $ref: '#/components/schemas/RequestId' }
+
+    RequestId:
+      type: string
+      minLength: 1
+      maxLength: 100
+      description: WebSocket フレームの識別子。1〜100 コードポイント
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: |
+            既存 MCP サーバーの `AppError` と同じコード体系を使う。
+            ローカル MCP はこれをそのまま MCP エラーに変換する。
+
+            既存の `AGENT_NOT_FOUND` / `MESSAGE_NOT_FOUND` / `MESSAGE_CAPACITY_EXCEEDED` /
+            `AGENT_ALREADY_IN_ROOM` はこの API では返らない
+            （順に AGENT_NOT_IN_ROOM に統合、該当操作なし、リングバッファ化により発生せず、
+            join の冪等化により発生せず）。
+          enum:
+            - NOT_FOUND
+            - ROOM_NOT_FOUND
+            - ROOM_ALREADY_EXISTS
+            - ROOM_CAPACITY_EXCEEDED
+            - MEMBER_CAPACITY_EXCEEDED
+            - DELETE_CONFLICT
+            - TOKEN_NOT_FOUND
+            - AGENT_NOT_IN_ROOM
+            - MESSAGE_TOO_LONG
+            - VALIDATION_ERROR
+            - INVALID_ROOM_NAME
+            - INVALID_AGENT_NAME
+            - INVALID_MESSAGE_FORMAT
+            - CONFIRMATION_REQUIRED
+            - UNAUTHORIZED
+            - PAYLOAD_TOO_LARGE
+            - RATE_LIMITED
+            - SIGNUP_DISABLED
+            - STORAGE_ERROR
+            - INTERNAL_ERROR
+            - SERVICE_UNAVAILABLE
+        message: { type: string }
+        retryable:
+          type: boolean
+          description: 同じリクエストを再試行して解消しうるか
+        details:
+          type: object
+          additionalProperties: true
+
+  responses:
+
+    BadRequest:
+      description: 入力値が不正
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    Unauthorized:
+      description: トークンが未指定または不正（`UNAUTHORIZED`）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    NotInRoom:
+      description: エージェントがルームに在室していない（`AGENT_NOT_IN_ROOM`）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    RoomNotFound:
+      description: ルームが存在しない（`ROOM_NOT_FOUND`）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    PayloadTooLarge:
+      description: |
+        リクエストボディが上限（§9、既定 64 KB）を超えている（`PAYLOAD_TOO_LARGE`）。
+        `metadata` の上限超過は 413 ではなく 400 `INVALID_MESSAGE_FORMAT`
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    RateLimited:
+      description: レート制限またはクォータ超過（`RATE_LIMITED`）
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: 再試行までの推奨待機秒数
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    InternalError:
+      description: |
+        サーバー内部エラー（`INTERNAL_ERROR` / `STORAGE_ERROR`）。
+        Cloudflare プラットフォーム由来のエラーはこの JSON 形式にならない場合がある
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    Unavailable:
+      description: |
+        Durable Object の過負荷・一時的な利用不可（`SERVICE_UNAVAILABLE`）。
+        `retryable` を見て再試行の可否を判断すること
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
