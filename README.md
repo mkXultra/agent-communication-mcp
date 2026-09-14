@@ -375,9 +375,7 @@ agora が使う wrangler 4.x は Node.js 22 以上でしか起動しないため
 AGORA_DIR=/path/to/agora npm run test:cloud
 ```
 
-CI（`.github/workflows/ci.yml`）では既存のジョブがファイルモードだけを実行し、`cloud-tests` ジョブ（Node.js 22）が agora をチェックアウトしてクラウドモードのテストを実行します。
-agora は private リポジトリのため、リポジトリのシークレット `AGORA_REPO_TOKEN`（agora の contents を読めるトークン）が必要です。
-シークレットが無い場合（未設定、または fork からの pull request）、`cloud-tests` ジョブはその旨を表示して失敗します。
+CI（`.github/workflows/ci.yml`）はファイルモードのテストだけを実行します。クラウドモードのテストは agora（private リポジトリ）の `wrangler dev` が必要なため、ローカルで `AGORA_DIR=../agora npm test` として実行してください。
 
 ### 型チェックとLint
 
