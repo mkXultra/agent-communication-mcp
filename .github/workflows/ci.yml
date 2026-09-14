@@ -47,8 +47,8 @@ jobs:
     - name: Install dependencies
       run: npm ci
     
-    # File mode only (vitest projects `file` and `file-concurrency`). The cloud mode tests need agora and run in the
-    # `cloud-tests` job.
+    # File mode only (vitest projects `file` and `file-concurrency`). The cloud mode tests need the private agora
+    # repository (wrangler dev) and run locally: `AGORA_DIR=../agora npm test`.
     - name: Run unit tests
       run: npm run test:file
     
@@ -170,61 +170,3 @@ jobs:
         name: dist
         path: dist/
         retention-days: 7
-
-  cloud-tests:
-    name: Cloud Mode Tests (agora on wrangler dev)
-    runs-on: ubuntu-latest
-    needs: [lint-and-typecheck]
-    timeout-minutes: 30
-
-    # The cloud mode tests (vitest projects `cloud-compat` and `cloud`) start the real agora API with
-    # `wrangler dev` from AGORA_DIR (default ../agora). actions/checkout only writes inside the workspace, so both
-    # repositories are checked out side by side: agent-communication-mcp/ and agora/, i.e. agora is ../agora.
-    # mkXultra/agora is private: the AGORA_REPO_TOKEN secret must be a token with read access to its contents.
-    # Without agora the tests fail (they are never skipped); pull requests from forks get no secrets and fail too.
-    # Node.js 22: the wrangler that agora pins (4.x) refuses to start on older versions.
-    steps:
-    - name: Require access to agora
-      env:
-        AGORA_REPO_TOKEN: ${{ secrets.AGORA_REPO_TOKEN }}
-      run: |
-        if [ -z "$AGORA_REPO_TOKEN" ]; then
-          echo "::error::The AGORA_REPO_TOKEN secret is not available (not configured, or a pull request from a fork). The cloud mode tests need the private mkXultra/agora repository."
-          exit 1
-        fi
-
-    - name: Checkout agent-communication-mcp
-      uses: actions/checkout@v4
-      with:
-        path: agent-communication-mcp
-
-    - name: Checkout agora
-      uses: actions/checkout@v4
-      with:
-        repository: mkXultra/agora
-        path: agora
-        token: ${{ secrets.AGORA_REPO_TOKEN }}
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-        cache: 'npm'
-        cache-dependency-path: |
-          agent-communication-mcp/package-lock.json
-          agora/package-lock.json
-
-    - name: Install dependencies
-      working-directory: agent-communication-mcp
-      run: npm ci
-
-    - name: Install agora dependencies (wrangler)
-      working-directory: agora
-      run: npm ci
-
-    - name: Run cloud mode tests
-      working-directory: agent-communication-mcp
-      run: npm run test:cloud
-      env:
-        AGORA_DIR: ${{ github.workspace }}/agora
-        WRANGLER_SEND_METRICS: 'false'

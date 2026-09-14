@@ -12,8 +12,6 @@ jobs:
   test:
     name: Run All Tests
     uses: ./.github/workflows/ci.yml
-    # The cloud-tests job checks out the private agora repository with the AGORA_REPO_TOKEN secret.
-    secrets: inherit
 
   publish:
     name: Publish to NPM
