@@ -5,13 +5,13 @@
 //   by the next call after it drops.
 // - Every call declares its wait with `wait_start` / `wait_end` and returns when a message from
 //   another agent arrives (live, or buffered since the previous call), or when the timeout passes.
-// - The client keeps its own read cursor per room x agent. The server also moves `last_read_seq`
-//   when the agent *sends* (docs/api.yaml sendMessage), which would otherwise hide messages that
-//   arrived before the agent's own message; the file mode only moves the read position in
-//   wait_for_messages. The cursor is therefore taken before the agent's first send: from the join
-//   response, or from the member list when the agent joined in an earlier process.
+// - The client keeps its own read cursor per room x agent, taken before the agent's first send: from the join
+//   response, or from the member list when the agent joined in an earlier process. Before api 0.4.2 agora moved
+//   `last_read_seq` when the agent *sent*, which hid messages that arrived before the agent's own message (the file
+//   mode only moves the read position in wait_for_messages); the cursor keeps them unread with such a server too.
 // - A cursor always carries the epoch of the room it belongs to (seq restarts at 1 when a room is deleted and
-//   created again); a cursor from another epoch is never used as a starting point.
+//   created again), taken from the same response as the read position (join, member list, `ready` frame, long
+//   poll); a cursor from another epoch is never used as a starting point.
 // - Every request made for a wait gets its timeout when it starts, from the time left: it may run a little past the
 //   deadline, but nothing made for a wait runs past `deadline + MIN_ROUND_TRIP_MS` (the hard stop), and no request
 //   is started after that.
@@ -19,7 +19,7 @@
 import { randomUUID } from 'crypto';
 import { AgentNotInRoomError, AppError } from '../errors/index.js';
 import { createLogger } from '../utils/logger.js';
-import { CloudApiClient, type CallOptions } from './CloudApiClient.js';
+import { CloudApiClient } from './CloudApiClient.js';
 import { toWaitResult, type WaitForMessagesResult } from './mappers.js';
 import {
   RoomSocket,
@@ -31,7 +31,7 @@ import {
   frameErrorToAppError,
   isDefinitiveAppError,
 } from './RoomSocket.js';
-import type { ApiMessage, ApiMessageList } from './types.js';
+import type { ApiMemberList, ApiMessage, ApiMessageList } from './types.js';
 
 export interface CloudWaitServiceOptions {
   connectTimeoutMs?: number;
@@ -70,6 +70,12 @@ function sleep(ms: number): Promise<void> {
 
 export function socketKey(roomName: string, agentName: string): string {
   return `${roomName}\u0000${agentName}`;
+}
+
+/** The member's server-side read position with the epoch of the room it belongs to, or `undefined` for a non-member. */
+function cursorFromMembers(list: ApiMemberList, agentName: string): ReadCursor | undefined {
+  const member = list.members.find((candidate) => candidate.agentName === agentName);
+  return typeof member?.lastReadSeq === 'number' ? { seq: member.lastReadSeq, epoch: list.epoch } : undefined;
 }
 
 /** Messages to return: newer than the cursor already, from others than the agent and `system`, one per seq. */
@@ -139,45 +145,26 @@ export class CloudWaitService {
   }
 
   /**
-   * enter_room, before the join: the epoch the join response's read position will be tagged with. Read before the
-   * join, so that a room created again in between tags the new room's position with the old epoch, which the first
-   * connection or long poll then discards (the reverse order could put an old room's position on a new room).
-   * `undefined` when the read failed for a reason that does not stop the join; the first send then reads the
-   * position itself.
-   */
-  async epochBeforeJoin(roomName: string): Promise<string | undefined> {
-    try {
-      return await this.roomEpoch(roomName, () => ({}));
-    } catch (error) {
-      if (isDefinitiveAppError(error)) throw error;
-      logger.warn('Could not read the room epoch before entering; the first send reads the read position', {
-        roomName,
-        reason: String(error),
-      });
-      return undefined;
-    }
-  }
-
-  /**
-   * enter_room: the join response carries the member's read position. It replaces a cursor of another epoch, and a
-   * cursor of a member row that did not exist before; a cursor of the same epoch is more precise and stays.
+   * enter_room: the join response carries the member's read position and the epoch of the room (api 0.5.1). It
+   * replaces a cursor of another epoch, and a cursor of a member row that did not exist before; a cursor of the same
+   * epoch is more precise and stays.
    */
   noteJoined(roomName: string, agentName: string, lastReadSeq: number | undefined, alreadyMember: boolean, epoch: string | undefined): void {
-    if (typeof lastReadSeq !== 'number' || epoch === undefined) return;
+    if (typeof lastReadSeq !== 'number' || typeof epoch !== 'string') return;
     const key = socketKey(roomName, agentName);
     const existing = this.cursors.get(key);
     if (!existing || !alreadyMember || existing.epoch !== epoch) this.cursors.set(key, { seq: lastReadSeq, epoch });
   }
 
   /**
-   * send_message: take the cursor before the agent's first send from this process (the send moves the server
-   * read position past everything older). Costs a read of the epoch and of the member list, and only when there is
-   * no cursor yet. Throws when they cannot be read: sending then would hide the unread messages.
+   * send_message: take the cursor before the agent's first send from this process (a server before api 0.4.2 moves
+   * the read position past everything older when the agent sends). Costs one GET /members, and only when there is no
+   * cursor yet. Throws when it cannot be read: sending then could hide the unread messages.
    */
   async ensureCursor(roomName: string, agentName: string): Promise<void> {
     const key = socketKey(roomName, agentName);
     if (this.cursors.has(key)) return;
-    const cursor = await this.memberCursor(roomName, agentName, () => ({}));
+    const cursor = cursorFromMembers(await this.api.listMembers(roomName, true), agentName);
     if (cursor && !this.cursors.has(key)) this.cursors.set(key, cursor);
   }
 
@@ -525,8 +512,10 @@ export class CloudWaitService {
   }
 
   /**
-   * The cursor the long poll reads from, established without side effects: the epoch check is a plain GET, and a
-   * missing cursor comes from the member list (never from a `markRead` request that has no `since`).
+   * The cursor the long poll reads from, established without side effects with one GET /members: its epoch checks a
+   * cursor this process holds (a cursor from a room that was deleted and created again would hold the long poll for
+   * seqs that do not exist yet and then mark the new room's messages read), and the member's read position in the same
+   * response replaces a missing or outdated cursor. Never taken from a `markRead` request that has no `since`.
    */
   private async longPollCursor(
     key: string,
@@ -535,40 +524,19 @@ export class CloudWaitService {
     deadline: number,
     checkEpoch: boolean,
   ): Promise<ReadCursor> {
-    // Each request of the look-up gets its timeout when it starts: a slow epoch read leaves less time to the member list.
-    const options = (): CallOptions => ({ timeoutMs: this.boundedTimeout(HTTP_TIMEOUT_MS, deadline), retry: false });
-    let cursor = this.cursors.get(key);
-    if (cursor && checkEpoch) {
-      // A cursor from a room that was deleted and created again would hold the long poll for seqs that do not
-      // exist yet and then mark the new room's messages as read.
-      if ((await this.roomEpoch(roomName, options)) !== cursor.epoch) {
-        this.cursors.delete(key);
-        cursor = undefined;
-      }
-    }
-    if (!cursor) {
-      cursor = await this.memberCursor(roomName, agentName, options);
-      if (!cursor) throw new AgentNotInRoomError(agentName, roomName);
-      this.cursors.set(key, cursor);
-    }
+    const held = this.cursors.get(key);
+    if (held && !checkEpoch) return held;
+    const list = await this.api.listMembers(roomName, true, {
+      timeoutMs: this.boundedTimeout(HTTP_TIMEOUT_MS, deadline),
+      retry: false,
+    });
+    // A cursor of the current room is more precise than the server's read position. (A server before api 0.5.1 does
+    // not report the epoch here; the long poll's own response still does, and catches a room created again.)
+    if (held && (typeof list.epoch !== 'string' || held.epoch === list.epoch)) return held;
+    const cursor = cursorFromMembers(list, agentName);
+    if (!cursor) throw new AgentNotInRoomError(agentName, roomName);
+    this.cursors.set(key, cursor);
     return cursor;
-  }
-
-  /** The room's current epoch, read without side effects (GET …/messages?limit=1 without agentName). */
-  private async roomEpoch(roomName: string, options: () => CallOptions): Promise<string> {
-    const latest = await this.api.getMessages(roomName, { limit: 1 }, { ...options(), context: { roomName } });
-    return latest.epoch ?? '';
-  }
-
-  /**
-   * The member's server-side read position with the epoch it belongs to, or `undefined` for a non-member. The epoch is
-   * read first (see epochBeforeJoin for why that order is the safe one).
-   */
-  private async memberCursor(roomName: string, agentName: string, options: () => CallOptions): Promise<ReadCursor | undefined> {
-    const epoch = await this.roomEpoch(roomName, options);
-    const list = await this.api.listMembers(roomName, true, options());
-    const member = list.members.find((candidate) => candidate.agentName === agentName);
-    return typeof member?.lastReadSeq === 'number' ? { seq: member.lastReadSeq, epoch } : undefined;
   }
 
   /**

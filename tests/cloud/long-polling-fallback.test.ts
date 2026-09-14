@@ -215,13 +215,11 @@ describe('wait_for_messages falls back to long polling', () => {
       );
       const result = await other.messaging.waitForMessages({ agentName: 'alice', roomName: 'fallback-lost-other', timeout: 5000 });
       expect(result.messages.map((m) => m.message)).toEqual(['one', 'two']);
-      // The starting position is read without side effects (the room epoch, then the member list) before any request
-      // that marks messages read.
+      // The starting position and its epoch are read without side effects, with one GET /members, before any request
+      // that marks messages read; after that only the two long polls (the lost one and its repeat).
       const httpRequests = proxy.requests.filter((r) => r.method !== 'UPGRADE').map((r) => `${r.method} ${r.path}`);
-      expect(httpRequests.slice(0, 2)).toEqual([
-        'GET /rooms/fallback-lost-other/messages?limit=1',
-        'GET /rooms/fallback-lost-other/members?includeOffline=true',
-      ]);
+      expect(httpRequests[0]).toBe('GET /rooms/fallback-lost-other/members?includeOffline=true');
+      expect(httpRequests).toHaveLength(3);
       expect(longPolls().map((r) => queryOf(r.path).get('since'))).toEqual(['0', '0']);
     } finally {
       await other.close();
@@ -230,7 +228,7 @@ describe('wait_for_messages falls back to long polling', () => {
 
   it('gives up shortly after the timeout when long polls are never answered', async () => {
     await setupRoom('fallback-hang', ['alice']);
-    // Only the long polls hang; the side-effect-free epoch check before them is answered.
+    // Only the long polls hang; the side-effect-free member-list read (epoch check) before them is answered.
     proxy.holdRequests((r) => r.method === 'GET' && r.path.startsWith('/rooms/fallback-hang/messages?') && queryOf(r.path).has('wait'));
 
     const started = Date.now();
@@ -353,14 +351,14 @@ describe('wait_for_messages falls back to long polling', () => {
     expect(rest.messages.map((m) => m.id)).toEqual(inOrder.slice(1000));
   }, 60000);
 
-  it('gives each request of the read position look-up only the time left, also after a slow one', async () => {
+  it('gives the long poll after a slow read position look-up only the time left', async () => {
     const roomName = 'fallback-slow-lookup';
     await setupRoom(roomName, ['alice', 'bob']);
-    // A new process without a read cursor: before its first long poll it reads the room epoch, then the member list.
+    // A new process without a read cursor: before its first long poll it reads the member list (position and epoch).
     const fresh = new CloudBackend({ apiUrl: proxy.url, token });
     try {
-      proxy.delayResponses((r) => r.method === 'GET' && r.path === `/rooms/${roomName}/messages?limit=1`, 4500);
-      proxy.holdRequests((r) => r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/members`));
+      proxy.delayResponses((r) => r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/members`), 4500);
+      proxy.holdRequests((r) => r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/messages?`) && queryOf(r.path).has('wait'));
 
       const started = Date.now();
       const error = await fresh.messaging
@@ -369,12 +367,12 @@ describe('wait_for_messages falls back to long polling', () => {
       const elapsed = Date.now() - started;
 
       expect(error).toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
-      // The member list starts at 4.5 s and gets the 3 s that are left then, not the 6 s the look-up had when it
-      // began: 7.5 s in all, within the hard stop (timeout + 3 s). It is not resent, and no long poll follows.
+      // The long poll starts at 4.5 s with wait=1 and gives up after the 3 s it gets then (not the 7 s a 5 s wait
+      // would get at its start): 7.5 s in all, within the hard stop (timeout + 3 s). Nothing is resent.
       expect(elapsed).toBeGreaterThanOrEqual(7000);
       expect(elapsed).toBeLessThan(8500);
       expect(proxy.countRequests('GET', `/rooms/${roomName}/members`)).toBe(1);
-      expect(longPolls()).toHaveLength(0);
+      expect(longPolls().map((r) => queryOf(r.path).get('wait'))).toEqual(['1']);
     } finally {
       await fresh.close();
     }
@@ -386,8 +384,8 @@ describe('wait_for_messages falls back to long polling', () => {
     await setupRoom(roomName, ['alice', 'bob']);
     const fresh = new CloudBackend({ apiUrl: proxy.url, token });
     try {
-      // The handshake that is never answered uses 3 s of a 1 s wait; the epoch read of the check that follows is slow.
-      proxy.delayResponses((r) => r.method === 'GET' && r.path === `/rooms/${roomName}/messages?limit=1`, 2000);
+      // The handshake that is never answered uses 3 s of a 1 s wait; the member-list read of the check that follows is slow.
+      proxy.delayResponses((r) => r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/members`), 2000);
 
       const started = Date.now();
       const error = await fresh.messaging
@@ -396,10 +394,10 @@ describe('wait_for_messages falls back to long polling', () => {
       const elapsed = Date.now() - started;
 
       expect(error).toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
-      // The epoch read gets the 1 s left until the hard stop (not another 3 s), and nothing starts after it.
+      // The member-list read gets the 1 s left until the hard stop (not another 3 s), and nothing starts after it.
       expect(elapsed).toBeGreaterThanOrEqual(3900);
       expect(elapsed).toBeLessThan(4700);
-      expect(proxy.countRequests('GET', `/rooms/${roomName}/members`)).toBe(0);
+      expect(proxy.countRequests('GET', `/rooms/${roomName}/members`)).toBe(1);
       expect(longPolls()).toHaveLength(0);
     } finally {
       await fresh.close();
@@ -413,8 +411,9 @@ describe('wait_for_messages falls back to long polling', () => {
     const old = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 3 });
     expect(old.messages.map((m) => m.message)).toEqual(['old']);
 
-    // The next wait checks the epoch first; agora answers at once, but the answer reaches the client a second later.
-    const epochCheck = (r: RecordedRequest): boolean => r.method === 'GET' && r.path === `/rooms/${roomName}/messages?limit=1`;
+    // The next wait checks the epoch first (GET /members); agora answers at once, but the answer reaches the client a
+    // second later.
+    const epochCheck = (r: RecordedRequest): boolean => r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/members`);
     proxy.delayResponses(epochCheck, 1000);
     const checksBefore = proxy.requests.filter(epochCheck).length;
     const waiting = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 5 });

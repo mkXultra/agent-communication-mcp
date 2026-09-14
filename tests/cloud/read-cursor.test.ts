@@ -1,14 +1,15 @@
 // Where wait_for_messages starts reading (the client-side read cursor, src/cloud/CloudWaitService.ts).
-// agora moves an agent's read position when the agent sends, so the cursor is taken before the agent's first send
-// (from the join response, or from the member list in a process that did not enter the room), and it carries the
-// epoch of the room it was taken in so that a room deleted and created again under the same name is never read
-// from an old position. Runs against the agora with FAULT_INJECTION=1 (to make single reads fail) through a proxy.
+// The cursor is taken before the agent's first send (agora before api 0.4.2 moved an agent's read position when it
+// sent): from the join response, or from the member list in a process that did not enter the room. Both responses
+// carry the room's epoch (api 0.5.1), so the cursor is tied to the room it was taken in and a room deleted and created
+// again under the same name is never read from an old position, without any request just for the epoch.
+// Runs against the agora with FAULT_INJECTION=1 (to make single reads fail) through a proxy that records requests.
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 import { CloudApiClient, CloudBackend } from '../../src/cloud/index.js';
 import { issueToken } from './harness/agora.js';
 import { createMcpClient, withEnv, type McpTestClient } from './harness/mcp.js';
-import { AgoraProxy } from './harness/proxy.js';
+import { AgoraProxy, type RecordedRequest } from './harness/proxy.js';
 
 describe('the read cursor of wait_for_messages', () => {
   const faultAgoraUrl = inject('faultAgoraUrl');
@@ -49,6 +50,13 @@ describe('the read cursor of wait_for_messages', () => {
     return (await api.listMembers(roomName)).members.find((m) => m.agentName === agentName)?.lastReadSeq;
   }
 
+  /** The requests `action` makes, as "METHOD path" (clientMessageId and operationId values left out). */
+  async function requestsOf(action: () => Promise<unknown>): Promise<string[]> {
+    proxy.requests.length = 0;
+    await action();
+    return proxy.requests.map((r: RecordedRequest) => `${r.method} ${r.path}`);
+  }
+
   it('does not send when the read position cannot be read first, so the unread message stays unread', async () => {
     const roomName = 'cursor-unreadable';
     await client.call('create_room', { roomName });
@@ -73,24 +81,92 @@ describe('the read cursor of wait_for_messages', () => {
     expect(result.messages.map((m) => m.message)).toEqual(['still unread']);
   });
 
-  it('enters the room when the epoch cannot be read, and the first send then reads the read position itself', async () => {
-    const roomName = 'cursor-no-epoch';
+  it('takes the read position and its epoch from the join response: entering and sending are one request each', async () => {
+    const roomName = 'cursor-requests-join';
     await client.call('create_room', { roomName });
+    const alice = anotherProcess();
+
+    expect(await requestsOf(() => alice.rooms.enterRoom({ agentName: 'alice', roomName }))).toEqual([`POST /rooms/${roomName}/join`]);
     await client.call('enter_room', { agentName: 'bob', roomName });
+    await client.call('send_message', { agentName: 'bob', roomName, message: 'before alice spoke' });
+    expect(await requestsOf(() => alice.messaging.sendMessage({ agentName: 'alice', roomName, message: 'alice speaks' }))).toEqual([
+      `POST /rooms/${roomName}/messages`,
+    ]);
+
+    // The WebSocket starts from the join's position (0): no request besides the upgrade, and bob's message comes back.
+    let result: Awaited<ReturnType<CloudBackend['messaging']['waitForMessages']>> | undefined;
+    const requests = await requestsOf(async () => {
+      result = await alice.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 3000 });
+    });
+    expect(requests).toEqual([`UPGRADE /rooms/${roomName}/ws?agentName=alice&since=0`]);
+    expect(result!.messages.map((m) => m.message)).toEqual(['before alice spoke']);
+  });
+
+  it('takes the read position and its epoch with one GET /members before the first send of a process that did not enter', async () => {
+    const roomName = 'cursor-requests-members';
+    await client.call('create_room', { roomName });
+    await client.call('enter_room', { agentName: 'alice', roomName });
+    await client.call('enter_room', { agentName: 'bob', roomName });
+    await client.call('send_message', { agentName: 'bob', roomName, message: 'before alice spoke' });
 
     const other = anotherProcess();
-    proxy.headersFor = (r) =>
-      r.method === 'GET' && r.path === `/rooms/${roomName}/messages?limit=1` ? { 'x-agora-fault': 'room.unavailable' } : undefined;
-    expect(await other.rooms.enterRoom({ agentName: 'alice', roomName })).toEqual({ success: true });
-    proxy.headersFor = () => undefined;
-
-    await client.call('send_message', { agentName: 'bob', roomName, message: 'hello alice' });
-    const membersBefore = proxy.countRequests('GET', `/rooms/${roomName}/members`);
-    await other.messaging.sendMessage({ agentName: 'alice', roomName, message: 'hi bob' });
-    expect(proxy.countRequests('GET', `/rooms/${roomName}/members`)).toBe(membersBefore + 1);
-
+    expect(await requestsOf(() => other.messaging.sendMessage({ agentName: 'alice', roomName, message: 'alice speaks' }))).toEqual([
+      `GET /rooms/${roomName}/members?includeOffline=true`,
+      `POST /rooms/${roomName}/messages`,
+    ]);
+    expect(await requestsOf(() => other.messaging.sendMessage({ agentName: 'alice', roomName, message: 'again' }))).toEqual([
+      `POST /rooms/${roomName}/messages`,
+    ]);
     const result = await other.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 3000 });
-    expect(result.messages.map((m) => m.message)).toEqual(['hello alice']);
+    expect(result.messages.map((m) => m.message)).toEqual(['before alice spoke']);
+  });
+
+  it('checks the epoch of a long poll with the same GET /members that gives the read position', async () => {
+    const roomName = 'cursor-requests-long-poll';
+    proxy.webSocketPolicy = 'reject';
+    await client.call('create_room', { roomName });
+    await client.call('enter_room', { agentName: 'bob', roomName });
+    const alice = anotherProcess();
+    await alice.rooms.enterRoom({ agentName: 'alice', roomName });
+    // HTTP requests only (the refused upgrade is left out), with the long poll's `wait` seconds left out (timing).
+    const httpOnly = (requests: string[]) => requests.filter((r) => !r.startsWith('UPGRADE')).map((r) => r.replace(/&wait=\d+/, ''));
+    const longPoll = (since: number) =>
+      `GET /rooms/${roomName}/messages?agentName=alice&since=${since}&limit=1000&excludeSelf=true&markRead=true`;
+
+    // A process with a cursor: one GET /members (its epoch confirms the cursor), then the long poll.
+    await api.sendMessage(roomName, { agentName: 'bob', message: 'one', clientMessageId: `${roomName}-one` });
+    let result = await alice.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 3000 });
+    expect(result.messages.map((m) => m.message)).toEqual(['one']);
+    await api.sendMessage(roomName, { agentName: 'bob', message: 'two', clientMessageId: `${roomName}-two` });
+    expect(
+      httpOnly(await requestsOf(async () => {
+        result = await alice.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 3000 });
+      })),
+    ).toEqual([`GET /rooms/${roomName}/members?includeOffline=true`, longPoll(1)]);
+    expect(result.messages.map((m) => m.message)).toEqual(['two']);
+
+    // A process without a cursor: the same single GET /members gives the position.
+    await api.sendMessage(roomName, { agentName: 'bob', message: 'three', clientMessageId: `${roomName}-three` });
+    const other = anotherProcess();
+    expect(
+      httpOnly(await requestsOf(async () => {
+        result = await other.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 3000 });
+      })),
+    ).toEqual([`GET /rooms/${roomName}/members?includeOffline=true`, longPoll(2)]);
+    expect(result.messages.map((m) => m.message)).toEqual(['three']);
+
+    // The room is deleted and created again: the GET /members that reveals the new epoch also gives the position there.
+    await api.deleteRoom(roomName);
+    await api.createRoom(roomName);
+    await api.joinRoom(roomName, 'alice');
+    await api.joinRoom(roomName, 'bob');
+    await api.sendMessage(roomName, { agentName: 'bob', message: 'new room', clientMessageId: `${roomName}-new` });
+    expect(
+      httpOnly(await requestsOf(async () => {
+        result = await alice.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 3000 });
+      })),
+    ).toEqual([`GET /rooms/${roomName}/members?includeOffline=true`, longPoll(0)]);
+    expect(result.messages.map((m) => m.message)).toEqual(['new room']);
   });
 
   /** alice enters `roomName` after 5 messages; the room is then deleted and created again, and in the new room

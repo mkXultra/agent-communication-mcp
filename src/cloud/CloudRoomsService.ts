@@ -60,7 +60,7 @@ export class CloudRoomsService {
     return { success: result.success, roomName: result.roomName };
   }
 
-  /** enter_room: POST /rooms/{roomName}/join (404 -> RoomNotFoundError). Re-entering succeeds. One read of the epoch first. */
+  /** enter_room: POST /rooms/{roomName}/join (404 -> RoomNotFoundError). Re-entering succeeds. One request. */
   async enterRoom(params: { agentName: string; roomName: string; profile?: AgentProfile }): Promise<{ success: boolean }> {
     const { agentName, roomName, profile } = params;
     if (!isValidName(roomName)) throw new RoomNotFoundError(String(roomName));
@@ -69,11 +69,9 @@ export class CloudRoomsService {
       await this.assertRoomExists(roomName);
       throw invalid;
     }
-    // The read position before this agent sends anything (sending moves it on the server), tagged with the epoch
-    // read before the join.
-    const epoch = await this.waits.epochBeforeJoin(roomName);
     const result = await this.api.joinRoom(roomName, agentName, profile);
-    this.waits.noteJoined(roomName, agentName, result.lastReadSeq, result.alreadyMember, epoch);
+    // The read position before this agent sends anything, with the epoch of the room it belongs to (the same response).
+    this.waits.noteJoined(roomName, agentName, result.lastReadSeq, result.alreadyMember, result.epoch);
     return { success: result.success };
   }
 

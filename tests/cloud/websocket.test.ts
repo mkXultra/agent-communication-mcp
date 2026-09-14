@@ -173,9 +173,14 @@ describe('wait_for_messages over WebSocket', () => {
     await setupRoom('first-reply', ['alice', 'bob']);
     await client.call('send_message', { agentName: 'bob', roomName: 'first-reply', message: 'hello alice' });
     await client.call('send_message', { agentName: 'alice', roomName: 'first-reply', message: 'hi bob' });
-    // Sending stays one request: the read position came with the join response.
-    expect(proxy.countRequests('POST', '/rooms/first-reply/messages')).toBe(2);
-    expect(proxy.countRequests('GET', '/rooms/first-reply/members')).toBe(0);
+    // Entering and sending are one request each: the read position and its epoch came with the join response.
+    expect(proxy.requests.map((r) => `${r.method} ${r.path}`)).toEqual([
+      'POST /rooms',
+      'POST /rooms/first-reply/join',
+      'POST /rooms/first-reply/join',
+      'POST /rooms/first-reply/messages',
+      'POST /rooms/first-reply/messages',
+    ]);
 
     const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'first-reply', timeout: 3 });
     expect(result.messages.map((m) => m.message)).toEqual(['hello alice']);
@@ -190,8 +195,10 @@ describe('wait_for_messages over WebSocket', () => {
       await client.call('send_message', { agentName: 'bob', roomName: 'entered-elsewhere', message: 'before alice spoke' });
       await other.messaging.sendMessage({ agentName: 'alice', roomName: 'entered-elsewhere', message: 'alice speaks' });
       await other.messaging.sendMessage({ agentName: 'alice', roomName: 'entered-elsewhere', message: 'alice again' });
-      // Only the first send of that process looks the read position up (before the send moves it on the server).
-      expect(proxy.countRequests('GET', '/rooms/entered-elsewhere/members')).toBe(1);
+      // Only the first send of that process looks the read position (and its epoch) up, with one GET /members.
+      expect(proxy.requests.filter((r) => r.method === 'GET').map((r) => r.path)).toEqual([
+        '/rooms/entered-elsewhere/members?includeOffline=true',
+      ]);
 
       const result = await other.messaging.waitForMessages({ agentName: 'alice', roomName: 'entered-elsewhere', timeout: 3000 });
       expect(result.messages.map((m) => m.message)).toEqual(['before alice spoke']);

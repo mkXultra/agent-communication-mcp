@@ -39,6 +39,8 @@ export interface ApiAgentProfile {
 export interface ApiJoinResult {
   success: boolean;
   roomName: string;
+  /** Epoch of the room the member joined (api 0.5.1). */
+  epoch: string;
   agentName: string;
   alreadyMember: boolean;
   lastReadSeq?: number;
@@ -63,6 +65,8 @@ export interface ApiMember {
 
 export interface ApiMemberList {
   roomName: string;
+  /** Epoch of the room the member list belongs to (api 0.5.1). */
+  epoch: string;
   members: ApiMember[];
   count: number;
   onlineCount: number;
