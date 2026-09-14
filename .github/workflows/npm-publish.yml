@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   test:
@@ -17,6 +16,11 @@ jobs:
     name: Publish to NPM
     runs-on: ubuntu-latest
     needs: [test]
+    # npm Trusted Publishing (OIDC): no NPM_TOKEN. The trusted publisher on npmjs.com is
+    # mkXultra/agent-communication-mcp, workflow npm-publish.yml. Needs id-token: write and npm >= 11.5.
+    permissions:
+      contents: read
+      id-token: write
     
     steps:
     - uses: actions/checkout@v4
@@ -26,9 +30,12 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: '22'
         cache: 'npm'
         registry-url: 'https://registry.npmjs.org'
+
+    - name: Update npm (Trusted Publishing needs npm >= 11.5)
+      run: npm install -g npm@latest && npm --version
     
     - name: Install dependencies
       run: npm ci
@@ -39,5 +46,3 @@ jobs:
     - name: Publish to npm
       if: ${{ !github.event.release.prerelease }}
       run: npm publish
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
