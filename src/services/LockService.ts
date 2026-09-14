@@ -9,11 +9,19 @@ export class LockTimeoutError extends AppError {
   }
 }
 
+/**
+ * Callers of this process waiting for or holding a lock, per lock file, whichever LockService instance they use. The
+ * entry settles once every caller queued so far is done. Callers of one process take the lock file one after another,
+ * so they never race each other for it; the lock file keeps other processes out.
+ */
+const lockQueues = new Map<string, Promise<void>>();
+
 export class LockService {
   private static readonly DEFAULT_TIMEOUT = 5000; // 5 seconds
   private static readonly RETRY_INTERVAL = 50; // 50ms
-  
-  private activeLocks = new Map<string, Promise<void>>();
+  /** A lock file without a PID is being created (see isLockStale); it is stale only once it is older than this. */
+  private static readonly EMPTY_LOCK_STALE_AFTER = 10000; // 10 seconds
+  private static readonly MAX_TIMER_DELAY = 2 ** 31 - 1;
   
   constructor(
     private readonly dataDir: string = getDataDirectory(),
@@ -25,44 +33,68 @@ export class LockService {
    */
   async withLock<T>(relativePath: string, operation: () => Promise<T>): Promise<T> {
     const lockKey = this.normalizePath(relativePath);
+    const deadline = Date.now() + this.lockTimeout;
     
-    // Wait for any existing lock on this file
-    if (this.activeLocks.has(lockKey)) {
-      await this.activeLocks.get(lockKey);
-    }
-    
-    // Create new lock
-    let resolveLock: () => void;
-    const lockPromise = new Promise<void>((resolve) => {
-      resolveLock = resolve;
+    // Queue behind the callers of this process that came first
+    const previous = lockQueues.get(lockKey);
+    let leaveQueue!: () => void;
+    const left = new Promise<void>((resolve) => {
+      leaveQueue = resolve;
+    });
+    const queue = previous ? previous.then(() => left) : left;
+    lockQueues.set(lockKey, queue);
+    void queue.then(() => {
+      if (lockQueues.get(lockKey) === queue) {
+        lockQueues.delete(lockKey);
+      }
     });
     
-    this.activeLocks.set(lockKey, lockPromise);
-    
+    let acquired = false;
     try {
+      if (previous && !(await this.waitUntil(previous, deadline))) {
+        throw new LockTimeoutError(lockKey, this.lockTimeout);
+      }
+      
       // Acquire file system lock
-      await this.acquireFileLock(lockKey);
+      await this.acquireFileLock(lockKey, deadline);
+      acquired = true;
       
       // Execute the operation
       const result = await operation();
       
       return result;
     } finally {
-      // Release file system lock
-      await this.releaseFileLock(lockKey);
+      // Release file system lock: only one this caller holds (after a timeout, the lock file is someone else's)
+      if (acquired) {
+        await this.releaseFileLock(lockKey);
+      }
       
-      // Remove from active locks
-      this.activeLocks.delete(lockKey);
-      resolveLock!();
+      // Let the next caller of this process go; after a timeout, once the callers before this one are done
+      leaveQueue();
+    }
+  }
+  
+  /**
+   * Wait for a promise until the deadline: true if it settled in time
+   */
+  private async waitUntil(promise: Promise<void>, deadline: number): Promise<boolean> {
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = new Promise<boolean>((resolve) => {
+      // setTimeout fires at once for delays above 2^31 - 1 ms
+      timer = setTimeout(() => resolve(false), Math.min(deadline - Date.now(), LockService.MAX_TIMER_DELAY));
+    });
+    try {
+      return await Promise.race([promise.then(() => true), timedOut]);
+    } finally {
+      clearTimeout(timer);
     }
   }
   
   /**
    * Acquire file system lock using lock file
    */
-  private async acquireFileLock(filePath: string): Promise<void> {
+  private async acquireFileLock(filePath: string, deadline: number): Promise<void> {
     const lockFilePath = `${filePath}.lock`;
-    const startTime = Date.now();
     
     // ロックファイルの親ディレクトリを確保
     const lockFileDir = path.dirname(lockFilePath);
@@ -74,7 +106,7 @@ export class LockService {
       }
     }
     
-    while (Date.now() - startTime < this.lockTimeout) {
+    while (Date.now() < deadline) {
       try {
         // Try to create lock file exclusively
         await fs.writeFile(lockFilePath, process.pid.toString(), { flag: 'wx' });
@@ -129,23 +161,43 @@ export class LockService {
    * Check if lock file is stale (process no longer exists)
    */
   private async isLockStale(lockFilePath: string): Promise<boolean> {
+    let pidString: string;
     try {
-      const pidString = await fs.readFile(lockFilePath, 'utf8');
-      const pid = parseInt(pidString.trim());
-      
-      if (isNaN(pid)) {
-        return true; // Invalid PID format
+      pidString = await fs.readFile(lockFilePath, 'utf8');
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        // Gone since the exclusive create failed: its holder released it. Not stale: someone may hold the lock again
+        // already, and removing the lock file would remove theirs.
+        return false;
       }
-      
-      // Check if process exists
-      try {
-        process.kill(pid, 0); // Signal 0 checks existence without killing
-        return false; // Process exists
-      } catch {
-        return true; // Process doesn't exist
-      }
-    } catch {
       return true; // Can't read lock file
+    }
+    
+    const pid = parseInt(pidString.trim());
+    
+    if (isNaN(pid)) {
+      // fs.writeFile creates the lock file before it writes the PID: without a PID, the holder may still be writing it
+      return this.isOlderThan(lockFilePath, LockService.EMPTY_LOCK_STALE_AFTER);
+    }
+    
+    // Check if process exists
+    try {
+      process.kill(pid, 0); // Signal 0 checks existence without killing
+      return false; // Process exists
+    } catch {
+      return true; // Process doesn't exist
+    }
+  }
+  
+  /**
+   * Whether a file was last modified longer ago than `ageMs` (false if it is gone)
+   */
+  private async isOlderThan(filePath: string, ageMs: number): Promise<boolean> {
+    try {
+      const stats = await fs.stat(filePath);
+      return Date.now() - stats.mtimeMs > ageMs;
+    } catch {
+      return false;
     }
   }
   

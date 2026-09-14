@@ -106,7 +106,8 @@ export default defineConfig({
       },
       {
         // File mode: the atomic JSON writes of src/utils/atomicFile.ts (concurrent readers, and the file attributes,
-        // links and error handling they keep). A project of its own so that `--project file` stays the existing suite.
+        // links and error handling they keep), and the file lock of src/services/LockService.ts with the readers that do
+        // not take it (lock-races.test.ts). A project of its own so that `--project file` stays the existing suite.
         extends: true,
         test: {
           name: 'file-concurrency',

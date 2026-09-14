@@ -30,12 +30,12 @@ export class PresenceStorage implements IPresenceStorage {
         return JSON.parse(data) as PresenceData;
       } catch (error: any) {
         if (error.code === 'ENOENT') {
-          // ファイルが存在しない場合は空のデータを返す
+          // ファイルが存在しない場合は空のデータを返す。ここでは書き込まない: 読み取りはロックの外からも呼ばれ、
+          // その間にロックを取った書き込みがあると空のデータで上書きしてしまう（ファイルは最初の書き込みで作られる）
           const initialData: PresenceData = {
             roomName,
             users: {}
           };
-          await this.writePresence(roomName, initialData);
           return initialData;
         }
         throw error;
