@@ -376,10 +376,10 @@ workers.dev の URL は推測・漏洩しやすく、401 を返すだけのリ�
 
 | モード | 条件 | 保存先 |
 |---|---|---|
-| ファイルモード（既存） | `AGENT_COMM_DATA_DIR` のみ設定 | ローカルファイル |
-| クラウドモード（新） | `AGENT_COMM_API_URL` + `AGENT_COMM_TOKEN` が設定 | Cloudflare |
+| クラウドモード（既定） | `AGENT_COMM_TOKEN` が設定されている | Cloudflare。接続先は `AGENT_COMM_API_URL`（省略時 `https://agora.omajinai.work`） |
+| ファイルモード（互換） | `AGENT_COMM_TOKEN` が無い | ローカルファイル（`AGENT_COMM_DATA_DIR`、省略時 `./data`） |
 
-両方が設定されている場合はクラウドモードを優先する。
+**設定はトークンだけで足りる**ようにする。`AGENT_COMM_TOKEN` があればクラウド、無ければファイルモードで、`AGENT_COMM_API_URL` は既定 URL を上書きしたいとき（ローカルの `wrangler dev` に向けるときなど）だけ指定する。トークンが無くファイルモードで起動したときは、stderr に 1 行その旨を出す（既存ユーザーの互換は保つ）。
 
 ### 5.2 差し替える層
 
