@@ -2,13 +2,16 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.5.1
+  version: 0.6.0
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.6.0: ファイル添付（D13）。`POST /rooms/{room}/attachments`、`GET /rooms/{room}/attachments/{id}`、
+    > `sendMessage` の `attachments`、`Message.attachments`、`RoomStatus.attachmentCount` / `attachmentBytes`。
 
     > 0.5.1: `joinRoom` と `listMembers` の応答に `epoch` を追加（MCP クライアントが既読カーソルを epoch に紐づけるため）。
 
@@ -502,6 +505,14 @@ paths:
                     有効期間は有界（対応メッセージが退避・削除されるまで。D8）
                 metadata:
                   $ref: '#/components/schemas/Metadata'
+                attachments:
+                  type: array
+                  maxItems: 10
+                  items: { type: string, format: uuid }
+                  description: |
+                    `POST /rooms/{roomName}/attachments` で得た添付 ID（D13）。
+                    同じ送信者が同じルームにアップロードし、まだどのメッセージにも
+                    付いていない ID だけを受け付ける。送信と同じ同期処理内で紐づける
       responses:
         '201':
           description: 送信成功
@@ -516,7 +527,9 @@ paths:
         '400':
           description: |
             本文が空（`INVALID_MESSAGE_FORMAT`）、本文が長すぎる（`MESSAGE_TOO_LONG`）、
-            または `metadata` が不正（`INVALID_MESSAGE_FORMAT`）
+            `metadata` が不正（`INVALID_MESSAGE_FORMAT`）、または `attachments` が不正
+            （`ATTACHMENT_NOT_FOUND`: 存在しない・別の送信者・別ルーム・既に添付済み。
+            `VALIDATION_ERROR`: 件数超過）
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -630,7 +643,7 @@ paths:
       operationId: clearRoomMessages
       summary: ルームのメッセージを全削除
       description: |
-        ルーム内のメッセージをすべて削除する（D2）。メンバーは残る。
+        ルーム内のメッセージをすべて削除する（D2）。メンバーは残る。添付ファイルも R2 から削除する（D13）。
 
         各メンバーの `last_read_seq` は **削除直前の最大 seq** に設定する。0 にすると
         次の読み取りで必ず `since` &lt; `evictedUpToSeq` となり `truncated` が誤発火するため。
@@ -664,6 +677,137 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/RoomNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /rooms/{roomName}/attachments:
+    post:
+      tags: [messages]
+      operationId: uploadAttachment
+      summary: 添付ファイルのアップロード（D13）
+      description: |
+        ファイル本体を raw body で送る（multipart ではない）。Worker が在室を確認し、
+        R2 へストリーム書き込みしたうえで Room DO に未添付の行を作り、`attachmentId` を返す。
+        返った ID を `POST /rooms/{roomName}/messages` の `attachments` に渡して初めてメッセージに紐づく。
+
+        未添付のまま `ATTACHMENT_ORPHAN_TTL_SECONDS`（§9、既定 1 時間）を過ぎた添付は自動削除される。
+
+        - `Content-Type`: ファイルの MIME タイプ（省略時 `application/octet-stream`、最大 255 バイト）。申告値をそのまま保存する
+        - `X-File-Name`: ファイル名（UTF-8 を percent-encoding。最大 255 文字。`/` `\` `.` `..` と制御文字は不可）
+        - `Content-Length`: 必須。`MAX_ATTACHMENT_BYTES` を超えていれば本文を読まずに 413
+        - 本文サイズはストリーム中にも検査し、超過時は書き込みを中断して 413
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+        - name: agentName
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/AgentName' }
+          description: アップロードするエージェント（在室メンバーであること）
+        - name: X-File-Name
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 1024 }
+          description: percent-encoding した UTF-8 のファイル名（デコード後 1〜255 文字）
+        - name: Content-Type
+          in: header
+          required: false
+          schema: { type: string, maxLength: 255 }
+          description: 申告値をそのまま保存する。255 バイト超は 400 `VALIDATION_ERROR`
+        - name: Content-Length
+          in: header
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+          '*/*':
+            schema: { type: string, format: binary }
+      responses:
+        '201':
+          description: アップロード成功（まだメッセージには紐づいていない）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attachmentId, name, size, contentType, uploader, createdAt, expiresAt]
+                properties:
+                  attachmentId: { type: string, format: uuid }
+                  name: { type: string }
+                  size: { type: integer }
+                  contentType: { type: string }
+                  uploader: { type: string }
+                  createdAt: { type: string, format: date-time }
+                  expiresAt:
+                    type: string
+                    format: date-time
+                    description: この時刻までにメッセージに添付されなければ削除される
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotInRoom' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '411':
+          description: '`Content-Length` が無い（`VALIDATION_ERROR`）'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: '1 ファイルの上限超過（`PAYLOAD_TOO_LARGE`、`details.scope = ''attachment''`）'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: |
+            ルームの添付合計（バイト数または件数）の上限超過（`ATTACHMENT_CAPACITY_EXCEEDED`、
+            リトライしても解消しない）またはレート制限（`RATE_LIMITED`）
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: '`RATE_LIMITED` の場合のみ'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /rooms/{roomName}/attachments/{attachmentId}:
+    get:
+      tags: [messages]
+      operationId: downloadAttachment
+      summary: 添付ファイルのダウンロード（D13）
+      description: |
+        認証済みであれば同じユーザー（トークン）の誰でも取得できる。在室は要求しない
+        （`GET /messages` と同じ）。R2 からストリームで返す。
+
+        応答ヘッダ: `Content-Type`（保存した申告値。ただし `text/html` 等のブラウザが実行しうる型は
+        `application/octet-stream` に落とす）、`Content-Length`、
+        `Content-Disposition: attachment; filename*=UTF-8''<name>`、`X-Content-Type-Options: nosniff`。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+        - name: attachmentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ファイル本体
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+          content:
+            '*/*':
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: ルームが存在しない（`ROOM_NOT_FOUND`）または添付が存在しない（`ATTACHMENT_NOT_FOUND`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/Unavailable' }
@@ -1005,6 +1149,19 @@ components:
           type: array
           items: { type: string }
         metadata: { $ref: '#/components/schemas/Metadata' }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/AttachmentInfo' }
+          description: 添付ファイル（D13）。無ければ省略または空配列
+
+    AttachmentInfo:
+      type: object
+      required: [id, name, size, contentType]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        size: { type: integer }
+        contentType: { type: string }
 
     SendMessageResult:
       type: object
@@ -1088,6 +1245,12 @@ components:
           type: integer
           description: 待機中の数（D3）
         storageBytes: { type: integer }
+        attachmentCount:
+          type: integer
+          description: 現存する添付ファイル数（D13）
+        attachmentBytes:
+          type: integer
+          description: 現存する添付ファイルの総バイト数（R2 側）
         oldestSeq: { type: integer }
         latestSeq: { type: integer }
         lastActivityAt: { type: string, format: date-time }
@@ -1281,6 +1444,8 @@ components:
             - ROOM_ALREADY_EXISTS
             - ROOM_CAPACITY_EXCEEDED
             - MEMBER_CAPACITY_EXCEEDED
+            - ATTACHMENT_CAPACITY_EXCEEDED
+            - ATTACHMENT_NOT_FOUND
             - DELETE_CONFLICT
             - TOKEN_NOT_FOUND
             - AGENT_NOT_IN_ROOM

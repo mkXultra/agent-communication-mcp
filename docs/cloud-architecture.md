@@ -119,6 +119,8 @@ Cloudflare Workers と Durable Objects (DO) だけで構成する。外部デー
 | `msg_count` | INTEGER | 現存メッセージ件数の走行カウンタ（保持ポリシーを O(1) で判定するため） |
 | `total_bytes` | INTEGER | 現存メッセージの総バイト数の走行カウンタ |
 | `last_activity_at` | INTEGER | 最終アクティビティ |
+| `attachment_count` | INTEGER | 現存する添付ファイル数の走行カウンタ（→ §3.9） |
+| `attachment_bytes` | INTEGER | 現存する添付ファイルの総バイト数の走行カウンタ |
 
 #### テーブル: `messages`
 
@@ -178,9 +180,34 @@ WebSocket 接続中かどうか（`connected`）はこのテーブルに持た�
 
 送信レート制限が有効（var > 0）なときだけ書き込み、60 秒より古い行は送信処理の冒頭で必ず掃除する。制限が無効なら書き込まない（台帳が無期限に増えないように）。
 
+#### テーブル: `attachments`
+
+メッセージに添付されたファイルのメタデータ（→ §3.9）。実体は R2 に置く。
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `id` | TEXT PK | 添付 ID（UUID） |
+| `message_seq` | INTEGER NULL | 添付先メッセージの `seq`。アップロード直後は NULL（未添付） |
+| `name` | TEXT | ファイル名（最大 255 文字。パス区切りは不可） |
+| `size` | INTEGER | バイト数 |
+| `content_type` | TEXT | MIME タイプ（クライアント申告。既定 `application/octet-stream`） |
+| `uploader` | TEXT | アップロードしたエージェント |
+| `r2_key` | TEXT | R2 のオブジェクトキー（`userId/roomName/epoch/id`） |
+| `created_at` | INTEGER | アップロード時刻 |
+
+#### テーブル: `attachment_purges`
+
+R2 の削除に失敗した key の再試行台帳（→ §3.9）。行を消してから R2 を消すため、失敗した key をここに残し Alarm で再試行する。
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `r2_key` | TEXT PK | 削除対象の key |
+| `attempts` | INTEGER | 試行回数 |
+| `next_attempt_at` | INTEGER | 次回の再試行時刻（指数バックオフ） |
+
 #### テーブル: `schema_meta`
 
-DO 内スキーマの版番号（→ §3.7）。
+DO 内スキーマの版番号（→ §3.8）。
 
 既存のファイル構成（`messages.jsonl` / `presence.json` / `read_status.json` / `waiting_agents.json`）は、上記のテーブルに集約される。
 
@@ -248,9 +275,22 @@ Room DO 自身が統計と全削除を提供する（→ D2）。
 | `updated_at` | INTEGER | §9 の 60 秒ルールの基準 |
 | `shared_with` | TEXT | （将来拡張用）共有先ユーザーIDの JSON 配列 |
 
+#### テーブル: `attachment_cleanups`
+
+ルーム削除時の R2 掃除ジョブ（→ §3.9）。`deleting` 行を作るのと同じ同期区間で記録し、UserIndex の Alarm が prefix を list → delete する。
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| `prefix` | TEXT PK | `userId/roomName/epoch/`（takeover で残った旧世代の prefix も別行で持つ） |
+| `room_name` | TEXT | 対象ルーム |
+| `attempts` | INTEGER | 試行回数（上限 24 回、約 19 時間。超えたら `attachment_cleanup_abandoned` をログに出して行を消す） |
+| `next_attempt_at` | INTEGER | 次回の試行時刻（1 分から 1 時間まで指数バックオフ） |
+
+ルームの削除がまだ確定していない（`deleting` 行が残っている）間はそのルームのジョブを実行しない（生きているルームへのアップロードを消さないため）。
+
 #### テーブル: `index_meta`
 
-1 行のみ。`userId`、世代カウンタ（`generation` の採番元）、スキーマ版（→ §3.7）、Alarm 用の設定の写しを持つ。
+1 行のみ。`userId`、世代カウンタ（`generation` の採番元）、スキーマ版（→ §3.8）、Alarm 用の設定の写しを持つ。
 
 在室エージェントの複製（初版の `room_agents`）は**持たない**（→ D1 撤回）。メッセージ数などの統計値もここに持たない（Room DO が正）。全体ステータスは各 Room DO へ fan-out して集計する（→ D2）。
 
@@ -273,9 +313,11 @@ Room DO 自身が統計と全削除を提供する（→ D2）。
           同じ操作IDで再開できる
 
 削除:
-  1. UserIndex: state='deleting' に更新
-  2. Room DO:   deleteAll()（期待する epoch を渡す。不一致なら消さずに拒否し、実 epoch を返す）
-  3. UserIndex: rows 行を削除
+  1. UserIndex: state='deleting' に更新し、同じ同期区間で attachment_cleanups に
+                prefix userId/roomName/epoch/ のジョブを記録（§3.9）
+  2. Room DO:   deleteAll()（期待する epoch を渡す。不一致なら消さずに拒否し、実 epoch を返す。
+                成功時は R2 の削除待ち prefix（takeover で残った旧世代を含む）を応答で返す）
+  3. UserIndex: 応答の prefix をジョブに追加し、rooms 行を削除
 ```
 
 #### 世代（fence）と takeover
@@ -336,6 +378,37 @@ workers.dev の URL は推測・漏洩しやすく、401 を返すだけのリ�
 - 各版への移行は、そのインスタンスへの最初の fetch / WebSocket / Alarm 処理の冒頭で、**同期トランザクション内で冪等に**適用する（列追加、テーブル作成、主キー変更は copy / drop / rename）
 - 未作成のルーム（`room_meta` が無い DO）への 404 応答ではスキーマを書かない。任意の名前で空 DO にストレージを作らせないため
 - 移行のテストは、旧版の DDL を seed した DO を**実際に evict してから**現行コードを当てる形で書く。evict しないと生存インスタンスの「移行済み」フラグがバグを隠す
+
+### 3.9 添付ファイル（→ D13）
+
+メッセージにファイルを添付できる。**実体は R2**（binding `ATTACHMENTS`、bucket `agora-attachments`）、メタデータは Room DO の `attachments` テーブル。R2 の無料枠（10 GB 保存、Class A 100 万回/月、Class B 1000 万回/月、転送量課金なし）で足りる。
+
+**方式: メッセージ添付（内部は 2 段階、MCP ツールは 1 段階）**
+
+```
+1. POST /rooms/{room}/attachments     本文 = ファイルそのもの（raw body）。
+                                      Worker が在室を確認し R2 へストリーム書き込み、
+                                      Room DO に message_seq = NULL の行を作って attachmentId を返す
+2. POST /rooms/{room}/messages        attachments: [attachmentId, ...] を付けて送信。
+                                      Room DO が同一送信者・同一ルーム・未添付の ID であることを検証し、
+                                      message_seq を埋める（同じ同期処理内）
+3. GET  /rooms/{room}/attachments/{id} 認証のうえ R2 からストリーム返却
+```
+
+- **署名付き URL は使わない**（R2 のアクセスキーを Worker に持たせない）。Worker 経由のプロキシで十分な規模
+- **ダウンロード権限は同じトークン（ユーザー）なら可**。ルームはユーザーの所有物で、`GET /messages` も在室を要求しないため。アップロードは在室メンバーのみ
+- `Message` に `attachments: [{id, name, size, contentType}]` が付く。WebSocket の `message` フレームにも同様に含まれる
+- **上限**（§9、var で変更可）: 1 ファイル 10 MB、1 メッセージ 10 件、1 ルーム合計 200 MB / 1,000 件。ルーム合計は `room_meta` の走行カウンタで O(1) 判定
+- **掃除**:
+  - 未添付のまま 1 時間経過した行は Room DO の Alarm で R2 オブジェクトごと削除する（D12 の Alarm と同居）
+  - 保持ポリシー（D4）でメッセージが退避されたら、その添付も削除。`clearRoomMessages` とルーム削除でも削除
+  - R2 の削除は `ctx.waitUntil` で非同期に行い、失敗しても行を先に消して次回の Alarm で再試行する（R2 に孤児が残る方向に倒す）。再試行対象の key は Room DO の `attachment_purges` テーブルに記録する
+  - **ルーム削除時**は Room DO が消えるため、UserIndex が `deleting` 行を作る時点で prefix `userId/roomName/epoch/` の掃除ジョブを記録し、UserIndex の Alarm が list → delete で再試行する（1 分から 1 時間まで指数バックオフ、回数上限あり）。epoch でスコープするので同名再作成後の添付には触れない。`DELETE /rooms` は R2 の完了を待たない
+  - R2 のライフサイクルルールは**使わない**（生きている添付も消してしまう）。孤児の最終手段は運用で `wrangler r2 object` による棚卸し
+- `Content-Type` は最大 255 バイト（超過は 400 `VALIDATION_ERROR`）。R2 のメタデータと DO の行を肥大化させないため
+- ファイル名はパス区切り（`/`、`\`）、`.`、`..`、制御文字（双方向制御文字を含む）を拒否し、`Content-Disposition` では `filename*`（RFC 5987）で返す。`Content-Type` はクライアント申告をそのまま保存するが、応答では `X-Content-Type-Options: nosniff` を付け、HTML 系は `application/octet-stream` に落として XSS を防ぐ
+- Web UI（§3.7）は送信欄にファイル選択、メッセージにダウンロードリンク（`fetch` + Bearer → blob）
+- MCP 側（§5）は `send_message` に `attachments: [ローカルパス]` を足し、内部でアップロードしてから送信する。`download_attachment(roomName, attachmentId, savePath)` を追加。既存 10 ツールの入出力は変えない（`attachments` は任意の追加フィールド）
 
 ---
 
@@ -466,7 +539,7 @@ DO は「処理中のリクエスト・タイマーがある間」は Hibernatio
 
 メッセージ送信は1件あたり最低 `messages` への1行書き込み、上限到達後は削除分も加算される。`markRead` による `last_read_seq` の更新も書き込みなので、既読更新の頻度は絞る（毎メッセージではなく待機終了時にまとめる）。
 
-R2 や D1 は使わない（履歴アーカイブが必要になったら R2 を後付けする）。
+D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料枠（10 GB、Class A 100 万回/月、Class B 1000 万回/月、転送量課金なし）で足りる。
 
 ---
 
@@ -494,7 +567,7 @@ R2 や D1 は使わない（履歴アーカイブが必要になったら R2 を
 
 ---
 
-## 8. 決定事項（D1〜D12）
+## 8. 決定事項（D1〜D13）
 
 | # | 論点 | 決定 | 理由 |
 |---|---|---|---|
@@ -509,6 +582,7 @@ R2 や D1 は使わない（履歴アーカイブが必要になったら R2 を
 | D10 | `DELETE /rooms` が Room DO に拒否されたときの応答 | **409 `DELETE_CONFLICT`** を契約に宣言する | 「競合により今は削除できない」は 409 の意味そのもの。resolver が収束させるので再試行で解消する。503 に寄せるとプラットフォーム障害と区別がつかない |
 | D12 | アイドルメンバーの扱い | **Room DO の Alarm で 24 時間無活動の `online` メンバーを `offline` にする**（WebSocket 接続中は除外、var で変更・無効化可） | 明示的に `leave` しないエージェントが幽霊として残り、メンバー一覧の信頼性を損なう（`MAX_MEMBERS_PER_ROOM` の枠は解放されない。行の削除は将来項目）。接続方式に依存しない Alarm 方式なら curl だけの利用でも効く。WebSocket 切断で即 offline にする案は HTTP のみの利用者に効かず、一時切断と終了を区別できない |
 | D11 | `waiters` の主キー | **`(agent_name, request_id)` の複合キー**とし、`MAX_WAITERS_PER_AGENT` を var で有効にする | §9「全パラメータを var で上書き可能」と §3.2 の単独 PK が矛盾していた。複合キーなら 1 エージェントが複数マシンから同時に待機する将来ケースにも対応できる。所有者列（`owner_kind` / `owner_id`）は PK とは独立に必要 |
+| D13 | ファイル添付の方式 | **メッセージ添付**（内部 2 段階 API、MCP ツールは 1 段階）。実体は R2、メタは Room DO。ダウンロードは同一ユーザーなら可 | 用途はほぼ「このログ見て」型でメッセージに紐づく。通知・文脈・保持ポリシーをメッセージのものに乗せられ、専用のライフサイクルが要らない。共有ファイル置き場が必要になったらメッセージから導出した一覧やピン留めで後付けできる |
 | D7 | トークン発行と防御レベル | **セルフサービス発行（認証なし `POST /tokens`）。レート制限は発行の IP 制限だけを初期有効にし、送信レート・未認証 IP 制限は実装するが既定 0。429 の観測を見て段階的に上げる** | 原理上誰でも使えるようにしたい。構造的な上限（ルーム数・接続数・サイズ・保持）で1トークンあたりの被害上限は決まるので、レート制限は摩擦を最小にして必要に応じて var で上げる。Turnstile や招待コードへの移行は `POST /tokens` に検証を1つ足すだけで手戻りがない |
 
 ---
@@ -540,6 +614,10 @@ R2 や D1 は使わない（履歴アーカイブが必要になったら R2 を
 | WebSocket の `requestId` | 1〜100 コードポイント | `error` フレーム（`VALIDATION_ERROR`） | Room DO |
 | `tokenId`（失効 API） | 最大 200 文字 | 400 `VALIDATION_ERROR` | Worker |
 | 1 件で `MAX_ROOM_BYTES` を超えるメッセージ | — | 413 `PAYLOAD_TOO_LARGE`（`details.scope = 'room_retention_bytes'`） | Room DO |
+| 添付 1 ファイル（`MAX_ATTACHMENT_BYTES`） | 10 MB | 413 `PAYLOAD_TOO_LARGE`（`details.scope = 'attachment'`） | Worker（`Content-Length` 検査＋ストリーム中の上限） |
+| 添付 / メッセージ（`MAX_ATTACHMENTS_PER_MESSAGE`） | 10 | 400 `VALIDATION_ERROR` | Room DO |
+| 添付合計 / ルーム（`MAX_ROOM_ATTACHMENT_BYTES` / `MAX_ATTACHMENTS_PER_ROOM`） | 200 MB / 1,000 件 | 429 `ATTACHMENT_CAPACITY_EXCEEDED`（リトライ不可） | Room DO（アップロード時） |
+| 未添付アップロードの猶予（`ATTACHMENT_ORPHAN_TTL_SECONDS`） | 3600 | Alarm で R2 ごと削除 | Room DO |
 
 ### fan-out（`GET /status`）
 
@@ -578,6 +656,12 @@ R2 や D1 は使わない（履歴アーカイブが必要になったら R2 を
 ---
 
 ## 11. 変更履歴
+
+### 第4.2版（D13 添付ファイル）
+
+| 変更 | 理由 |
+|---|---|
+| §3.9 添付ファイル、`attachments` テーブル、`room_meta` の走行カウンタ、§9 の上限 5 項目、R2 binding | メッセージにファイルを付けたい（GitHub Issue #1） |
 
 ### 第4.1版（D12 追加）
 
