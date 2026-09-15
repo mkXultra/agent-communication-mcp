@@ -46,6 +46,7 @@ export const listRoomsOutputSchema = z.object({
     createdAt: z.string(),
     messageCount: z.number(),
     userCount: z.number(),
+    lastMessageAt: z.string().optional(), // クラウドモードのみ
   })),
   total: z.number(),
 });

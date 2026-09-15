@@ -27,6 +27,7 @@ export interface MCPRoomTools {
         createdAt: string;
         messageCount: number;
         userCount: number;
+        lastMessageAt?: string; // クラウドモードのみ（API が null を返すルームでは省略）
       }>;
       total: number;
     };

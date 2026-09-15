@@ -39,6 +39,8 @@ export class CloudRoomsService {
           // §5.2: the counts only exist on RoomStatus; list_rooms returns 0.
           messageCount: 0,
           userCount: 0,
+          // §5.2 (D16): the last post time the API copied into the room list; left out while the API returns null.
+          ...(room.lastMessageAt ? { lastMessageAt: room.lastMessageAt } : {}),
         }),
       )
       .sort((a, b) => a.name.localeCompare(b.name));

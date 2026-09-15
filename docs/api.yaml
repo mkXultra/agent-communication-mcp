@@ -2,13 +2,15 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.6.3
+  version: 0.6.4
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.6.4: `Room.lastMessageAt`（一覧の最終投稿時刻、D16）と `RoomStatus.lastMessageAt`。
 
     > 0.6.3: `sendMessage` の `message` の `maxLength` を 10000（コードポイント数）、`getMessages` の `limit` の既定を 20、リクエストボディの上限（§9）を 128 KB に変更。
 
@@ -141,6 +143,7 @@ paths:
         UserIndex DO の `rooms` テーブルを読むだけで完結する。
 
         メッセージ数・メンバー数は返さない。必要なら `/status` を使う（D1 / D2）。
+        `lastMessageAt` は Room DO が間引いて書き戻した写しで、一覧のたびに Room DO へ fan-out しない（D16）。
 
         初版にあった `agentName` フィルタは廃止した。既存の `list_rooms` MCP ツールは
         引数を受け付けないため、対応する機能が存在しない（D1）。
@@ -1133,6 +1136,13 @@ components:
           description: |
             ルーム作成ごとの乱数。変化していたら seq が振り直されている。
             UserIndex が Room DO から写した値を返す（一覧のたびに fan-out しない）
+        lastMessageAt:
+          type: [string, 'null']
+          format: date-time
+          description: |
+            最終投稿時刻。Room DO から最大 60 秒遅れで反映（D16）。
+            null はまだ投稿がない、または 0.6.4 より前に作られてから一度もアクセスされていないルーム。
+            後退しないので `clearRoomMessages` では null に戻らない（作り直すと null）
 
     Member:
       type: object
@@ -1278,6 +1288,10 @@ components:
         oldestSeq: { type: integer }
         latestSeq: { type: integer }
         lastActivityAt: { type: string, format: date-time }
+        lastMessageAt:
+          type: [string, 'null']
+          format: date-time
+          description: 最新メッセージの投稿時刻（D16）。未投稿・`clearRoomMessages` の後は null（保持ポリシーの削除では変わらない）
         retention:
           type: object
           description: 保持ポリシー（D4）

@@ -13,6 +13,11 @@ export interface ApiRoom {
   description?: string;
   createdAt: string;
   epoch: string;
+  /**
+   * Last post time written back by the Room DO, up to a minute late (api 0.6.4, D16). null when the room has no post yet,
+   * or was created before api 0.6.4 and has not been accessed since.
+   */
+  lastMessageAt?: string | null;
 }
 
 export interface ApiRoomList {

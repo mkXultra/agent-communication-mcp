@@ -121,6 +121,10 @@ Cloudflare Workers と Durable Objects (DO) だけで構成する。外部デー
 | `last_activity_at` | INTEGER | 最終アクティビティ |
 | `attachment_count` | INTEGER | 現存する添付ファイル数の走行カウンタ（→ §3.9） |
 | `attachment_bytes` | INTEGER | 現存する添付ファイルの総バイト数の走行カウンタ |
+| `last_message_at` | INTEGER NULL | 最新メッセージの投稿時刻（→ D16）。未投稿・clear の後は NULL。保持ポリシーの退避では変えない |
+| `user_id` | TEXT NULL | 書き戻し先の UserIndex。ルームへの要求に載る userId を DO id（`userId/roomName`）と照合して 1 度だけ保存する |
+| `index_message_at` | INTEGER NULL | UserIndex が受け取った（`applied: true`）`last_message_at`。これより新しい投稿は一覧に未反映 |
+| `index_push_at` / `index_push_attempts` | INTEGER | 直近の書き戻しを始めた時刻（間引きと期限の基準）と、受け取りを確かめていない書き戻しの回数（やり直しの間隔を延ばすのに使う。投稿と受け取りで 0 に戻す） |
 
 #### テーブル: `messages`
 
@@ -235,8 +239,8 @@ DO 内スキーマの版番号（→ §3.8）。
 
 Room DO 自身が統計と全削除を提供する（→ D2）。
 
-- 統計: メッセージ件数、メンバー数、接続数、ストレージサイズ、最終アクティビティ時刻。いずれも DO 内の SQLite クエリで完結する
-- 全削除: `messages` を空にする。`members` は残し、各メンバーの `last_read_seq` は**現在の最大 seq** に設定する（0 にすると次回読み取りで `truncated` が誤発火するため）。`gap_up_to_seq` は進めるが、保持ポリシーの統計（`evicted_*`）には加算しない。`rate_events` には触れない
+- 統計: メッセージ件数、メンバー数、接続数、ストレージサイズ、最終アクティビティ時刻、最終投稿時刻。いずれも DO 内の SQLite クエリで完結する
+- 全削除: `messages` を空にする。`members` は残し、各メンバーの `last_read_seq` は**現在の最大 seq** に設定する（0 にすると次回読み取りで `truncated` が誤発火するため）。`gap_up_to_seq` は進めるが、保持ポリシーの統計（`evicted_*`）には加算しない。`rate_events` には触れない。`last_message_at` は NULL にする（一覧の値は後退させないので戻らない。→ §3.3）
 
 #### アイドルメンバーの自動退室
 
@@ -273,6 +277,7 @@ Room DO 自身が統計と全削除を提供する（→ D2）。
 | `reservation_id` | TEXT | 予約の ID。Room DO の `room_meta.reservation_id` と照合する |
 | `operation_id` | TEXT | §3.4 の操作IDによる冪等化 |
 | `updated_at` | INTEGER | §9 の 60 秒ルールの基準 |
+| `last_message_at` | INTEGER NULL | 最終投稿時刻の写し（→ D16）。Room DO が間引いて書き戻す。後退させず、作成・作り直しで NULL から始める |
 | `shared_with` | TEXT | （将来拡張用）共有先ユーザーIDの JSON 配列 |
 
 #### テーブル: `attachment_cleanups`
@@ -292,7 +297,18 @@ Room DO 自身が統計と全削除を提供する（→ D2）。
 
 1 行のみ。`userId`、世代カウンタ（`generation` の採番元）、スキーマ版（→ §3.8）、Alarm 用の設定の写しを持つ。
 
-在室エージェントの複製（初版の `room_agents`）は**持たない**（→ D1 撤回）。メッセージ数などの統計値もここに持たない（Room DO が正）。全体ステータスは各 Room DO へ fan-out して集計する（→ D2）。
+在室エージェントの複製（初版の `room_agents`）は**持たない**（→ D1 撤回）。メッセージ数などの統計値もここに持たない（Room DO が正）。全体ステータスは各 Room DO へ fan-out して集計する（→ D2）。例外は一覧に出す最終投稿時刻で、Room DO からの書き戻しで持つ（下記）。
+
+#### 最終投稿時刻の書き戻し（→ D16）
+
+`GET /rooms` の `lastMessageAt` のために、Room DO が `room_meta.last_message_at` を UserIndex の `rooms.last_message_at` へ書き戻す。一覧のたびに Room DO へ fan-out しない。
+
+- **間引き**: ルームごとに `ROOM_ACTIVITY_PUSH_INTERVAL_MS`（§9、60 秒）に 1 回まで（基準は前回の書き戻しの開始時刻）。間隔が空いていれば要求の直後に `ctx.waitUntil` で書き戻す（前縁）。間隔の中の投稿は書き戻さず、間隔の終わりに Room DO の Alarm（D12 / D13 と同居）で最新の値を書き戻す（後縁）
+- **期限の Alarm**: 書き戻す値がある間は「前回の開始 + 間隔」（やり直しが続けば延ばした間隔。下記の「失敗」）を Alarm に入れておく。前縁でも UserIndex を呼ぶ前（要求の応答の前）に保存し、書き戻しの途中でも外さない。後縁・やり直し・書き戻しの途中で止まったインスタンスの後始末はこの Alarm が行うので、送信が止まっても最後の投稿の時刻に収束する。受け取られて値が残らなければ、D12 / D13 が要る時刻へ戻す（遅らせるだけ）
+- **受け取り**: `POST /internal/rooms/{room}/activity`（`{lastMessageAt, epoch}`）。UserIndex は `epoch` が一致する `active` の行だけを、値が進むときだけ更新し、その行の値が書き戻した値以上なら `applied: true` を返す。Room DO はこれだけを受け取りとみなす。作成の確定前（`reserving`）・削除中・別の世代は `applied: false` で、値は書き戻す対象のまま残る。作成を確定する UserIndex（step 3・resolver・索引の作り直し）は Room DO の応答（`/internal/create` / `/internal/exists`）の値を写す。epoch を持たない旧い行（`rooms.epoch` の追加より前のルーム）は、書き戻しを受けたときに `/internal/exists` で Room DO の今の epoch を確かめて 1 度だけ写す（書き戻しに載った epoch は写さない）。clear でも一覧の値は戻らない
+- **失敗**: 要求を失敗させない（ログ `room_activity_push_failed`）。受け取りを確かめられない値は、最初の 3 回は間隔ごと、その後は 2, 4, 8 … 分（最大 1 時間。間隔より短くしない）の期限の Alarm で、受け取られるまでやり直す（値は捨てない。新しい投稿で数え直す）。間隔が空いていれば、要求や別の Alarm で起きたときにも再開する
+- **書き戻し先**: Room DO は自分の userId を持たないので、Worker と UserIndex はルームへのすべての要求に userId を載せ、Room DO は DO id と照合してから 1 度だけ保存する。書き戻す値が残っていれば（api 0.6.4 より前のルーム）、その要求の直後に書き戻す
+- **コスト**: UserIndex への書き戻しはルームごとに間隔に 1 回まで。後縁とやり直しは Room DO の Alarm 1 回を伴うので、DO リクエストはルームごと 1 分に最大 2 回（一日中投稿が続くルームで約 2,880 回/日）。行書き込み（課金単位）は書き戻し 1 回あたり、SQL の行 3 行（Room DO の開始と受け取りの記録、UserIndex の `rooms`）に Alarm の書き込み最大 2 回（`setAlarm` / `deleteAlarm` も 1 回 1 行: 期限を張る＋受け取った後に戻す、または後縁・やり直しの張り直し）を足して最大 5 行。UserIndex が止まっている間、要求の無いルームのやり直しは 1 時間ごとまで延びるので、1 日あたり最大約 24 回の Alarm と 24 回の UserIndex への要求（書き込みは各回 SQL 1 行＋Alarm 1 回。要求のあるルームは起きるたびに間隔ごとにやり直す）
 
 ### 3.4 ルーム作成・削除の順序
 
@@ -337,7 +353,7 @@ Room DO 自身が統計と全削除を提供する（→ D2）。
 
 各ステップは操作IDで冪等にし、中断された `reserving` / `deleting` 行は次回アクセス時か Alarm で解決する。
 
-入退室（join / leave）は Room DO の `members` のみを更新する。UserIndex への書き込みは発生しないので、二重書き込みの整合性問題は入退室では起こらない。
+入退室（join / leave）は Room DO の `members` のみを更新する。UserIndex への書き込みは発生しないので、二重書き込みの整合性問題は入退室では起こらない。ルームへの要求から UserIndex に届くのは D16 の最終投稿時刻の書き戻しだけで、epoch 付き・単調なので順序や重複で食い違わない（§3.3）。
 
 ### 3.5 ルームの名前空間
 
@@ -486,6 +502,7 @@ ToolRegistry → Adapters → HTTPクライアント → Cloudflare
 |---|---|---|
 | `list_rooms` の `total` | `count` | 名前の付け替え |
 | `list_rooms` の `messageCount` / `userCount` | `RoomStatus` 側にのみ存在 | ルーム一覧では 0 を返す（既存実装も増分処理が無く常に 0） |
+| `list_rooms` の `lastMessageAt`（クラウドモードのみ） | `Room.lastMessageAt` | null なら省略。ファイルモードは出さない |
 | `list_room_users` の `users[].name` / `status` | `members[].agentName` / `status` | 名前の付け替え |
 | `wait_for_messages` の `hasNewMessages` | `messages.length > 0` | 導出 |
 | `wait_for_messages` の `timeout`（最大300秒） | `wait`（最大30秒） | 分割して複数回待機する |
@@ -547,7 +564,7 @@ DO は「処理中のリクエスト・タイマーがある間」は Hibernatio
 
 ### 行書き込みの見積もり
 
-メッセージ送信は1件あたり最低 `messages` への1行書き込み、上限到達後は削除分も加算される。`markRead` による `last_read_seq` の更新も書き込みなので、既読更新の頻度は絞る（毎メッセージではなく待機終了時にまとめる）。
+メッセージ送信は1件あたり最低 `messages` への1行書き込み、上限到達後は削除分も加算される。`markRead` による `last_read_seq` の更新も書き込みなので、既読更新の頻度は絞る（毎メッセージではなく待機終了時にまとめる）。D16 の最終投稿時刻の書き戻しは、投稿が続くルームで 1 分あたり、SQL の行書き込み最大 3 行と Alarm の書き込み最大 2 回（どちらも行書き込みとして課金。合わせて最大 5 行、約 7,200 行/日）と、DO リクエスト最大 2 回（UserIndex への書き戻しと Room DO の Alarm）を足す（§3.3）。
 
 D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料枠（10 GB、Class A 100 万回/月、Class B 1000 万回/月、転送量課金なし）で足りる。
 
@@ -577,7 +594,7 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 
 ---
 
-## 8. 決定事項（D1〜D15）
+## 8. 決定事項（D1〜D16）
 
 | # | 論点 | 決定 | 理由 |
 |---|---|---|---|
@@ -596,6 +613,7 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 | D13 | ファイル添付の方式 | **メッセージ添付**（内部 2 段階 API、MCP ツールは 1 段階）。実体は R2、メタは Room DO。ダウンロードは同一ユーザーなら可 | 用途はほぼ「このログ見て」型でメッセージに紐づく。通知・文脈・保持ポリシーをメッセージのものに乗せられ、専用のライフサイクルが要らない。共有ファイル置き場が必要になったらメッセージから導出した一覧やピン留めで後付けできる |
 | D7 | トークン発行と防御レベル | **セルフサービス発行（認証なし `POST /tokens`）。レート制限は発行の IP 制限だけを初期有効にし、送信レート・未認証 IP 制限は実装するが既定 0。429 の観測を見て段階的に上げる** | 原理上誰でも使えるようにしたい。構造的な上限（ルーム数・接続数・サイズ・保持）で1トークンあたりの被害上限は決まるので、レート制限は摩擦を最小にして必要に応じて var で上げる。Turnstile や招待コードへの移行は `POST /tokens` に検証を1つ足すだけで手戻りがない |
 | D15 | メッセージサイズの運用ガイダンス | **コードは数値の上限だけを強制する**（本文 10,000 コードポイント、`getMessages` の `limit` の既定 20）。運用ガイダンスはルーム `rules`（ユーザーの名前空間ごとに作る。§3.5）にメッセージとして置き、エージェントは初回入室時に読む | ツール説明・エラーメッセージ・Web UI・API 仕様に書くと、ガイダンスを変えるたびにリリースが要る。ルームのメッセージならリリースなしで変えられる（数値は 2026-09-15 の調査による） |
+| D16 | ルーム一覧の最終投稿時刻 | **一覧に `lastMessageAt`。Room DO が 60 秒間引きで UserIndex に書き戻す**（§3.3） | 一覧のたびに fan-out しない方針（D1 / D2）は維持。Free tier のコスト: UserIndex への書き戻しはルームごと 1 分に 1 回まで。後縁・やり直しの Room DO の Alarm を含めて DO リクエストは 1 分に最大 2 回（一日中投稿が続くルームで約 2,880 回/日）、行書き込みは書き戻し 1 回で最大 5 行（SQL 3 行＋Alarm の書き込み 2 回）。UserIndex が止まっている間、要求の無いルームのやり直しは 1 時間ごとまで延ばす |
 
 ---
 
@@ -638,6 +656,7 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 | `ATTACHMENTS_ENABLED` | `true` | `false` で 503 `ATTACHMENTS_DISABLED`（ダウンロード・削除は可） | Worker |
 | 添付総量のアラート（`ATTACHMENT_ALERT_BYTES` / `ATTACHMENT_ALERT_STEP_BYTES`） | 5 GB / 1 GB | `ALERT_WEBHOOK_URL`（secret）へ POST、`ALERT_EMAIL_TO`（検証済み宛先）へメール、構造化ログ。0 で無効 | Quota DO |
 | `QUOTA_STATUS_VISIBILITY` | `global` | `user` で `/status` の `quota` を自分のユーザー総量だけに | Worker |
+| 最終投稿時刻の書き戻し（`ROOM_ACTIVITY_PUSH_INTERVAL_MS`） | 60000（ルームごとに 60 秒に 1 回）。0 で間引かない | 間隔の中の投稿は間隔の終わりに Alarm でまとめて書き戻す（一覧の `lastMessageAt` は最大この時間遅れる。→ D16） | Room DO |
 
 ### fan-out（`GET /status`）
 
@@ -676,6 +695,12 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 ---
 
 ## 11. 変更履歴
+
+### 第4.5版（D16 一覧の最終投稿時刻）
+
+| 変更 | 理由 |
+|---|---|
+| `Room.lastMessageAt` / `RoomStatus.lastMessageAt`（api 0.6.4）、`room_meta` / `rooms` の列、§3.3「最終投稿時刻の書き戻し」、§9 `ROOM_ACTIVITY_PUSH_INTERVAL_MS`（D16） | 一覧でどのルームが動いているか分からない。一覧のたびの fan-out は D1 / D2 に反するので、Room DO から間引いて書き戻す |
 
 ### 第4.4版（D15 メッセージサイズ）
 

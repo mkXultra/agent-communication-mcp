@@ -7,6 +7,8 @@ export interface Room {
   createdAt: string;
   messageCount: number;
   userCount: number;
+  // 最終投稿時刻（クラウドモードのみ。API が null を返すルームでは省略）
+  lastMessageAt?: string;
 }
 
 export interface Message {

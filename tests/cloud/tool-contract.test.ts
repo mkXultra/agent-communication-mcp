@@ -135,18 +135,32 @@ describe('tool outputs in cloud mode', () => {
     ]);
   });
 
-  it('list_rooms returns the file-mode items with zero counts, sorted by name, plus total', async () => {
+  it('list_rooms returns the file-mode items with zero counts, sorted by name, plus total and lastMessageAt', async () => {
     await client.call('create_room', { roomName: 'zeta', description: 'last' });
     await client.call('create_room', { roomName: 'alpha' });
     await client.call('enter_room', { agentName: 'alice', roomName: 'zeta' });
     await client.call('enter_room', { agentName: 'alice', roomName: 'alpha' });
-    await api.sendMessage('zeta', { agentName: 'alice', message: 'x', clientMessageId: 'zeta-1' });
+    const sent = await api.sendMessage('zeta', { agentName: 'alice', message: 'x', clientMessageId: 'zeta-1' });
 
-    const result = await client.call('list_rooms');
+    // agora writes the last post time back to the room list after the send (api 0.6.4, D16): the first message of a
+    // room is copied right away, but not within the send request.
+    let result = await client.call('list_rooms');
+    for (let i = 0; i < 100 && result.rooms[1]?.lastMessageAt === undefined; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      result = await client.call('list_rooms');
+    }
     expect(result.total).toBe(2);
     expect(result.rooms.map((room: { name: string }) => room.name)).toEqual(['alpha', 'zeta']);
+    // A room without messages leaves lastMessageAt out (the API returns null).
     expect(result.rooms[0]).toEqual({ name: 'alpha', createdAt: expect.any(String), messageCount: 0, userCount: 0 });
-    expect(result.rooms[1]).toEqual({ name: 'zeta', description: 'last', createdAt: expect.any(String), messageCount: 0, userCount: 0 });
+    expect(result.rooms[1]).toEqual({
+      name: 'zeta',
+      description: 'last',
+      createdAt: expect.any(String),
+      messageCount: 0,
+      userCount: 0,
+      lastMessageAt: sent.timestamp,
+    });
     expect(Number.isNaN(Date.parse(result.rooms[1].createdAt))).toBe(false);
   });
 
