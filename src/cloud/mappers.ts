@@ -4,7 +4,10 @@
 import type { Message } from '../types/entities.js';
 import type { ApiMessage } from './types.js';
 
-/** The message shape the file mode returns (no `seq` / `clientMessageId`). */
+/**
+ * The message shape the file mode returns (no `seq` / `clientMessageId`), with `attachments` (§3.9) when the message
+ * has any; like the other optional fields, it is left out otherwise.
+ */
 export function toToolMessage(message: ApiMessage): Message {
   return {
     id: message.id,
@@ -14,6 +17,11 @@ export function toToolMessage(message: ApiMessage): Message {
     timestamp: message.timestamp,
     mentions: message.mentions,
     ...(message.metadata !== undefined ? { metadata: message.metadata } : {}),
+    ...(message.attachments && message.attachments.length > 0
+      ? {
+          attachments: message.attachments.map(({ id, name, size, contentType }) => ({ id, name, size, contentType })),
+        }
+      : {}),
   };
 }
 

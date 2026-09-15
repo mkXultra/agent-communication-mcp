@@ -10,6 +10,7 @@ import type {
   ApiAgentProfile,
   ApiClearMessagesResult,
   ApiCreateRoomResult,
+  ApiErrorBody,
   ApiGetMessagesQuery,
   ApiJoinResult,
   ApiLeaveResult,
@@ -19,9 +20,31 @@ import type {
   ApiRoomList,
   ApiSendMessageResult,
   ApiStatus,
+  ApiUploadedAttachment,
 } from './types.js';
 
 type QueryValue = string | number | boolean | undefined;
+
+/** A file sent as the raw body of POST /rooms/{roomName}/attachments. */
+export interface AttachmentUpload {
+  /** The attachment's name, sent percent-encoded as `X-File-Name`. */
+  name: string;
+  contentType: string;
+  /** Sent as `Content-Length`: `body` yields exactly this many bytes. */
+  size: number;
+  body: AsyncIterable<Uint8Array>;
+}
+
+/** The response of GET /rooms/{roomName}/attachments/{attachmentId} while its body is read. */
+export interface AttachmentDownload {
+  /** From `Content-Disposition: attachment; filename*=UTF-8''…`; undefined when the response names no file. */
+  name: string | undefined;
+  contentType: string;
+  /** `Content-Length`, when the response has one. */
+  size: number | undefined;
+  /** The file's bytes; reading fails with CloudTransportError when the response breaks off or stalls. */
+  body: AsyncIterable<Uint8Array>;
+}
 
 export interface CloudRequestOptions {
   query?: Record<string, QueryValue>;
@@ -55,6 +78,76 @@ const MAX_RETRY_AFTER_MS = 5000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 502 / 504 come from the Cloudflare edge; 503 and `retryable` errors from agora itself. */
+function isTransient(status: number, errorBody: ApiErrorBody): boolean {
+  return status === 502 || status === 503 || status === 504 || (status >= 500 && errorBody.retryable === true);
+}
+
+function parseJson<T>(text: string, method: string, path: string): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new AppError(`Cloud API returned invalid JSON for ${method} ${path}`, 'INTERNAL_ERROR', 502);
+  }
+}
+
+/**
+ * A response body as chunks. Each chunk counts as progress; a body that cannot be read, or that ends before
+ * `Content-Length` bytes, is a transport failure. Stopping early cancels the body.
+ */
+async function* readBody(
+  response: Response,
+  expectedLength: number | undefined,
+  progress: () => void,
+  failed: (error: unknown) => Error,
+): AsyncGenerator<Uint8Array> {
+  if (!response.body) return;
+  const reader = response.body.getReader();
+  let received = 0;
+  let done = false;
+  try {
+    for (;;) {
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        done = true;
+        throw failed(error);
+      }
+      if (chunk.done) {
+        done = true;
+        if (expectedLength !== undefined && received !== expectedLength) {
+          throw failed(new Error(`the response ended after ${received} of ${expectedLength} bytes`));
+        }
+        return;
+      }
+      received += chunk.value.byteLength;
+      progress();
+      yield chunk.value;
+    }
+  } finally {
+    if (!done) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+async function readText(body: AsyncIterable<Uint8Array>): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of body) chunks.push(chunk);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/** The file name of `Content-Disposition: attachment; filename*=UTF-8''<percent-encoded>` (RFC 5987 / 6266). */
+function fileNameFromContentDisposition(header: string | null): string | undefined {
+  const encoded = header ? /(?:^|;)\s*filename\*\s*=\s*UTF-8'[^']*'([^;\s]+)/i.exec(header)?.[1] : undefined;
+  if (!encoded) return undefined;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return undefined;
+  }
 }
 
 export class CloudApiClient {
@@ -138,16 +231,104 @@ export class CloudApiClient {
    * messages
    * ------------------------------------------------------------------ */
 
-  /** POST /rooms/{roomName}/messages. `clientMessageId` makes resending safe (D8). */
+  /**
+   * POST /rooms/{roomName}/messages. `clientMessageId` makes resending safe (D8), with attachments too: agora answers
+   * a resend from its record before it looks at the attachments.
+   */
   sendMessage(
     roomName: string,
-    body: { agentName: string; message: string; clientMessageId: string; metadata?: Record<string, unknown> },
+    body: {
+      agentName: string;
+      message: string;
+      clientMessageId: string;
+      metadata?: Record<string, unknown>;
+      attachments?: string[];
+    },
+    options: { signal?: AbortSignal } = {},
   ): Promise<ApiSendMessageResult> {
     return this.request<ApiSendMessageResult>('POST', `${this.roomPath(roomName)}/messages`, {
       body,
       context: { roomName, agentName: body.agentName },
       retry: true,
+      ...(options.signal ? { signal: options.signal } : {}),
     });
+  }
+
+  /* ---------------------------------------------------------------------
+   * attachments (D13)
+   * ------------------------------------------------------------------ */
+
+  /**
+   * POST /rooms/{roomName}/attachments with the file as the raw body, streamed. Never resent: the body can be read only
+   * once, and an upload is not idempotent (one that is never attached is deleted by agora after an hour).
+   */
+  uploadAttachment(
+    roomName: string,
+    agentName: string,
+    upload: AttachmentUpload,
+    options: { signal?: AbortSignal; context?: ApiErrorContext } = {},
+  ): Promise<ApiUploadedAttachment> {
+    const url = this.url(`${this.roomPath(roomName)}/attachments`, { agentName });
+    const headers = {
+      ...this.requestHeaders(),
+      accept: 'application/json',
+      'content-type': upload.contentType,
+      'content-length': String(upload.size),
+      'x-file-name': encodeURIComponent(upload.name),
+    };
+    const context = options.context ?? { roomName, agentName };
+    return this.transfer('POST', url, headers, upload.body, options.signal, async (response, body) => {
+      const text = await readText(body);
+      if (response.ok) return parseJson<ApiUploadedAttachment>(text, 'POST', url.pathname);
+      throw toAppError(response.status, parseApiErrorBody(response.status, text), context);
+    });
+  }
+
+  /**
+   * GET /rooms/{roomName}/attachments/{attachmentId}; `save` reads the body while the download is guarded (it is
+   * abandoned when no bytes arrive for the request timeout). Resent after a transient failure until `save` starts.
+   */
+  async downloadAttachment<T>(
+    roomName: string,
+    attachmentId: string,
+    save: (download: AttachmentDownload) => Promise<T>,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<T> {
+    const url = this.url(`${this.roomPath(roomName)}/attachments/${encodeURIComponent(attachmentId)}`);
+    const headers = { ...this.requestHeaders(), accept: '*/*' };
+    const context = { roomName, attachmentId };
+
+    for (let attempt = 0; ; attempt++) {
+      const canRetry = attempt < this.maxRetries;
+      let saving = false;
+      let retryAfter: string | null = null;
+      try {
+        const saved = await this.transfer('GET', url, headers, undefined, options.signal, async (response, body) => {
+          if (!response.ok) {
+            const text = await readText(body);
+            const errorBody = parseApiErrorBody(response.status, text);
+            if (!canRetry || !isTransient(response.status, errorBody)) throw toAppError(response.status, errorBody, context);
+            retryAfter = response.headers.get('retry-after');
+            return undefined;
+          }
+          saving = true;
+          const length = Number(response.headers.get('content-length') ?? NaN);
+          return {
+            value: await save({
+              name: fileNameFromContentDisposition(response.headers.get('content-disposition')),
+              contentType: response.headers.get('content-type') || 'application/octet-stream',
+              size: Number.isSafeInteger(length) && length >= 0 ? length : undefined,
+              body,
+            }),
+          };
+        });
+        if (saved) return saved.value;
+      } catch (error) {
+        if (!(error instanceof CloudTransportError) || saving || !canRetry || options.signal?.aborted) throw error;
+      }
+      if (options.signal?.aborted) throw new CloudTransportError(`Cloud API request GET ${url.pathname} failed: cancelled`);
+      await sleep(this.backoff(attempt, retryAfter));
+    }
   }
 
   getMessages(
@@ -208,11 +389,16 @@ export class CloudApiClient {
     return `/rooms/${encodeURIComponent(roomName)}`;
   }
 
-  async request<T>(method: string, path: string, options: CloudRequestOptions = {}): Promise<T> {
+  private url(path: string, query: Record<string, QueryValue> = {}): URL {
     const url = new URL(`${this.apiUrl}${path}`);
-    for (const [key, value] of Object.entries(options.query ?? {})) {
+    for (const [key, value] of Object.entries(query)) {
       if (value !== undefined) url.searchParams.set(key, String(value));
     }
+    return url;
+  }
+
+  async request<T>(method: string, path: string, options: CloudRequestOptions = {}): Promise<T> {
+    const url = this.url(path, options.query);
     const headers: Record<string, string> = { ...this.requestHeaders(), accept: 'application/json' };
     let body: string | undefined;
     if (options.body !== undefined) {
@@ -235,21 +421,82 @@ export class CloudApiClient {
 
       if (status >= 200 && status < 300) {
         if (!text) return {} as T;
-        try {
-          return JSON.parse(text) as T;
-        } catch {
-          throw new AppError(`Cloud API returned invalid JSON for ${method} ${path}`, 'INTERNAL_ERROR', 502);
-        }
+        return parseJson<T>(text, method, path);
       }
 
       const errorBody = parseApiErrorBody(status, text);
-      // 502 / 504 come from the Cloudflare edge; 503 and `retryable` errors from agora itself.
-      const transient = status === 502 || status === 503 || status === 504 || (status >= 500 && errorBody.retryable === true);
-      if (transient && canRetry) {
+      if (isTransient(status, errorBody) && canRetry) {
         await sleep(this.backoff(attempt, retryAfter));
         continue;
       }
       throw toAppError(status, errorBody, options.context);
+    }
+  }
+
+  /**
+   * One request whose body or response body may take longer than a request timeout: it is abandoned only when no bytes
+   * move for `requestTimeoutMs`, or when `signal` aborts. `read` gets the response while that guard is in place; the
+   * response body is released when `read` returns. Transport failures, reading the response body included, become
+   * CloudTransportError; errors thrown by the source of the request body and by `read` itself are passed on.
+   */
+  private async transfer<T>(
+    method: string,
+    url: URL,
+    headers: Record<string, string>,
+    body: AsyncIterable<Uint8Array> | undefined,
+    signal: AbortSignal | undefined,
+    read: (response: Response, body: AsyncIterable<Uint8Array>) => Promise<T>,
+  ): Promise<T> {
+    const idleTimeoutMs = this.requestTimeoutMs;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), idleTimeoutMs);
+    const progress = (): void => void timer.refresh();
+    const cancel = (): void => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener('abort', cancel, { once: true });
+
+    const failed = (error: unknown): CloudTransportError => {
+      const reason = signal?.aborted
+        ? 'cancelled'
+        : controller.signal.aborted
+          ? `no data for ${idleTimeoutMs}ms`
+          : error instanceof Error
+            ? (error.cause instanceof Error ? error.cause.message : error.message)
+            : String(error);
+      return new CloudTransportError(`Cloud API request ${method} ${url.pathname} failed: ${reason}`);
+    };
+
+    // An error of the body's source (e.g. the local file could not be read) is reported instead of "fetch failed".
+    let sourceError: unknown;
+    const requestBody = body
+      ? (async function* () {
+          try {
+            for await (const chunk of body) {
+              progress();
+              yield chunk;
+            }
+          } catch (error) {
+            if (!controller.signal.aborted) sourceError = error;
+            throw error;
+          }
+        })()
+      : undefined;
+
+    try {
+      let response: Response;
+      try {
+        response = await cloudFetch(url, { method, headers, body: requestBody, duplex: 'half', signal: controller.signal });
+      } catch (error) {
+        throw sourceError ?? failed(error);
+      }
+      progress();
+      const length = Number(response.headers.get('content-length') ?? NaN);
+      return await read(response, readBody(response, Number.isSafeInteger(length) ? length : undefined, progress, failed));
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+      // Releases a response body that `read` did not consume (nothing happens to one that was read to the end).
+      controller.abort();
     }
   }
 

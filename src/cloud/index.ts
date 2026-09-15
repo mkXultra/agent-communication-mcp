@@ -57,8 +57,11 @@ export function getCloudBackend(env: NodeJS.ProcessEnv = process.env): CloudBack
 }
 
 export { CloudApiClient } from './CloudApiClient.js';
+export type { AttachmentDownload, AttachmentUpload } from './CloudApiClient.js';
 export { CloudManagementService } from './CloudManagementService.js';
 export { CloudMessagingService } from './CloudMessagingService.js';
+export type { DownloadAttachmentResult } from './CloudMessagingService.js';
+export { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, contentTypeFor } from './attachments.js';
 export { CloudRoomsService } from './CloudRoomsService.js';
 export { CloudWaitService } from './CloudWaitService.js';
 export { API_URL_ENV, DEFAULT_API_URL, TOKEN_ENV, fileModeNotice, getOperatingMode, resolveCloudConfig } from './config.js';

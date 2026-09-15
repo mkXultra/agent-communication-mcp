@@ -5,7 +5,7 @@ import { LockService } from '../services/LockService';
 import { MessagingAdapter } from '../adapters/MessagingAdapter';
 import { RoomsAdapter } from '../adapters/RoomsAdapter';
 import { ManagementAdapter } from '../adapters/ManagementAdapter';
-import { allTools, handleWaitForMessages, toolHandlers } from '../tools/index';
+import { allTools, cloudTools, handleDownloadAttachment, handleSendMessage, handleWaitForMessages, toolHandlers } from '../tools/index';
 import { AppError, WaitCancelledError } from '../errors/index';
 import { getCloudBackend, type CloudBackend, type OperatingMode } from '../cloud/index';
 import { linkAbortSignals, settledOrAborted } from '../utils/abort';
@@ -66,9 +66,9 @@ export class ToolRegistry {
         })
       });
       
-      // Register tools list handler
+      // Register tools list handler (attachments are a cloud mode feature: file mode lists the tools without them)
       server.setRequestHandler(listToolsRequestSchema, async () => ({
-        tools: allTools
+        tools: this.cloud ? cloudTools : allTools
       }));
       
       // Register tool call handler
@@ -94,8 +94,16 @@ export class ToolRegistry {
               break;
               
             case 'agent_communication_send_message':
+              // A cancelled call stops uploading its attachments (and does not send the message after them)
+              result = await handleSendMessage(args, this.messagingAdapter, extra.signal);
+              break;
+              
             case 'agent_communication_get_messages':
               result = await handler(args, this.messagingAdapter);
+              break;
+              
+            case 'agent_communication_download_attachment':
+              result = await handleDownloadAttachment(args, this.messagingAdapter, extra.signal);
               break;
               
             case 'agent_communication_wait_for_messages':

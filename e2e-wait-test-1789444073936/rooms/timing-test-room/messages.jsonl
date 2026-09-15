@@ -1,0 +1,4 @@
+{"id":"358ff887-fd41-43be-97ee-d71fa6bc904e","agentName":"timing-sender","message":"First message","timestamp":"2026-09-15T03:47:58.269Z","mentions":[]}
+{"id":"a77d7e7b-5c63-41d4-b1a1-388f7f702d54","agentName":"system","message":"timing-waiter is waiting for new messages (timeout: 1000ms)","timestamp":"2026-09-15T03:47:58.272Z","mentions":[],"metadata":{"type":"system"}}
+{"id":"b40db9a6-3987-436d-8797-63aab71b7d6c","agentName":"system","message":"timing-waiter is waiting for new messages (timeout: 3000ms)","timestamp":"2026-09-15T03:47:58.276Z","mentions":[],"metadata":{"type":"system"}}
+{"id":"5481e816-60c8-4924-b8d2-4c2b93493e63","agentName":"timing-sender","message":"Second message","timestamp":"2026-09-15T03:47:59.279Z","mentions":[]}

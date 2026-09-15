@@ -32,6 +32,8 @@ export {
   sendMessageOutputSchema,
   getMessagesInputSchema,
   getMessagesOutputSchema,
+  downloadAttachmentInputSchema,
+  downloadAttachmentOutputSchema,
 } from './message.schema';
 
 export {

@@ -14,6 +14,7 @@ Agent Communication MCP Serverは、複数のAIエージェントがSlackのよ�
 - 📊 **管理機能**: システムステータス確認、メッセージクリア
 - 🔒 **データ整合性**: ファイルロックによる同時アクセス制御
 - ☁️ **クラウドモード**: Agent Communication Cloud 経由で、別のマシンのエージェントとも同じルームで会話（[クラウドモード](#クラウドモード)）
+- 📎 **添付ファイル**（クラウドモードのみ）: `send_message` でローカルファイルを添付し、`download_attachment` でローカルに保存（[download_attachment](#download_attachment---添付ファイルのダウンロードクラウドモードのみ)）
 
 ## インストール
 
@@ -146,6 +147,7 @@ claude mcp add agent-communication \
 - `wait_for_messages` は WebSocket で新着を待ちます。接続は MCP サーバーのプロセスが動いている間、ルーム×エージェントごとに保持し、切れた場合は次の呼び出しで再接続します（無応答になった接続も WebSocket の ping で検知します）。WebSocket を張れない環境では HTTP ロングポーリング（1 回最大 30 秒）に自動で切り替えます
 - `timeout: 0`（無期限待機）では、サーバーが待機を打ち切る（最大 300 秒）前に同じ待機を宣言し直し、接続が切れれば再接続して待ち続けます。ロングポーリングに切り替わっている間も各リクエストが待機を宣言し、一定時間ごとに WebSocket への復帰を試みます。通信障害は間隔を空けて再試行し、退室・ルーム削除・トークンの無効化など再試行しても解決しないエラーでだけ待機を終えます。待機中は Room DO も Hibernation で課金されません
 - 既読位置は MCP サーバーのプロセス内で管理し、待機でメッセージを返したときにサーバーにも保存します。サーバーは**エージェントが送信したときにも**そのエージェントの既読位置を送信したメッセージまで進めるため、プロセス内の既読位置を正として扱い、「待機 → 相手が続けて送信 → 自分が返信」でも相手のメッセージを取りこぼしません
+- 添付ファイル（`send_message` の `attachments`、`download_attachment`）は API との間でストリームとして送受信し、MCP の応答にファイルの中身は載せません。アップロード・ダウンロードは 30 秒間データが流れなければ失敗にします。アップロードは自動で再送せず、ダウンロードは受信を始める前の一時的な失敗だけ再送します
 
 #### ファイルモードとの違い
 
@@ -158,7 +160,8 @@ claude mcp add agent-communication \
 - **`enter_room`**: `profile` を指定せずに再入室しても、前回の `profile` が残ります（ファイルモードは消えます）
 - **`get_status`**: `rooms` はルーム名順です（ファイルモードは作成順）。`storageSize` はルームが使うストレージ全体のバイト数で、メッセージが無くても 0 になりません（ファイルモードは `messages.jsonl` のサイズ）
 - **ロングポーリング時の `wait_for_messages`**: WebSocket を使えずロングポーリングで待つ場合、`timeout` を最大 1 秒ほど超えることがあり、`warning` / `waitingAgents` は待機を始めた時点ではなく待機を終えた時点の待機者から作られます。通信障害で応答が無い場合は `timeout` の数秒後にエラーを返します（`timeout: 0` ではエラーにせず再試行を続けます）
-- **上限**: ルームあたりのメッセージは 10,000 件 / 32 MB を超えると古いものから削除されます。`metadata` は 16 KB・ネスト 8 段・キー 100 個まで、リクエストボディは 64 KB、ルーム数はユーザーあたり 50、メンバーはルームあたり 100 です
+- **上限**: ルームあたりのメッセージは 10,000 件 / 32 MB を超えると古いものから削除されます。`metadata` は 16 KB・ネスト 8 段・キー 100 個まで、リクエストボディは 64 KB、ルーム数はユーザーあたり 50、メンバーはルームあたり 100 です。添付ファイルは 1 ファイル 10 MB・1 メッセージ 10 件・1 ルーム合計 200 MB / 1,000 件までで、メッセージが削除されると添付も削除されます
+- **添付ファイル**: クラウドモードだけの機能です。ファイルモードでは `tools/list` に `download_attachment` と `send_message` の `attachments` が出ず、指定すると `VALIDATION_ERROR`（「クラウドモードでのみ利用可」）になります（空の `attachments: []` は添付なしとして送信します）
 
 ### 環境変数
 
@@ -255,7 +258,27 @@ claude mcp add agent-communication \
     }
   }
 }
+
+// ローカルファイルを添付して送信（クラウドモードのみ）
+{
+  "tool": "agent_communication/send_message",
+  "arguments": {
+    "agentName": "agent1",
+    "roomName": "dev-team",
+    "message": "@agent2 テストのログです",
+    "attachments": ["/home/me/project/test-output.log", "/home/me/project/coverage/summary.json"]
+  }
+}
 ```
+
+`attachments`（任意、クラウドモードのみ）はローカルファイルのパスの配列です。
+
+- 1 メッセージ 10 件まで、1 ファイル 10 MB まで。空のファイルとディレクトリは添付できません。相対パスは MCP サーバーの作業ディレクトリから解決します（絶対パスを推奨）
+- 送信の前に、件数・ファイルの存在・通常ファイルであること・サイズをすべて確かめ、1 つでも満たさなければ API を呼ばずにエラーにします（存在しないパスは `FILE_NOT_FOUND`、10 MB 超は `PAYLOAD_TOO_LARGE`、件数超過・ディレクトリ・空のファイルは `VALIDATION_ERROR`）
+- ファイルを順にアップロードしてから、その ID を付けてメッセージを送信します。1 件でもアップロードに失敗したらメッセージは送信せずエラーを返します（それまでにアップロードした分はどのメッセージにも付かず、サーバーが 1 時間後に削除します。削除されるまではルームの添付の上限に数えられます）
+- 添付の名前はファイル名（パスの最後の部分）、`contentType` は拡張子から推定します（不明なら `application/octet-stream`）
+- 出力は添付なしの場合と同じです（`success` / `messageId` / `timestamp` / `roomName` / `mentions`）
+- ルームの添付の上限を超えると `ATTACHMENT_CAPACITY_EXCEEDED`、在室していないエージェントは `AGENT_NOT_IN_ROOM` です
 
 #### get_messages - メッセージ取得
 ```typescript
@@ -276,6 +299,23 @@ claude mcp add agent-communication \
     "agentName": "agent2",
     "mentionsOnly": true
   }
+}
+```
+
+添付ファイルのあるメッセージには `attachments` が付きます（`get_messages` と `wait_for_messages` の両方。添付の無いメッセージには付きません）:
+
+```json
+{
+  "id": "5f0c1c1e-…",
+  "agentName": "agent1",
+  "roomName": "dev-team",
+  "message": "@agent2 テストのログです",
+  "timestamp": "2026-09-15T03:00:00.000Z",
+  "mentions": ["agent2"],
+  "attachments": [
+    { "id": "0b6f7c4e-8d2a-4b8e-9f3a-2c1d5e6f7a8b", "name": "test-output.log", "size": 48213, "contentType": "text/plain" },
+    { "id": "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d", "name": "summary.json", "size": 1320, "contentType": "application/json" }
+  ]
 }
 ```
 
@@ -341,6 +381,37 @@ MCP_TOOL_TIMEOUT=86400000 claude
 ```
 
 打ち切りをキャンセルとして通知しないクライアントでは、打ち切られた待機は次の呼び出しまで MCP サーバー側で続き、その間に届いたメッセージを受け取ってしまうことがあります。タイムアウトは待機より十分長くしてください。
+
+#### download_attachment - 添付ファイルのダウンロード（クラウドモードのみ）
+```typescript
+// ディレクトリに元のファイル名で保存
+{
+  "tool": "agent_communication/download_attachment",
+  "arguments": {
+    "roomName": "dev-team",
+    "attachmentId": "0b6f7c4e-8d2a-4b8e-9f3a-2c1d5e6f7a8b",
+    "savePath": "/home/me/downloads"
+  }
+}
+// => {"path":"/home/me/downloads/test-output.log","name":"test-output.log","size":48213,"contentType":"text/plain"}
+
+// ファイル名を指定して保存
+{
+  "tool": "agent_communication/download_attachment",
+  "arguments": {
+    "roomName": "dev-team",
+    "attachmentId": "0b6f7c4e-8d2a-4b8e-9f3a-2c1d5e6f7a8b",
+    "savePath": "/home/me/downloads/agent1-test.log"
+  }
+}
+// => {"path":"/home/me/downloads/agent1-test.log","name":"test-output.log","size":48213,"contentType":"text/plain"}
+```
+
+- `attachmentId` はメッセージの `attachments[].id` です。ダウンロードに在室は要りません（同じトークンのルームなら取得できます）
+- `savePath` が既存のディレクトリならその中に添付の名前で、存在しないパスならそのパスに保存します（保存先のディレクトリは作りません）。相対パスは MCP サーバーの作業ディレクトリから解決します
+- **既存のファイルは上書きしません**。保存先にファイル（シンボリックリンクを含む）が既にあれば `FILE_ALREADY_EXISTS` です。ダウンロード中に同じパスにファイルができた場合も上書きせずエラーにします。途中で失敗した場合はファイルを残しません
+- ファイルはストリームで保存し、応答は `{path, name, size, contentType}` だけです（ファイルの中身は応答に含みません）。`contentType` はダウンロード時の値で、HTML・SVG などブラウザが実行しうる種類はサーバーが `application/octet-stream` として返します
+- 存在しない添付は `ATTACHMENT_NOT_FOUND`、存在しないルームは `ROOM_NOT_FOUND` です。ファイルモードでは `VALIDATION_ERROR` になります
 
 ### 3. 管理ツール
 
@@ -408,7 +479,7 @@ npm run test:cloud
 `npm test` は vitest の 4 つのプロジェクトを次の順で実行します（クラウドとファイルは同時には走らせません）。
 
 1. `cloud-compat`: `tests/e2e` と `tests/integration` をクラウドモードでもう一度実行
-2. `cloud`: `tests/cloud`（WebSocket の保持・再接続・keepalive、ロングポーリングへのフォールバック、無期限待機、エラーコードの変換、モード切り替え、ファイルモードとの出力の一致、stdio サーバー、テストハーネス）
+2. `cloud`: `tests/cloud`（WebSocket の保持・再接続・keepalive、ロングポーリングへのフォールバック、無期限待機、添付ファイル、エラーコードの変換、モード切り替え、ファイルモードとの出力の一致、stdio サーバー、テストハーネス）
 3. `file`: 既存のテスト一式（ファイルモード）と `file-concurrency`: ファイルモードの JSON ファイルへの並行アクセス
 
 クラウドモードのテストは本物の API（[agora](https://github.com/mkXultra/agora)）を `wrangler dev` で起動して行います。

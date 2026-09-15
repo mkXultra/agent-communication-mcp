@@ -133,6 +133,7 @@ describe('stdio MCP server in cloud mode', () => {
       [
         'agent_communication_clear_room_messages',
         'agent_communication_create_room',
+        'agent_communication_download_attachment',
         'agent_communication_enter_room',
         'agent_communication_get_messages',
         'agent_communication_get_status',
@@ -344,7 +345,8 @@ describe('stdio MCP server: the mode chosen at startup', () => {
     // Only startup and tools/list: no tool call, so nothing is sent to the production API.
     const server = await start({ AGENT_COMM_TOKEN: 'agora_startup_test_token', AGENT_COMM_API_URL: undefined, AGENT_COMM_DATA_DIR: dataDir });
     const listed = await server.request('tools/list');
-    expect(listed.result.tools).toHaveLength(10);
+    // The ten tools and download_attachment (cloud mode only).
+    expect(listed.result.tools).toHaveLength(11);
 
     expect(modeLines(server)).toEqual([`Cloud mode: ${DEFAULT_API_URL}`]);
     expectOnlyJsonRpcOnStdout(server);

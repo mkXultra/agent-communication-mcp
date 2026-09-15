@@ -1,9 +1,12 @@
 import { LockService } from '../services/LockService.js';
-import { RoomNotFoundError, AgentNotInRoomError } from '../errors/index.js';
+import { RoomNotFoundError, AgentNotInRoomError, ValidationError } from '../errors/index.js';
 import { Message } from '../types/index.js';
 import type { IMessagingAPI } from '../features/messaging/index.js';
 import { getDataDirectory } from '../utils/dataDir.js';
-import { getCloudBackend, type CloudBackend } from '../cloud/index.js';
+import { getCloudBackend, type CloudBackend, type DownloadAttachmentResult } from '../cloud/index.js';
+
+// File attachments are stored by the cloud API (docs/cloud-architecture.md §3.9); file mode has no place for them
+const CLOUD_ONLY_ATTACHMENTS = 'Attachments are only available in cloud mode (AGENT_COMM_TOKEN is not set)';
 
 export class MessagingAdapter {
   private api?: IMessagingAPI;
@@ -31,10 +34,17 @@ export class MessagingAdapter {
     this.api = new MessagingAPI(dataDir);
   }
   
-  async sendMessage(params: { agentName: string; roomName: string; message: string; metadata?: any }): Promise<{ success: boolean; messageId: string; timestamp: string; roomName: string; mentions: string[] }> {
+  async sendMessage(params: { agentName: string; roomName: string; message: string; metadata?: any; attachments?: string[] }, signal?: AbortSignal): Promise<{ success: boolean; messageId: string; timestamp: string; roomName: string; mentions: string[] }> {
     if (this.cloud) {
-      return this.cloud.messaging.sendMessage(params);
+      return this.cloud.messaging.sendMessage(params, signal);
     }
+    
+    // An empty list attaches nothing
+    const { attachments, ...messageParams } = params;
+    if (Array.isArray(attachments) ? attachments.length > 0 : attachments !== undefined) {
+      throw new ValidationError('attachments', CLOUD_ONLY_ATTACHMENTS);
+    }
+    params = messageParams;
     
     if (!this.api) {
       await this.initialize();
@@ -102,6 +112,13 @@ export class MessagingAdapter {
       count: result.messages.length,
       hasMore: result.hasMore
     };
+  }
+  
+  async downloadAttachment(params: { roomName: string; attachmentId: string; savePath: string }, signal?: AbortSignal): Promise<DownloadAttachmentResult> {
+    if (!this.cloud) {
+      throw new ValidationError('attachmentId', CLOUD_ONLY_ATTACHMENTS);
+    }
+    return this.cloud.messaging.downloadAttachment(params, signal);
   }
   
   clearRoomCache(roomName: string): void {

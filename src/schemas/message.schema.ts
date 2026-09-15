@@ -20,12 +20,22 @@ const messageContentSchema = z
   .min(1, 'Message cannot be empty')
   .max(2000, 'Message cannot exceed 2000 characters');
 
+// 添付ファイル（クラウドモードのみ。docs/cloud-architecture.md §3.9）
+const attachmentInfoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  size: z.number(),
+  contentType: z.string(),
+});
+
 // send_message ツール（実装済み）
+// attachments はローカルファイルのパス（件数・存在・サイズはクラウドモードで送信前に検査。ファイルモードでは指定するとエラー）
 export const sendMessageInputSchema = z.object({
   agentName: agentNameSchema,
   roomName: roomNameSchema,
   message: messageContentSchema,
   metadata: z.record(z.any()).optional(),
+  attachments: z.array(z.string()).optional(),
 });
 
 export const sendMessageOutputSchema = z.object({
@@ -55,6 +65,7 @@ export const getMessagesOutputSchema = z.object({
     timestamp: z.string(),
     mentions: z.array(z.string()),
     metadata: z.record(z.any()).optional(),
+    attachments: z.array(attachmentInfoSchema).optional(),
   })),
   count: z.number(),
   hasMore: z.boolean(),
@@ -81,6 +92,7 @@ export const waitForMessagesOutputSchema = z.object({
     timestamp: z.string(),
     mentions: z.array(z.string()),
     metadata: z.record(z.any()).optional(),
+    attachments: z.array(attachmentInfoSchema).optional(),
   })),
   hasNewMessages: z.boolean(),
   timedOut: z.boolean(),
@@ -88,9 +100,24 @@ export const waitForMessagesOutputSchema = z.object({
   waitingAgents: z.array(z.string()).optional(),
 });
 
+// download_attachment ツール（クラウドモードのみ。形式の検査は CloudMessagingService でも行う）
+export const downloadAttachmentInputSchema = z.object({
+  roomName: roomNameSchema,
+  attachmentId: z.string(),
+  savePath: z.string(),
+});
+
+export const downloadAttachmentOutputSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  size: z.number(),
+  contentType: z.string(),
+});
+
 // エイリアスを追加（後方互換性のため）
 export const sendMessageSchema = sendMessageInputSchema;
 export const getMessagesSchema = getMessagesInputSchema;
+export const downloadAttachmentSchema = downloadAttachmentInputSchema;
 
 // 型定義をエクスポート（実装済み機能のみ）
 export type SendMessageInput = z.infer<typeof sendMessageInputSchema>;
@@ -99,3 +126,5 @@ export type GetMessagesInput = z.infer<typeof getMessagesInputSchema>;
 export type GetMessagesOutput = z.infer<typeof getMessagesOutputSchema>;
 export type WaitForMessagesInput = z.infer<typeof waitForMessagesInputSchema>;
 export type WaitForMessagesOutput = z.infer<typeof waitForMessagesOutputSchema>;
+export type DownloadAttachmentInput = z.infer<typeof downloadAttachmentInputSchema>;
+export type DownloadAttachmentOutput = z.infer<typeof downloadAttachmentOutputSchema>;

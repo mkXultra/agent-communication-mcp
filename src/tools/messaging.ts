@@ -1,6 +1,6 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { sendMessageSchema, getMessagesSchema } from '../schemas/index.js';
+import { sendMessageSchema, getMessagesSchema, downloadAttachmentSchema } from '../schemas/index.js';
 
 export const sendMessageTool: Tool = {
   name: 'agent_communication_send_message',
@@ -22,6 +22,48 @@ export const sendMessageTool: Tool = {
       }
     },
     required: ['agentName', 'roomName', 'message'],
+    additionalProperties: false
+  }
+};
+
+// Cloud mode: send_message also takes local files to attach (docs/cloud-architecture.md §3.9)
+export const cloudSendMessageTool: Tool = {
+  ...sendMessageTool,
+  inputSchema: {
+    ...sendMessageTool.inputSchema,
+    properties: {
+      ...sendMessageTool.inputSchema.properties,
+      attachments: {
+        type: 'array',
+        items: { type: 'string' },
+        maxItems: 10,
+        description: 'Paths of local files to attach (up to 10 files, 10 MB each). Relative paths are resolved from the working directory of the MCP server'
+      }
+    }
+  }
+};
+
+// Cloud mode only: saves an attachment to a local file; the file content is not part of the response
+export const downloadAttachmentTool: Tool = {
+  name: 'agent_communication_download_attachment',
+  description: 'Download a file attached to a message and save it to a local path. Returns the saved path, name, size and content type (not the file content)',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      roomName: {
+        type: 'string',
+        description: 'Name of the room of the message the file is attached to'
+      },
+      attachmentId: {
+        type: 'string',
+        description: 'ID of the attachment (attachments[].id of a message returned by get_messages or wait_for_messages)'
+      },
+      savePath: {
+        type: 'string',
+        description: 'An existing directory (the file is saved in it under its original name) or the path of a new file in an existing directory. An existing file is never overwritten. Relative paths are resolved from the working directory of the MCP server'
+      }
+    },
+    required: ['roomName', 'attachmentId', 'savePath'],
     additionalProperties: false
   }
 };
@@ -85,10 +127,26 @@ export const waitForMessagesTool: Tool = {
 
 export async function handleSendMessage(
   args: any,
-  messagingAdapter: any
+  messagingAdapter: any,
+  signal?: AbortSignal
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   const validatedArgs = sendMessageSchema.parse(args);
-  const result = await messagingAdapter.sendMessage(validatedArgs);
+  const result = await messagingAdapter.sendMessage(validatedArgs, signal);
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify(result)
+    }]
+  };
+}
+
+export async function handleDownloadAttachment(
+  args: any,
+  messagingAdapter: any,
+  signal?: AbortSignal
+): Promise<{ content: Array<{ type: string; text: string }> }> {
+  const validatedArgs = downloadAttachmentSchema.parse(args);
+  const result = await messagingAdapter.downloadAttachment(validatedArgs, signal);
   return {
     content: [{
       type: 'text',

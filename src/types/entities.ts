@@ -17,6 +17,15 @@ export interface Message {
   mentions: string[];
   timestamp: string;
   metadata?: Record<string, any>;
+  // 添付ファイル（クラウドモードのみ。無ければ省略）
+  attachments?: AttachmentInfo[];
+}
+
+export interface AttachmentInfo {
+  id: string;
+  name: string;
+  size: number;
+  contentType: string;
 }
 
 export interface Agent {

@@ -83,6 +83,20 @@ export function profileValidationError(profile: unknown): ValidationError | null
   return null;
 }
 
+/** docs/api.yaml `format: uuid` of attachment IDs (any version, either case, as agora accepts them). */
+export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** download_attachment's `attachmentId` and `savePath` (cloud mode only: there is no file-mode counterpart). */
+export function downloadParamsValidationError(attachmentId: unknown, savePath: unknown): ValidationError | null {
+  if (typeof attachmentId !== 'string' || !UUID_PATTERN.test(attachmentId)) {
+    return new ValidationError('attachmentId', 'Attachment ID must be a UUID');
+  }
+  if (typeof savePath !== 'string' || savePath === '') {
+    return new ValidationError('savePath', 'Save path is required and must be a string');
+  }
+  return null;
+}
+
 /** Same checks and messages as RoomService.validateDescription. */
 export function descriptionValidationError(description: unknown): ValidationError | null {
   if (description === undefined) return null;

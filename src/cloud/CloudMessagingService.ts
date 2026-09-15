@@ -1,18 +1,38 @@
 // Agent Communication MCP Server - messaging tools in cloud mode
-// send_message / get_messages / wait_for_messages over docs/api.yaml.
+// send_message / get_messages / wait_for_messages / download_attachment over docs/api.yaml.
 
 import { randomUUID } from 'crypto';
-import { AgentNotInRoomError, RoomNotFoundError } from '../errors/index.js';
+import path from 'path';
+import { AgentNotInRoomError, AppError, RoomNotFoundError } from '../errors/index.js';
 import { WAIT_CONSTANTS } from '../features/messaging/constants.js';
 import { MessageValidator } from '../features/messaging/MessageValidator.js';
 import type { GetMessagesParams, WaitForMessagesParams } from '../features/messaging/types/messaging.types.js';
 import type { Message } from '../types/entities.js';
+import {
+  assertNotExists,
+  inspectAttachments,
+  isUsableFileName,
+  openAttachment,
+  resolveSaveTarget,
+  saveNewFile,
+  type LocalAttachment,
+} from './attachments.js';
 import { CloudApiClient } from './CloudApiClient.js';
 import { CloudRoomsService } from './CloudRoomsService.js';
 import { CloudWaitService } from './CloudWaitService.js';
 import { toToolMessage, type WaitForMessagesResult } from './mappers.js';
 import type { ApiMessage, ApiMessageList } from './types.js';
-import { isValidName } from './validation.js';
+import { downloadParamsValidationError, isValidName, roomNameValidationError } from './validation.js';
+
+export interface DownloadAttachmentResult {
+  /** Absolute path of the saved file. */
+  path: string;
+  name: string;
+  /** Bytes written. */
+  size: number;
+  /** The Content-Type of the download (agora serves HTML-like types as application/octet-stream). */
+  contentType: string;
+}
 
 /** docs/api.yaml `getMessages.limit`: 1..1000. */
 const PAGE_LIMIT = 1000;
@@ -30,13 +50,21 @@ export class CloudMessagingService {
    * The first send for a room x agent this process has no read cursor for (the agent entered from another
    * process) looks the member's read position up first, because the send moves it past older messages. If that
    * look-up fails, nothing is sent: sending would hide the messages that are still unread.
+   *
+   * `attachments` (§3.9): local file paths, checked before anything is uploaded (count, existence, regular file, size;
+   * no API call), then uploaded one by one, and their IDs sent with the message. When one fails nothing is sent.
+   * Cancelling the call (`signal`) stops the uploads and the send that would follow them.
    */
-  async sendMessage(params: {
-    agentName: string;
-    roomName: string;
-    message: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<{ success: boolean; messageId: string; timestamp: string; roomName: string; mentions: string[] }> {
+  async sendMessage(
+    params: {
+      agentName: string;
+      roomName: string;
+      message: string;
+      metadata?: Record<string, unknown>;
+      attachments?: string[];
+    },
+    signal?: AbortSignal,
+  ): Promise<{ success: boolean; messageId: string; timestamp: string; roomName: string; mentions: string[] }> {
     const { agentName, roomName } = params;
     if (!isValidName(roomName)) throw new RoomNotFoundError(String(roomName));
     try {
@@ -47,15 +75,22 @@ export class CloudMessagingService {
       await this.rooms.assertMember(roomName, String(agentName));
       throw error;
     }
+    const files = params.attachments === undefined ? [] : await inspectAttachments(params.attachments);
 
     await this.waits.ensureCursor(roomName, agentName);
 
-    const result = await this.api.sendMessage(roomName, {
-      agentName,
-      message: params.message,
-      clientMessageId: randomUUID(),
-      ...(params.metadata !== undefined ? { metadata: params.metadata } : {}),
-    });
+    const attachmentIds = await this.uploadAttachments(roomName, agentName, files, signal);
+    const result = await this.api.sendMessage(
+      roomName,
+      {
+        agentName,
+        message: params.message,
+        clientMessageId: randomUUID(),
+        ...(params.metadata !== undefined ? { metadata: params.metadata } : {}),
+        ...(attachmentIds.length > 0 ? { attachments: attachmentIds } : {}),
+      },
+      attachmentIds.length > 0 && signal ? { signal } : {},
+    );
     return {
       success: result.success,
       messageId: result.messageId,
@@ -63,6 +98,74 @@ export class CloudMessagingService {
       roomName: result.roomName,
       mentions: result.mentions,
     };
+  }
+
+  /**
+   * download_attachment (§3.9): GET /rooms/{roomName}/attachments/{attachmentId}, streamed to a local file. `savePath` is
+   * an existing directory (the file is saved there under the attachment's name) or the path of a new file in an
+   * existing directory. An existing file is never replaced, and a failed download leaves no file behind.
+   */
+  async downloadAttachment(
+    params: { roomName: string; attachmentId: string; savePath: string },
+    signal?: AbortSignal,
+  ): Promise<DownloadAttachmentResult> {
+    const { roomName, attachmentId, savePath } = params;
+    const invalid = roomNameValidationError(roomName) ?? downloadParamsValidationError(attachmentId, savePath);
+    if (invalid) throw invalid;
+
+    const target = await resolveSaveTarget(savePath);
+    return this.api.downloadAttachment(
+      roomName,
+      attachmentId,
+      async (download): Promise<DownloadAttachmentResult> => {
+        const { name } = download;
+        if (name === undefined || !isUsableFileName(name)) {
+          throw new AppError(`Cloud API did not give attachment '${attachmentId}' a usable file name`, 'INTERNAL_ERROR', 502);
+        }
+        let file: string;
+        if ('file' in target) {
+          file = target.file;
+        } else {
+          file = path.join(target.directory, name);
+          await assertNotExists(file);
+        }
+        const size = await saveNewFile(file, download.body);
+        return { path: file, name, size, contentType: download.contentType };
+      },
+      signal ? { signal } : {},
+    );
+  }
+
+  /**
+   * Uploads the files one after another and returns their IDs in the same order. When one fails, the error is thrown
+   * and the uploads made so far are left to agora, which deletes an upload that no message took after an hour.
+   */
+  private async uploadAttachments(
+    roomName: string,
+    agentName: string,
+    files: LocalAttachment[],
+    signal: AbortSignal | undefined,
+  ): Promise<string[]> {
+    const ids: string[] = [];
+    for (const [index, file] of files.entries()) {
+      const field = `attachments[${index}]`;
+      const reader = await openAttachment(file, field);
+      try {
+        const uploaded = await this.api.uploadAttachment(
+          roomName,
+          agentName,
+          { name: file.name, contentType: file.contentType, size: reader.size, body: reader.chunks },
+          {
+            ...(signal ? { signal } : {}),
+            context: { roomName, agentName, file: file.path, field, operation: 'upload attachment' },
+          },
+        );
+        ids.push(uploaded.attachmentId);
+      } finally {
+        await reader.close();
+      }
+    }
+    return ids;
   }
 
   /**

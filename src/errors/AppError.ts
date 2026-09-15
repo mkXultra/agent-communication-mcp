@@ -75,6 +75,20 @@ export class MessageCapacityExceededError extends AppError {
   }
 }
 
+// 添付ファイル関連のエラー（クラウドモード。docs/cloud-architecture.md §3.9）
+export class AttachmentNotFoundError extends AppError {
+  // 400: 送信に付けられない ID（docs/api.yaml sendMessage）、404: ダウンロードする添付が無い
+  constructor(attachmentId: string, statusCode: 400 | 404 = 404) {
+    super(`Attachment '${attachmentId}' not found`, 'ATTACHMENT_NOT_FOUND', statusCode);
+  }
+}
+
+export class AttachmentTooLargeError extends AppError {
+  constructor(file: string, maxBytes: number) {
+    super(`Attachment '${file}' exceeds maximum size of ${maxBytes} bytes`, 'PAYLOAD_TOO_LARGE', 413);
+  }
+}
+
 // wait_for_messages が結果を返さずに終わった（MCP のキャンセル、サーバーの終了、同じエージェント×ルームの新しい待機）
 export class WaitCancelledError extends AppError {
   constructor(reason = 'the request was cancelled') {
@@ -143,6 +157,12 @@ export class FileNotFoundError extends AppError {
   }
 }
 
+export class FileAlreadyExistsError extends AppError {
+  constructor(path: string) {
+    super(`File already exists: ${path}`, 'FILE_ALREADY_EXISTS', 409);
+  }
+}
+
 // MCP関連のエラー
 export class MCPError extends AppError {
   constructor(toolName: string, message: string) {
@@ -206,6 +226,11 @@ export const ERROR_CODES = {
   MESSAGE_CAPACITY_EXCEEDED: 'MESSAGE_CAPACITY_EXCEEDED',
   WAIT_CANCELLED: 'WAIT_CANCELLED',
   
+  // 添付ファイル関連（クラウドモード）
+  ATTACHMENT_NOT_FOUND: 'ATTACHMENT_NOT_FOUND',
+  ATTACHMENT_CAPACITY_EXCEEDED: 'ATTACHMENT_CAPACITY_EXCEEDED',
+  PAYLOAD_TOO_LARGE: 'PAYLOAD_TOO_LARGE',
+  
   // バリデーション関連
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   CONFIRMATION_REQUIRED: 'CONFIRMATION_REQUIRED',
@@ -217,6 +242,7 @@ export const ERROR_CODES = {
   STORAGE_ERROR: 'STORAGE_ERROR',
   FILE_LOCK_TIMEOUT: 'FILE_LOCK_TIMEOUT',
   FILE_NOT_FOUND: 'FILE_NOT_FOUND',
+  FILE_ALREADY_EXISTS: 'FILE_ALREADY_EXISTS',
   
   // MCP関連
   MCP_ERROR: 'MCP_ERROR',

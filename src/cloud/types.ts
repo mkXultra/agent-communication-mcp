@@ -1,5 +1,5 @@
 // Agent Communication MCP Server - Cloud API types
-// Shapes from docs/api.yaml (Agent Communication Cloud API 0.4.x, components.schemas).
+// Shapes from docs/api.yaml (Agent Communication Cloud API 0.6.x, components.schemas).
 
 export interface ApiErrorBody {
   code: string;
@@ -73,6 +73,14 @@ export interface ApiMemberList {
   connectedCount: number;
 }
 
+/** docs/api.yaml `AttachmentInfo` (api 0.6.0, D13). */
+export interface ApiAttachment {
+  id: string;
+  name: string;
+  size: number;
+  contentType: string;
+}
+
 export interface ApiMessage {
   id: string;
   seq: number;
@@ -83,6 +91,20 @@ export interface ApiMessage {
   timestamp: string;
   mentions: string[];
   metadata?: Record<string, unknown>;
+  /** Omitted or empty when the message has no attachments. */
+  attachments?: ApiAttachment[];
+}
+
+/** The 201 response of `uploadAttachment`: the upload is not attached to a message yet. */
+export interface ApiUploadedAttachment {
+  attachmentId: string;
+  name: string;
+  size: number;
+  contentType: string;
+  uploader: string;
+  createdAt: string;
+  /** The upload is deleted when no message has taken it by then. */
+  expiresAt: string;
 }
 
 export interface ApiSendMessageResult {
@@ -137,6 +159,9 @@ export interface ApiRoomStatus {
   connectedCount: number;
   waitingCount?: number;
   storageBytes?: number;
+  /** Attachments in the room, unattached uploads included (api 0.6.0). */
+  attachmentCount?: number;
+  attachmentBytes?: number;
   oldestSeq?: number;
   latestSeq?: number;
   lastActivityAt?: string;
