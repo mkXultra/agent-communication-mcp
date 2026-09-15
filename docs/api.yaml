@@ -2,13 +2,17 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.6.0
+  version: 0.6.2
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.6.2: `/status` の `quota`、429 の `details.metric`、添付総量のアラート（Webhook）。
+
+    > 0.6.1: R2 無料枠のハードキャップ（D14）。グローバル・ユーザー単位の総量上限（429 `ATTACHMENT_CAPACITY_EXCEEDED` に `details.scope`）と `ATTACHMENTS_ENABLED`（503 `ATTACHMENTS_DISABLED`）。
 
     > 0.6.0: ファイル添付（D13）。`POST /rooms/{room}/attachments`、`GET /rooms/{room}/attachments/{id}`、
     > `sendMessage` の `attachments`、`Message.attachments`、`RoomStatus.attachmentCount` / `attachmentBytes`。
@@ -760,8 +764,9 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '429':
           description: |
-            ルームの添付合計（バイト数または件数）の上限超過（`ATTACHMENT_CAPACITY_EXCEEDED`、
-            リトライしても解消しない）またはレート制限（`RATE_LIMITED`）
+            添付の上限超過（`ATTACHMENT_CAPACITY_EXCEEDED`、リトライしても解消しない。
+            `details.scope` は `room`（ルーム合計）/ `user`（ユーザー総量）/ `global`（アカウント全体）のいずれか、
+            `details.metric` は `bytes` / `count` / `class_a`）またはレート制限（`RATE_LIMITED`）
           headers:
             Retry-After:
               schema: { type: integer }
@@ -770,7 +775,14 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '500': { $ref: '#/components/responses/InternalError' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+        '503':
+          description: 添付が停止中（`ATTACHMENTS_DISABLED`、D14）または一時的な利用不可（`SERVICE_UNAVAILABLE`）
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /rooms/{roomName}/attachments/{attachmentId}:
     get:
@@ -927,6 +939,16 @@ paths:
                     type: array
                     items: { type: string }
                     description: fan-out の対象ルーム上限を超えて集計しなかったルーム名
+                  quota:
+                    type: object
+                    description: |
+                      添付の使用量（D14）。既定（`QUOTA_STATUS_VISIBILITY=global`）ではアカウント全体の値。
+                      `user` のときは `totalBytes` / `totalLimit` が自分のユーザー総量になり、`classA*` は省略
+                    properties:
+                      totalBytes: { type: integer }
+                      totalLimit: { type: integer }
+                      classAThisMonth: { type: integer }
+                      classALimit: { type: integer }
                   fanout:
                     type: object
                     description: fan-out の実行情報（並列上限が効いていることを観測するため）
@@ -1459,6 +1481,7 @@ components:
             - PAYLOAD_TOO_LARGE
             - RATE_LIMITED
             - SIGNUP_DISABLED
+            - ATTACHMENTS_DISABLED
             - STORAGE_ERROR
             - INTERNAL_ERROR
             - SERVICE_UNAVAILABLE

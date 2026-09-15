@@ -407,6 +407,15 @@ workers.dev の URL は推測・漏洩しやすく、401 を返すだけのリ�
   - R2 のライフサイクルルールは**使わない**（生きている添付も消してしまう）。孤児の最終手段は運用で `wrangler r2 object` による棚卸し
 - `Content-Type` は最大 255 バイト（超過は 400 `VALIDATION_ERROR`）。R2 のメタデータと DO の行を肥大化させないため
 - ファイル名はパス区切り（`/`、`\`）、`.`、`..`、制御文字（双方向制御文字を含む）を拒否し、`Content-Disposition` では `filename*`（RFC 5987）で返す。`Content-Type` はクライアント申告をそのまま保存するが、応答では `X-Content-Type-Options: nosniff` を付け、HTML 系は `application/octet-stream` に落として XSS を防ぐ
+- **無料枠を超えないためのハードキャップ（→ D14）**。R2 は Workers Free と違い超過分が課金されるため、構造的な上限（1 ファイル・1 ルーム）に加えて次の 3 層を持つ:
+  1. **グローバル上限**: `Quota` DO（`idFromName("global")`、SQLite）に「総バイト数」と「当月の R2 Class A 回数（put + delete）」の走行カウンタを持つ。アップロードは R2 へ書く**前**に Quota DO で同期的に check-and-reserve し、失敗時は解放する。削除時は減算（Room DO / UserIndex の掃除から Quota DO を呼ぶ）。上限は `MAX_TOTAL_ATTACHMENT_BYTES`（既定 8 GB = 無料枠の 8 割）と `MAX_R2_CLASS_A_PER_MONTH`（既定 80 万）。超過は 429 `ATTACHMENT_CAPACITY_EXCEEDED`（`details.scope = 'global'`）
+  2. **ユーザー単位の総量上限** `MAX_USER_ATTACHMENT_BYTES`（既定 2 GB）: UserIndex に `attachment_bytes` の走行カウンタを持ち、Room DO の添付の増減を UserIndex へ通知して更新する（best-effort。`GET /status` の fan-out で実数と突き合わせて補正する）。超過は 429 `ATTACHMENT_CAPACITY_EXCEEDED`（`details.scope = 'user'`）。特定ユーザーの乱用がアカウント全体を止めないようにするための層
+  3. **キルスイッチ** `ATTACHMENTS_ENABLED`（既定 `true`）: `false` でアップロードを 503 `ATTACHMENTS_DISABLED` にする。既存の添付のダウンロードと削除は動く
+  - Quota DO は 1 アップロードあたり DO リクエスト 1 回。カウンタの月切り替えは Alarm ではなく、リクエスト時に UTC の `YYYY-MM` キーを見て切り替える
+  - **Class A の数え方**: R2 の料金では put / list が Class A で、delete は無料。実装は put に加えて delete と list も数える（多めに数える安全側）。実際の請求より常に多い値になるので、上限に当たったら実数を Cloudflare ダッシュボードで確認する
+  - **暦月と請求期間**: カウンタは UTC の暦月で切り替わる。R2 の請求期間が月初始まりでない場合、1 つの請求期間の中で最大 2 倍まで通りうる。既定の 80 万は無料枠 100 万の 8 割なので、2 倍でも超過額は小さい
+  - **`GET /status` の `quota` はアカウント全体の使用量**（総バイト数と Class A 回数）を返す。トークンは誰でも発行できるので、他ユーザーの活動量が見える。気になる場合は `QUOTA_STATUS_VISIBILITY = "user"` で自分のユーザー総量だけを返すようにできる（既定は `global`）
+  - **アラート**（→ §9 `ATTACHMENT_ALERT_BYTES`）: 総バイト数がしきい値（既定 5 GB）を越えたとき、Quota DO が `ALERT_WEBHOOK_URL`（secret）へ POST する。同じしきい値で何度も鳴らさないよう、越えたしきい値を記録し、さらに `ATTACHMENT_ALERT_STEP_BYTES`（既定 1 GB）増えるごとに再通知する。減って戻ったら記録を消す。Webhook の形式は `ALERT_WEBHOOK_FORMAT`（`json`: `{text, content, event, totalBytes, limit}`、Slack / Discord 互換。`plain`: 本文だけ、ntfy 向け）。URL 未設定なら構造化ログ `attachment_quota_alert` だけを出す。送信は `ctx.waitUntil` で行い、失敗してもアップロードは成功させる
 - Web UI（§3.7）は送信欄にファイル選択、メッセージにダウンロードリンク（`fetch` + Bearer → blob）
 - MCP 側（§5）は `send_message` に `attachments: [ローカルパス]` を足し、内部でアップロードしてから送信する。`download_attachment(roomName, attachmentId, savePath)` を追加。既存 10 ツールの入出力は変えない（`attachments` は任意の追加フィールド）
 
@@ -567,7 +576,7 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 
 ---
 
-## 8. 決定事項（D1〜D13）
+## 8. 決定事項（D1〜D14）
 
 | # | 論点 | 決定 | 理由 |
 |---|---|---|---|
@@ -582,6 +591,7 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 | D10 | `DELETE /rooms` が Room DO に拒否されたときの応答 | **409 `DELETE_CONFLICT`** を契約に宣言する | 「競合により今は削除できない」は 409 の意味そのもの。resolver が収束させるので再試行で解消する。503 に寄せるとプラットフォーム障害と区別がつかない |
 | D12 | アイドルメンバーの扱い | **Room DO の Alarm で 24 時間無活動の `online` メンバーを `offline` にする**（WebSocket 接続中は除外、var で変更・無効化可） | 明示的に `leave` しないエージェントが幽霊として残り、メンバー一覧の信頼性を損なう（`MAX_MEMBERS_PER_ROOM` の枠は解放されない。行の削除は将来項目）。接続方式に依存しない Alarm 方式なら curl だけの利用でも効く。WebSocket 切断で即 offline にする案は HTTP のみの利用者に効かず、一時切断と終了を区別できない |
 | D11 | `waiters` の主キー | **`(agent_name, request_id)` の複合キー**とし、`MAX_WAITERS_PER_AGENT` を var で有効にする | §9「全パラメータを var で上書き可能」と §3.2 の単独 PK が矛盾していた。複合キーなら 1 エージェントが複数マシンから同時に待機する将来ケースにも対応できる。所有者列（`owner_kind` / `owner_id`）は PK とは独立に必要 |
+| D14 | R2 の無料枠を超えないための上限 | **3 層のハードキャップ**: Quota DO によるグローバル上限（総量 8 GB、Class A 80 万/月）、UserIndex によるユーザー単位の総量上限（2 GB）、`ATTACHMENTS_ENABLED` キルスイッチ | R2 は Workers Free と違って超過分が課金される。1 ファイル・1 ルームの上限だけでは 1 ユーザーが 50 ルーム × 200 MB = 10 GB を埋められ、2 ユーザー目から無料枠を超える。特定ユーザーの乱用でアカウント全体が止まらないよう、ユーザー単位の層を別に持つ |
 | D13 | ファイル添付の方式 | **メッセージ添付**（内部 2 段階 API、MCP ツールは 1 段階）。実体は R2、メタは Room DO。ダウンロードは同一ユーザーなら可 | 用途はほぼ「このログ見て」型でメッセージに紐づく。通知・文脈・保持ポリシーをメッセージのものに乗せられ、専用のライフサイクルが要らない。共有ファイル置き場が必要になったらメッセージから導出した一覧やピン留めで後付けできる |
 | D7 | トークン発行と防御レベル | **セルフサービス発行（認証なし `POST /tokens`）。レート制限は発行の IP 制限だけを初期有効にし、送信レート・未認証 IP 制限は実装するが既定 0。429 の観測を見て段階的に上げる** | 原理上誰でも使えるようにしたい。構造的な上限（ルーム数・接続数・サイズ・保持）で1トークンあたりの被害上限は決まるので、レート制限は摩擦を最小にして必要に応じて var で上げる。Turnstile や招待コードへの移行は `POST /tokens` に検証を1つ足すだけで手戻りがない |
 
@@ -618,6 +628,12 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 | 添付 / メッセージ（`MAX_ATTACHMENTS_PER_MESSAGE`） | 10 | 400 `VALIDATION_ERROR` | Room DO |
 | 添付合計 / ルーム（`MAX_ROOM_ATTACHMENT_BYTES` / `MAX_ATTACHMENTS_PER_ROOM`） | 200 MB / 1,000 件 | 429 `ATTACHMENT_CAPACITY_EXCEEDED`（リトライ不可） | Room DO（アップロード時） |
 | 未添付アップロードの猶予（`ATTACHMENT_ORPHAN_TTL_SECONDS`） | 3600 | Alarm で R2 ごと削除 | Room DO |
+| 添付の総量（`MAX_TOTAL_ATTACHMENT_BYTES`） | 8 GB（R2 無料枠 10 GB の 8 割） | 429 `ATTACHMENT_CAPACITY_EXCEEDED`（`scope: global`） | Quota DO（アップロード前に check-and-reserve） |
+| R2 Class A 回数 / 月（`MAX_R2_CLASS_A_PER_MONTH`） | 800,000（無料枠 100 万の 8 割） | 429 `ATTACHMENT_CAPACITY_EXCEEDED`（`scope: global`） | Quota DO |
+| 添付の総量 / ユーザー（`MAX_USER_ATTACHMENT_BYTES`） | 2 GB | 429 `ATTACHMENT_CAPACITY_EXCEEDED`（`scope: user`） | UserIndex DO |
+| `ATTACHMENTS_ENABLED` | `true` | `false` で 503 `ATTACHMENTS_DISABLED`（ダウンロード・削除は可） | Worker |
+| 添付総量のアラート（`ATTACHMENT_ALERT_BYTES` / `ATTACHMENT_ALERT_STEP_BYTES`） | 5 GB / 1 GB | `ALERT_WEBHOOK_URL`（secret）へ POST ＋構造化ログ。0 で無効 | Quota DO |
+| `QUOTA_STATUS_VISIBILITY` | `global` | `user` で `/status` の `quota` を自分のユーザー総量だけに | Worker |
 
 ### fan-out（`GET /status`）
 
@@ -656,6 +672,12 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 ---
 
 ## 11. 変更履歴
+
+### 第4.3版（D14 R2 のハードキャップ）
+
+| 変更 | 理由 |
+|---|---|
+| Quota DO（グローバル上限）、UserIndex のユーザー総量上限、`ATTACHMENTS_ENABLED`、§9 の 4 項目 | R2 は超過分が課金されるため、無料枠内に止めるハードキャップが要る |
 
 ### 第4.2版（D13 添付ファイル）
 
