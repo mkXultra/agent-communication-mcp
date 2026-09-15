@@ -46,6 +46,7 @@ const STATUS: Record<string, number> = {
   MEMBER_CAPACITY_EXCEEDED: 429,
   ATTACHMENT_CAPACITY_EXCEEDED: 429,
   ATTACHMENT_NOT_FOUND: 404,
+  ATTACHMENTS_DISABLED: 503,
   DELETE_CONFLICT: 409,
   TOKEN_NOT_FOUND: 404,
   AGENT_NOT_IN_ROOM: 403,
@@ -250,7 +251,7 @@ describe('errors returned by agora', () => {
       message: /^Invalid message format: /,
     });
 
-    const big = { blob: 'x'.repeat(70000) };
+    const big = { blob: 'x'.repeat(140000) };
     await expectAppError(backend.messaging.sendMessage({ agentName: 'alice', roomName: 'limits', message: 'x', metadata: big }), {
       code: 'PAYLOAD_TOO_LARGE',
       status: 413,

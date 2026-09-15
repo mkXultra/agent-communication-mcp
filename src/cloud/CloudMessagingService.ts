@@ -192,7 +192,7 @@ export class CloudMessagingService {
       throw error;
     }
 
-    const limit = validated.limit ?? 50;
+    const limit = validated.limit ?? 20;
     const offset = validated.offset ?? 0;
     const mentionFilter = validated.mentionsOnly && agentName ? agentName : undefined;
     // One more than needed tells whether there is more.

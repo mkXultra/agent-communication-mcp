@@ -2,18 +2,19 @@ import { z } from 'zod';
 import { ValidationError } from '../../errors/AppError';
 import { SendMessageParams, GetMessagesParams, WaitForMessagesParams } from './types/messaging.types';
 import { WAIT_CONSTANTS } from './constants';
+import { MESSAGE_MAX_LENGTH, maxCodePoints } from '../../schemas/message.schema';
 
 export const sendMessageSchema = z.object({
   agentName: z.string().min(1).max(50),
   roomName: z.string().min(1).regex(/^[a-zA-Z0-9-_]+$/),
-  message: z.string().min(1).max(2000),
+  message: z.string().min(1).superRefine(maxCodePoints(MESSAGE_MAX_LENGTH)),
   metadata: z.record(z.any()).optional()
 });
 
 export const getMessagesSchema = z.object({
   roomName: z.string().min(1).regex(/^[a-zA-Z0-9-_]+$/),
   agentName: z.string().min(1).max(50).optional(),
-  limit: z.number().int().min(1).max(1000).optional().default(50),
+  limit: z.number().int().min(1).max(1000).optional().default(20),
   offset: z.number().int().min(0).optional().default(0),
   mentionsOnly: z.boolean().optional().default(false)
 });

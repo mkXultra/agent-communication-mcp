@@ -53,7 +53,7 @@ export class MessageStorage {
 
   async getMessages(params: GetMessagesParams): Promise<{ messages: Message[]; hasMore: boolean }> {
     const filePath = this.getMessagesFilePath(params.roomName);
-    const limit = params.limit ?? 50;
+    const limit = params.limit ?? 20;
     const offset = params.offset ?? 0;
     
     try {

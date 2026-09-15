@@ -15,10 +15,29 @@ const agentNameSchema = z
   .min(1, 'Agent name cannot be empty')
   .max(50, 'Agent name cannot exceed 50 characters');
 
+// 本文の上限。agora（docs/cloud-architecture.md §9 `MAX_MESSAGE_LENGTH`）と同じくコードポイント数で数える
+export const MESSAGE_MAX_LENGTH = 10000;
+
+// z.string().max() と同じ too_big を、UTF-16 のコードユニット数ではなくコードポイント数で判定する
+export function maxCodePoints(maximum: number, message?: string) {
+  return (value: string, ctx: z.RefinementCtx): void => {
+    if (Array.from(value).length > maximum) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.too_big,
+        maximum,
+        type: 'string',
+        inclusive: true,
+        exact: false,
+        ...(message === undefined ? {} : { message }),
+      });
+    }
+  };
+}
+
 const messageContentSchema = z
   .string()
   .min(1, 'Message cannot be empty')
-  .max(2000, 'Message cannot exceed 2000 characters');
+  .superRefine(maxCodePoints(MESSAGE_MAX_LENGTH, `Message cannot exceed ${MESSAGE_MAX_LENGTH} characters`));
 
 // 添付ファイル（クラウドモードのみ。docs/cloud-architecture.md §3.9）
 const attachmentInfoSchema = z.object({
@@ -50,7 +69,7 @@ export const sendMessageOutputSchema = z.object({
 export const getMessagesInputSchema = z.object({
   roomName: roomNameSchema,
   agentName: agentNameSchema.optional(),
-  limit: z.number().int().min(1).max(1000).optional().default(50),
+  limit: z.number().int().min(1).max(1000).optional().default(20),
   offset: z.number().int().min(0).optional().default(0),
   mentionsOnly: z.boolean().optional().default(false),
 });

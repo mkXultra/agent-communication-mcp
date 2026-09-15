@@ -25,7 +25,7 @@ export const messagingTools = [
           type: 'string',
           description: 'Message content (supports @mentions)',
           minLength: 1,
-          maxLength: 1000
+          maxLength: 10000
         },
         metadata: {
           type: 'object',
@@ -59,7 +59,7 @@ export const messagingTools = [
           description: 'Maximum number of messages to retrieve',
           minimum: 1,
           maximum: 1000,
-          default: 50
+          default: 20
         },
         offset: {
           type: 'number',

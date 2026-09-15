@@ -19,6 +19,7 @@ import {
   InvalidMessageFormatError,
   StorageError,
 } from '../errors/index.js';
+import { MESSAGE_MAX_LENGTH } from '../schemas/message.schema.js';
 import { MAX_ATTACHMENT_BYTES } from './attachments.js';
 import type { ApiErrorBody } from './types.js';
 
@@ -39,7 +40,6 @@ export interface ApiErrorContext {
 }
 
 const DEFAULT_ROOM_LIMIT = 50;
-const DEFAULT_MESSAGE_LENGTH = 2000;
 
 function detailString(details: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = details?.[key];
@@ -95,7 +95,7 @@ export function toAppError(status: number, body: ApiErrorBody, context: ApiError
     case 'AGENT_NOT_IN_ROOM':
       return new AgentNotInRoomError(agentName, roomName);
     case 'MESSAGE_TOO_LONG':
-      return new MessageTooLongError(detailNumber(details, 'limit') ?? DEFAULT_MESSAGE_LENGTH);
+      return new MessageTooLongError(detailNumber(details, 'limit') ?? MESSAGE_MAX_LENGTH);
     case 'VALIDATION_ERROR':
       return new ValidationError(detailString(details, 'field') ?? context.field ?? 'request', body.message);
     case 'CONFIRMATION_REQUIRED':

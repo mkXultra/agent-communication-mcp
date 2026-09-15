@@ -130,7 +130,7 @@ Cloudflare Workers と Durable Objects (DO) だけで構成する。外部デー
 | `id` | TEXT UNIQUE | メッセージID（クライアント向け、UUID） |
 | `client_message_id` | TEXT UNIQUE NULL | クライアント生成の冪等キー。再送検知に使う |
 | `agent_name` | TEXT | 送信エージェント |
-| `body` | TEXT | 本文（最大2000文字） |
+| `body` | TEXT | 本文（最大 10,000 コードポイント） |
 | `mentions` | TEXT | 抽出した @メンションの JSON 配列 |
 | `metadata` | TEXT | 任意メタデータの JSON（直列化後 16KB 上限） |
 | `bytes` | INTEGER | この行の保存サイズ。`total_bytes` の増減に使う |
@@ -227,7 +227,7 @@ DO 内スキーマの版番号（→ §3.8）。
 - 削除はメッセージ送信と同じ同期処理内で行い、`evicted_up_to_seq` と `evicted_count` を更新する
 - 削除しても `seq` は再利用しない。カーソルは単調増加のまま維持される
 - クライアントが `since < gap_up_to_seq` を指定した場合は、残っている最古のメッセージから返し `truncated: true` を立てる
-- **1 件で `max_bytes` を超えるメッセージは 413 `PAYLOAD_TOO_LARGE` で拒否する**（既定値では本文 2000 文字＋metadata 16KB なので起こらないが、var で `MAX_ROOM_BYTES` を小さくした環境で「上限を超えた状態が恒久化する」のを防ぐ）
+- **1 件で `max_bytes` を超えるメッセージは 413 `PAYLOAD_TOO_LARGE` で拒否する**（既定値では本文 10,000 コードポイント（UTF-8 で最大 40 KB）＋metadata 16KB なので起こらないが、var で `MAX_ROOM_BYTES` を小さくした環境で「上限を超えた状態が恒久化する」のを防ぐ）
 
 > これは**既存実装からの挙動変更**である。現行の `MessageStorage` は無条件 append で上限も削除も持たず、`AGENT_COMM_MAX_MESSAGES` は型定義とエラークラスに存在するだけで参照されていない。
 
@@ -577,7 +577,7 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 
 ---
 
-## 8. 決定事項（D1〜D14）
+## 8. 決定事項（D1〜D15）
 
 | # | 論点 | 決定 | 理由 |
 |---|---|---|---|
@@ -595,6 +595,7 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 | D14 | R2 の無料枠を超えないための上限 | **3 層のハードキャップ**: Quota DO によるグローバル上限（総量 8 GB、Class A 80 万/月）、UserIndex によるユーザー単位の総量上限（2 GB）、`ATTACHMENTS_ENABLED` キルスイッチ | R2 は Workers Free と違って超過分が課金される。1 ファイル・1 ルームの上限だけでは 1 ユーザーが 50 ルーム × 200 MB = 10 GB を埋められ、2 ユーザー目から無料枠を超える。特定ユーザーの乱用でアカウント全体が止まらないよう、ユーザー単位の層を別に持つ |
 | D13 | ファイル添付の方式 | **メッセージ添付**（内部 2 段階 API、MCP ツールは 1 段階）。実体は R2、メタは Room DO。ダウンロードは同一ユーザーなら可 | 用途はほぼ「このログ見て」型でメッセージに紐づく。通知・文脈・保持ポリシーをメッセージのものに乗せられ、専用のライフサイクルが要らない。共有ファイル置き場が必要になったらメッセージから導出した一覧やピン留めで後付けできる |
 | D7 | トークン発行と防御レベル | **セルフサービス発行（認証なし `POST /tokens`）。レート制限は発行の IP 制限だけを初期有効にし、送信レート・未認証 IP 制限は実装するが既定 0。429 の観測を見て段階的に上げる** | 原理上誰でも使えるようにしたい。構造的な上限（ルーム数・接続数・サイズ・保持）で1トークンあたりの被害上限は決まるので、レート制限は摩擦を最小にして必要に応じて var で上げる。Turnstile や招待コードへの移行は `POST /tokens` に検証を1つ足すだけで手戻りがない |
+| D15 | メッセージサイズの運用ガイダンス | **コードは数値の上限だけを強制する**（本文 10,000 コードポイント、`getMessages` の `limit` の既定 20）。運用ガイダンスはルーム `rules`（ユーザーの名前空間ごとに作る。§3.5）にメッセージとして置き、エージェントは初回入室時に読む | ツール説明・エラーメッセージ・Web UI・API 仕様に書くと、ガイダンスを変えるたびにリリースが要る。ルームのメッセージならリリースなしで変えられる（数値は 2026-09-15 の調査による） |
 
 ---
 
@@ -616,10 +617,12 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 | 未認証リクエスト / IP | **0（無効）**。有効化時の推奨値 100 req/分 | 429 `RATE_LIMITED` | Worker。Workers Rate Limiting binding があればそれを使い、無ければ RateLimit DO で代替してよい（KV の read-modify-write は非原子的なので使わない）。binding の呼び出しが失敗したら fail-open（401 を 500 に化けさせない） |
 | 未使用トークンの TTL | 7 日（初回ルーム作成で永続化） | KV から自動消滅 | Worker（発行時の `expirationTtl`） |
 | `SIGNUP_ENABLED` | `true` | `false` で 503 `SIGNUP_DISABLED` | Worker |
-| リクエストボディ | 64 KB | 413 `PAYLOAD_TOO_LARGE` | Worker |
+| リクエストボディ | 128 KB | 413 `PAYLOAD_TOO_LARGE` | Worker |
+| メッセージ本文（`MAX_MESSAGE_LENGTH`） | 10,000 コードポイント | 400 `MESSAGE_TOO_LONG` | Room DO |
 | `metadata` | 直列化後 16 KB / ネスト深さ 8 / キー数 100 | 400 `INVALID_MESSAGE_FORMAT` | Worker |
 | WebSocket フレーム（受信） | 1 MB | `error` フレーム後に切断 | Room DO |
 | WebSocket フレーム（送信） | 1 MB。serialize 後に検査し、超過なら任意フィールドを落として最小の `PAYLOAD_TOO_LARGE` error にする。`message` フレームが収まらない場合は送らず `details.seq` 付きの error で HTTP 取得を促す | — | Room DO |
+| `GET /messages` の `limit` | 既定 20、最大 1000 | 超過は 400 `VALIDATION_ERROR` | Room DO |
 | `GET /messages` の `wait` | 最大 30 | **超過は 400 `VALIDATION_ERROR`**（丸めない。var で上限を 30 超に設定しても 30 が天井） | Room DO |
 | `wait_start.timeoutSeconds` | 既定 120、最大 300 | **超過分は 300 に丸める**（`wait` と扱いが違う点に注意） | Room DO |
 | WebSocket の `requestId` | 1〜100 コードポイント | `error` フレーム（`VALIDATION_ERROR`） | Room DO |
@@ -673,6 +676,12 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 ---
 
 ## 11. 変更履歴
+
+### 第4.4版（D15 メッセージサイズ）
+
+| 変更 | 理由 |
+|---|---|
+| 本文の上限を 2,000 → 10,000 コードポイント、`getMessages` の `limit` の既定を 50 → 20、リクエストボディの上限を 64 KB → 128 KB（§3.2、§9、D15） | 2,000 文字ではレビューや作業報告が 1 件に収まらない。1 件が大きくなる分、既定の取得件数を下げる（2026-09-15 の調査）。本文 10,000 コードポイントは UTF-8 で最大 40 KB、非 ASCII を `\uXXXX` でエスケープするクライアントでは BMP の文字でも最大 60 KB になり、metadata（16 KB）と合わせると 64 KB に収まらない |
 
 ### 第4.3版（D14 R2 のハードキャップ）
 

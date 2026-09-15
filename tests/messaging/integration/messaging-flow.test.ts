@@ -254,7 +254,7 @@ describe('Messaging Integration Tests', () => {
       await expect(messagingAPI.sendMessage({
         agentName: 'alice',
         roomName: 'integration-test',
-        message: 'x'.repeat(2001)
+        message: 'x'.repeat(10001)
       })).rejects.toThrow();
     });
   });

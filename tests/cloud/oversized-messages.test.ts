@@ -2,7 +2,7 @@
 // agora does not send the frame but an `error` frame (PAYLOAD_TOO_LARGE, `details.seq`), stops the backlog at that
 // message (`backlog_end.upToSeq` is the last one sent), and the client fetches the rest over HTTP.
 //
-// With the default 1 MB limit this cannot happen for a 2000-character message, so these tests run against the agora
+// With the default 1 MB limit this cannot happen for a 10000-character message, so these tests run against the agora
 // started with FAULT_INJECTION=1 and shrink MAX_WS_FRAME_BYTES with its `x-agora-test-vars` header. agora applies
 // the header per request, so every request of these tests goes through the proxy that adds it.
 

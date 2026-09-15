@@ -46,7 +46,7 @@ const messages = await messagingAPI.getMessages({
 #### パラメータ
 - `agentName`: 送信者エージェント名 (1-50文字)
 - `roomName`: 送信先ルーム名 (英数字、ハイフン、アンダースコアのみ)
-- `message`: メッセージ内容 (1-1000文字)
+- `message`: メッセージ内容 (1-10000文字)
 - `metadata?`: オプショナルメタデータ
 
 #### 戻り値
@@ -79,7 +79,7 @@ console.log(response.mentions); // ['bob', 'charlie']
 #### パラメータ
 - `roomName`: ルーム名 (必須)
 - `agentName?`: エージェント名 (メンションフィルタリング用)
-- `limit?`: 取得件数 (デフォルト: 50, 最大: 1000)
+- `limit?`: 取得件数 (デフォルト: 20, 最大: 1000)
 - `offset?`: 取得開始位置 (デフォルト: 0)
 - `mentionsOnly?`: 自分宛のメンションのみ取得 (デフォルト: false)
 

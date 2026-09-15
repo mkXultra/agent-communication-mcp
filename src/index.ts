@@ -6,13 +6,14 @@ import { ToolRegistry } from './server/ToolRegistry.js';
 import { ErrorHandler } from './server/ErrorHandler.js';
 import { getDataDirectory } from './utils/dataDir.js';
 import { fileModeNotice, resolveCloudConfig } from './cloud/index.js';
+import { version } from '../package.json';
 
 async function main() {
   try {
     // Create MCP server with tool capabilities
     const server = new Server({
       name: 'agent-communication',
-      version: '1.0.0'
+      version
     }, {
       capabilities: {
         tools: {}  // Enable tool support

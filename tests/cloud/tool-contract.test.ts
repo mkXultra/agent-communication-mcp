@@ -85,9 +85,9 @@ describe('tool outputs in cloud mode', () => {
       expect(result.hasMore).toBe(offset + limit < total);
     }
 
-    // Default limit (50), no agent.
+    // Default limit (20), no agent.
     const defaults = await client.call('get_messages', { roomName: 'paging' });
-    expect(defaults.messages.map((m: ToolMessage) => m.id)).toEqual(expected.slice(0, 50).map((m) => m.id));
+    expect(defaults.messages.map((m: ToolMessage) => m.id)).toEqual(expected.slice(0, 20).map((m) => m.id));
     expect(defaults.hasMore).toBe(true);
 
     // mentionsOnly filters by the requesting agent before paging.
@@ -97,6 +97,22 @@ describe('tool outputs in cloud mode', () => {
     expect(page.hasMore).toBe(190 < mentioned.length);
     expect(page.messages.every((m: ToolMessage) => m.mentions.includes('bob'))).toBe(true);
   }, 120000);
+
+  it('send_message takes a message of up to 10000 code points, like agora', async () => {
+    await client.call('create_room', { roomName: 'long-message' });
+    await client.call('enter_room', { agentName: 'alice', roomName: 'long-message' });
+    const emoji = String.fromCodePoint(0x1f600);
+    // 10000 code points are 20000 UTF-16 code units
+    const longest = emoji.repeat(10000);
+    expect(await client.call('send_message', { agentName: 'alice', roomName: 'long-message', message: longest })).toMatchObject({ success: true });
+    const result = await client.call('get_messages', { agentName: 'alice', roomName: 'long-message' });
+    expect(result.messages.map((m: ToolMessage) => m.message)).toEqual([longest]);
+
+    await expect(
+      client.call('send_message', { agentName: 'alice', roomName: 'long-message', message: emoji.repeat(10001) }),
+    ).rejects.toThrow('Message cannot exceed 10000 characters');
+    expect((await api.getMessages('long-message', {})).messages).toHaveLength(1);
+  });
 
   it('get_messages returns the file-mode message shape', async () => {
     await client.call('create_room', { roomName: 'shape' });

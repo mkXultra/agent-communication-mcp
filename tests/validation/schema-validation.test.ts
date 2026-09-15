@@ -124,7 +124,7 @@ describe('Schema Validation Tests', () => {
         {
           agentName: 'alice',
           roomName: 'test-room',
-          message: 'x'.repeat(2001), // too long
+          message: 'x'.repeat(10001), // too long
         },
         {
           agentName: '', // empty agent name
@@ -142,6 +142,21 @@ describe('Schema Validation Tests', () => {
         const result = sendMessageInputSchema.safeParse(input);
         expect(result.success).toBe(false);
       });
+    });
+
+    it('should count the send_message length in code points (10000 at most)', () => {
+      const emoji = String.fromCodePoint(0x1f600);
+      const input = { agentName: 'alice', roomName: 'test-room', message: emoji.repeat(10000) };
+      expect(sendMessageInputSchema.safeParse(input).success).toBe(true);
+      expect(sendMessageInputSchema.safeParse({ ...input, message: 'x'.repeat(10000) }).success).toBe(true);
+
+      const over = sendMessageInputSchema.safeParse({ ...input, message: emoji.repeat(10001) });
+      expect(over.success).toBe(false);
+      if (!over.success) {
+        expect(over.error.issues).toEqual([
+          expect.objectContaining({ code: 'too_big', maximum: 10000, path: ['message'], message: 'Message cannot exceed 10000 characters' }),
+        ]);
+      }
     });
 
     it('should validate send_message output schema', () => {
@@ -181,7 +196,7 @@ describe('Schema Validation Tests', () => {
       const result = getMessagesInputSchema.safeParse(minimalInput);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.limit).toBe(50); // default value
+        expect(result.data.limit).toBe(20); // default value
         expect(result.data.offset).toBe(0); // default value
         expect(result.data.mentionsOnly).toBe(false); // default value
       }

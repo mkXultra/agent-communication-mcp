@@ -86,7 +86,8 @@ export const getMessagesTool: Tool = {
         type: 'number',
         description: 'Maximum number of messages to retrieve',
         minimum: 1,
-        maximum: 100
+        maximum: 100,
+        default: 20
       },
       before: {
         type: 'string',

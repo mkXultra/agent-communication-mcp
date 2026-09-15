@@ -2,13 +2,15 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.6.2
+  version: 0.6.3
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.6.3: `sendMessage` の `message` の `maxLength` を 10000（コードポイント数）、`getMessages` の `limit` の既定を 20、リクエストボディの上限（§9）を 128 KB に変更。
 
     > 0.6.2: `/status` の `quota`、429 の `details.metric`、添付総量のアラート（Webhook）。
 
@@ -499,7 +501,7 @@ paths:
                 message:
                   type: string
                   minLength: 1
-                  maxLength: 2000
+                  maxLength: 10000
                 clientMessageId:
                   type: string
                   minLength: 1
@@ -602,7 +604,7 @@ paths:
           description: このカーソル値より前のメッセージを降順で返す（過去方向のページング）
         - name: limit
           in: query
-          schema: { type: integer, minimum: 1, maximum: 1000, default: 50 }
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 20 }
         - name: agentName
           in: query
           schema: { $ref: '#/components/schemas/AgentName' }
@@ -847,7 +849,7 @@ paths:
         送信フレームは serialize 後にサイズ上限（§9）を検査する。`message` フレームが上限に
         収まらない場合は送らず、`details.seq` 付きの `error`（`PAYLOAD_TOO_LARGE`）で
         HTTP 取得を促す。`backlog_end.upToSeq` は実際に送れた位置を指す。
-        既定の 1 MB と本文 2000 文字・metadata 16 KB の組み合わせでは起こらない。
+        既定の 1 MB と本文 10000 文字・metadata 16 KB の組み合わせでは起こらない。
 
         upgrade 前の障害は他のエンドポイントと同じ 500 / 503 の JSON で返る。
         upgrade 後の障害は `error` フレームで返る。
@@ -1521,7 +1523,7 @@ components:
 
     PayloadTooLarge:
       description: |
-        リクエストボディが上限（§9、既定 64 KB）を超えている（`PAYLOAD_TOO_LARGE`）。
+        リクエストボディが上限（§9、既定 128 KB）を超えている（`PAYLOAD_TOO_LARGE`）。
         `metadata` の上限超過は 413 ではなく 400 `INVALID_MESSAGE_FORMAT`
       content:
         application/json:

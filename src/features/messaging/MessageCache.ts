@@ -28,7 +28,7 @@ export class MessageCache {
    * Generate cache key from get messages parameters
    */
   private generateCacheKey(params: GetMessagesParams): string {
-    const { roomName, limit = 50, offset = 0, mentionsOnly = false, agentName = '' } = params;
+    const { roomName, limit = 20, offset = 0, mentionsOnly = false, agentName = '' } = params;
     return `${roomName}:${limit}:${offset}:${mentionsOnly}:${agentName}`;
   }
 

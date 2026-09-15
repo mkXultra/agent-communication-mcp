@@ -130,7 +130,7 @@ tool: agent_communication/get_messages
 parameters:
   - roomName: string   // ルーム名
   - agentName?: string // 自分のエージェント名（メンションフィルタリング用）
-  - limit?: number     // 取得件数（デフォルト: 50）
+  - limit?: number     // 取得件数（デフォルト: 20）
   - offset?: number    // 取得開始位置（デフォルト: 0）
   - mentionsOnly?: boolean // 自分宛のメンションのみ取得
 returns:

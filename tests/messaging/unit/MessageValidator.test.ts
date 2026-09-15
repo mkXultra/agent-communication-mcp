@@ -71,10 +71,20 @@ describe('MessageValidator', () => {
       const invalidParams = {
         agentName: 'test-agent',
         roomName: 'test-room',
-        message: 'a'.repeat(2001)
+        message: 'a'.repeat(10001)
       };
 
       expect(() => MessageValidator.validateSendMessage(invalidParams)).toThrow(ValidationError);
+      expect(() => MessageValidator.validateSendMessage(invalidParams)).toThrow('String must contain at most 10000 character(s)');
+    });
+
+    it('should count the message length in code points, like agora', () => {
+      const emoji = String.fromCodePoint(0x1f600);
+      // 10000 code points are 20000 UTF-16 code units
+      const longest = { agentName: 'test-agent', roomName: 'test-room', message: emoji.repeat(10000) };
+      expect(longest.message.length).toBe(20000);
+      expect(MessageValidator.validateSendMessage(longest)).toEqual(longest);
+      expect(() => MessageValidator.validateSendMessage({ ...longest, message: emoji.repeat(10001) })).toThrow(ValidationError);
     });
   });
 
@@ -86,7 +96,7 @@ describe('MessageValidator', () => {
 
       const result = MessageValidator.validateGetMessages(validParams);
       expect(result.roomName).toBe('test-room');
-      expect(result.limit).toBe(50);
+      expect(result.limit).toBe(20);
       expect(result.offset).toBe(0);
       expect(result.mentionsOnly).toBe(false);
     });
