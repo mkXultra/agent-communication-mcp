@@ -416,6 +416,7 @@ workers.dev の URL は推測・漏洩しやすく、401 を返すだけのリ�
   - **暦月と請求期間**: カウンタは UTC の暦月で切り替わる。R2 の請求期間が月初始まりでない場合、1 つの請求期間の中で最大 2 倍まで通りうる。既定の 80 万は無料枠 100 万の 8 割なので、2 倍でも超過額は小さい
   - **`GET /status` の `quota` はアカウント全体の使用量**（総バイト数と Class A 回数）を返す。トークンは誰でも発行できるので、他ユーザーの活動量が見える。気になる場合は `QUOTA_STATUS_VISIBILITY = "user"` で自分のユーザー総量だけを返すようにできる（既定は `global`）
   - **アラート**（→ §9 `ATTACHMENT_ALERT_BYTES`）: 総バイト数がしきい値（既定 5 GB）を越えたとき、Quota DO が `ALERT_WEBHOOK_URL`（secret）へ POST する。同じしきい値で何度も鳴らさないよう、越えたしきい値を記録し、さらに `ATTACHMENT_ALERT_STEP_BYTES`（既定 1 GB）増えるごとに再通知する。減って戻ったら記録を消す。Webhook の形式は `ALERT_WEBHOOK_FORMAT`（`json`: `{text, content, event, totalBytes, limit}`、Slack / Discord 互換。`plain`: 本文だけ、ntfy 向け）。URL 未設定なら構造化ログ `attachment_quota_alert` だけを出す。送信は `ctx.waitUntil` で行い、失敗してもアップロードは成功させる
+  - **メール通知**（Webhook と併用可）: `ALERT_EMAIL_TO`（var）が設定されていれば Cloudflare Email Sending の binding（`send_email`、名前 `EMAIL`）で同じ内容を送る。差出人は `ALERT_EMAIL_FROM`（既定 `alerts@omajinai.work`。Email Sending を有効化したドメインであること）。**宛先は Email Routing の検証済み Destination address にする**（Workers Free では検証済み宛先へのみ無料で送れる。任意の宛先は Workers Paid が必要）。ローカル / テストでは binding をモックせず、`FAULT_INJECTION=1` のときだけ送信内容を記録する経路で検証する
 - Web UI（§3.7）は送信欄にファイル選択、メッセージにダウンロードリンク（`fetch` + Bearer → blob）
 - MCP 側（§5）は `send_message` に `attachments: [ローカルパス]` を足し、内部でアップロードしてから送信する。`download_attachment(roomName, attachmentId, savePath)` を追加。既存 10 ツールの入出力は変えない（`attachments` は任意の追加フィールド）
 
@@ -632,7 +633,7 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 | R2 Class A 回数 / 月（`MAX_R2_CLASS_A_PER_MONTH`） | 800,000（無料枠 100 万の 8 割） | 429 `ATTACHMENT_CAPACITY_EXCEEDED`（`scope: global`） | Quota DO |
 | 添付の総量 / ユーザー（`MAX_USER_ATTACHMENT_BYTES`） | 2 GB | 429 `ATTACHMENT_CAPACITY_EXCEEDED`（`scope: user`） | UserIndex DO |
 | `ATTACHMENTS_ENABLED` | `true` | `false` で 503 `ATTACHMENTS_DISABLED`（ダウンロード・削除は可） | Worker |
-| 添付総量のアラート（`ATTACHMENT_ALERT_BYTES` / `ATTACHMENT_ALERT_STEP_BYTES`） | 5 GB / 1 GB | `ALERT_WEBHOOK_URL`（secret）へ POST ＋構造化ログ。0 で無効 | Quota DO |
+| 添付総量のアラート（`ATTACHMENT_ALERT_BYTES` / `ATTACHMENT_ALERT_STEP_BYTES`） | 5 GB / 1 GB | `ALERT_WEBHOOK_URL`（secret）へ POST、`ALERT_EMAIL_TO`（検証済み宛先）へメール、構造化ログ。0 で無効 | Quota DO |
 | `QUOTA_STATUS_VISIBILITY` | `global` | `user` で `/status` の `quota` を自分のユーザー総量だけに | Worker |
 
 ### fan-out（`GET /status`）
