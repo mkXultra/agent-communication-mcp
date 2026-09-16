@@ -1,6 +1,6 @@
 // Server notices in cloud mode (agentName `system`, agora 0.8.0 / D18: docs/cloud-architecture.md §3.2 全員待機の通知,
 // docs/api.yaml getMessages サーバーのお知らせ). agora posts one when every online member of a room has been waiting for
-// ALL_WAITING_NOTICE_MS (15 minutes in production), delivers it like any other message and never filters it out with
+// ALL_WAITING_NOTICE_MS (30 minutes in production), delivers it like any other message and never filters it out with
 // `excludeSelf` or `mentionsOnly`. The MCP server returns it the same way: over the WebSocket, over the long-polling
 // fallback and from get_messages, with and without mentionsOnly. No client can use the name `system`.
 //
