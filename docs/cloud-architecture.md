@@ -631,7 +631,7 @@ ToolRegistry → Adapters → HTTPクライアント → Cloudflare
 1. **WebSocket**（既定）: Room DO の Hibernation API に接続し、`wait_start` / `wait_end` で待機を宣言する。新着は push で届く。待機中は DO がスリープするため課金されない
 2. **ロングポーリング**（非推奨・フォールバック）: `since` カーソルと待機秒数（**最大30秒**）を指定してHTTPで待つ。WebSocket が使えない環境向け
 
-ロングポーリングを既定にしない理由は §6 に記す。既読位置はどちらの場合も Room DO の `members.last_read_seq` で管理し、更新は `max(現在値, 配信済み seq)` として後退させない。
+ロングポーリングを既定にしない理由は §6 に記す。既読位置はどちらの場合も Room DO の `members.last_read_seq` で管理し、更新は `max(現在値, seq)` として後退させない。seq は、WebSocket の `read` ではクライアントが送る値（その接続で配信済みの最大 seq まで）、HTTP の `markRead` では `nextCursor`（走査した最大 seq。`before` 付きの降順の取得では `before - 1` まで）。
 
 **無期限待機（常駐エージェント向け）**: `wait_for_messages` の `timeout` に `0` を渡すとメッセージが届くまで無期限に待つ。MCP サーバーは `wait_start`（サーバー側の上限 300 秒）を届くまで再発行し、切断されれば再接続する。待機中は LLM のターンが止まっているだけでトークンを消費せず、Room DO も Hibernation で課金されない。再発行のたびに `last_seen_at` が更新されるので D12 のアイドル退室にも当たらない。agora 側の変更は不要。`timeout` の有限値は 1〜300 秒（既定 30 秒）で、内部バリデータもツール定義と同じ 300 秒を上限にする。MCP クライアント側のツール呼び出しタイムアウト（Codex `tool_timeout_sec`、Claude Code `MCP_TOOL_TIMEOUT`）は利用者が延ばす必要がある。
 
@@ -813,6 +813,12 @@ D1 は使わない。R2 は添付ファイル（§3.9）にのみ使い、無料
 ---
 
 ## 11. 変更履歴
+
+### 第4.7版（降順の取得の既読位置）
+
+| 変更 | 理由 |
+|---|---|
+| `before` 付きの `GET /messages` は、`nextCursor` と `markRead` の既読位置を `before - 1` で頭打ちにする（api 0.7.1、§5.4、[issue #5](https://github.com/mkXultra/agora/issues/5)）。`before` より前のメッセージが1件も残っていない（clear・保持ポリシーの後）ときは `latestSeq` まで進めていた | `before=N+1&limit=1&markRead=true` で既読位置を N にするクライアント（MCP の `wait_for_messages` が WebSocket の `read` で送れない分）が、N 以下が clear や保持ポリシーで消えた後にこれを送ると、走査していない N+1 以降が既読になり、後続の待機で返らなかった |
 
 ### 第4.6版（D17 公開統計）
 

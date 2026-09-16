@@ -2,13 +2,15 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.7.0
+  version: 0.7.1
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.7.1: `getMessages` を `before` 付きで呼んだとき、`nextCursor` と `markRead` の既読位置を `before - 1` で頭打ちにする（`before` より前のメッセージが1件も残っていないとき `latestSeq` まで進めていた）。
 
     > 0.7.0: 公開の利用統計 `GET /stats`（D17。認証なし、デプロイ全体の集計値だけ。Web UI の「analyze」画面）。
 
@@ -624,9 +626,11 @@ paths:
 
         ### 既読位置
 
-        `markRead` が真のとき `last_read_seq` を更新する。更新値は `max(現在値, 配信済みの最大 seq)`
-        で、後退させない。既定は `wait` &gt; 0 のとき `true`、それ以外は `false`
+        `markRead` が真のとき `last_read_seq` を更新する。更新値は `max(現在値, nextCursor)`
+        （`nextCursor` は下記の**走査した**最大 seq）で、後退させない。既定は `wait` &gt; 0 のとき `true`、それ以外は `false`
         （通常の取得に副作用を持たせないため。既存の `get_messages` にも副作用は無い）。
+        `before` を指定した降順の取得は `before - 1` 以下しか走査しないので、`before` より前のメッセージが1件も残っていないとき
+        （clear や保持ポリシーで消えた後）も、`nextCursor` と既読位置を `before - 1` より先へ進めない。
 
         ### カーソルの前進
 
