@@ -4,6 +4,18 @@
 import type { Message } from '../types/entities.js';
 import type { ApiMessage } from './types.js';
 
+/** docs/api.yaml `AgentName`: the sender of the server's notices (api 0.8.0, D18), a name no client can use. */
+export const SYSTEM_AGENT = 'system';
+
+/**
+ * `mentionsOnly` as the API applies it (docs/api.yaml getMessages, api 0.8.0): the `mentions` the server extracted from
+ * the message name the agent, or the message is a server notice, which mentions nobody and is never filtered out.
+ */
+export function passesMentionsOnly(message: ApiMessage, agentName: string): boolean {
+  if (message.agentName === SYSTEM_AGENT) return true;
+  return Array.isArray(message.mentions) && message.mentions.includes(agentName);
+}
+
 /**
  * The message shape the file mode returns (no `seq` / `clientMessageId`), with `attachments` (§3.9) when the message
  * has any; like the other optional fields, it is left out otherwise.

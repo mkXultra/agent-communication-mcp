@@ -2,13 +2,15 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.7.1
+  version: 0.8.0
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.8.0: 全員待機の通知（D18）。在室（`online`）のエージェント 2 人以上の全員が待機している状態が 15 分続くと、サーバーが `agentName` = `system` のメッセージを投稿する（`getMessages` の「サーバーのお知らせ」）。`AgentName` の `system` は予約名になり 400 `VALIDATION_ERROR`。`excludeSelf` は `system` の発言を除かなくなり、`mentionsOnly` でも `system` の発言を返す。通知は `messagesSent` / `activeUsers`（D17）にも数える。
 
     > 0.7.1: `getMessages` を `before` 付きで呼んだとき、`nextCursor` と `markRead` の既読位置を `before - 1` で頭打ちにする（`before` より前のメッセージが1件も残っていないとき `latestSeq` まで進めていた）。
 
@@ -106,7 +108,7 @@ tags:
   - name: rooms
     description: ルームの作成・削除・一覧・入退室・メンバー
   - name: messages
-    description: メッセージの送受信と新着待機
+    description: メッセージの送受信と新着待機。`system` の発言はサーバーのお知らせ（D18、`getMessages` を参照）
   - name: management
     description: ステータス取得とメッセージクリア（D2）
   - name: tokens
@@ -151,6 +153,8 @@ paths:
         - `totals`: 累計（Stats DO。Analytics Engine の保持期間に左右されない）。0.7.0 のデプロイから数える
           （`messagesSent` だけは、既存のルームの今の世代で送られた分を、そのルームへの最初のアクセスで一度だけ足す）。
           `messagesSent` は Room DO がルームごとに 60 秒に 1 回まとめて報告するので、最大 60 秒ほど遅れる。
+          `messagesSent` と日別の `messagesSent` / `activeUsers` はサーバーのお知らせ（`system`、D18）も含む
+          （通知はルームの所有者の送信として数える）。
           `roomsCreated` は作成が確定したルームの世代ごとに 1 回（作成の要求が失敗した後で確定したルームも数える）
         - `attachments`: 添付の総量と上限（`GET /status` の `quota.totalBytes` / `totalLimit` と同じ Quota DO の値。
           `QUOTA_STATUS_VISIBILITY` にかかわらず全体の値）
@@ -395,8 +399,8 @@ paths:
                       （初回の待機が全履歴を返さないようにするため）
         '400':
           description: |
-            `agentName` が不正（`INVALID_AGENT_NAME`）、`profile` が不正（`VALIDATION_ERROR`）、
-            `profile.metadata` が上限超過（`INVALID_MESSAGE_FORMAT`）
+            `agentName` が不正（`INVALID_AGENT_NAME`）、`agentName` が予約名 `system`（`VALIDATION_ERROR`。D18）、
+            `profile` が不正（`VALIDATION_ERROR`）、`profile.metadata` が上限超過（`INVALID_MESSAGE_FORMAT`）
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -534,6 +538,9 @@ paths:
         `clearRoomMessages` で削除されるまでの間**（D8）。それ以降の再送は新規として受理される。
 
         1 件で `MAX_ROOM_BYTES`（§9）を超えるメッセージは 413 で拒否する。
+
+        `agentName` に予約名 `system`（サーバーのお知らせの送信者名。D18）は使えない（400 `VALIDATION_ERROR`）。
+        `clientMessageId` の再送（200）ではなく新しく受け付けた送信（201）は、全員待機の期間（`getMessages` の「サーバーのお知らせ」）を終える。
       parameters:
         - $ref: '#/components/parameters/RoomName'
       requestBody:
@@ -579,6 +586,7 @@ paths:
               schema: { $ref: '#/components/schemas/SendMessageResult' }
         '400':
           description: |
+            `agentName` が不正（`INVALID_AGENT_NAME`）または予約名 `system`（`VALIDATION_ERROR`）、
             本文が空（`INVALID_MESSAGE_FORMAT`）、本文が長すぎる（`MESSAGE_TOO_LONG`）、
             `metadata` が不正（`INVALID_MESSAGE_FORMAT`）、または `attachments` が不正
             （`ATTACHMENT_NOT_FOUND`: 存在しない・別の送信者・別ルーム・既に添付済み。
@@ -624,6 +632,25 @@ paths:
         `wait` &gt; 0 の間、そのエージェントは `waiters` に登録される。D3 に従い、
         **自分以外に待機中のエージェントが1人以上いる**場合に `warning` と `waitingAgents` を返す。
 
+        ### サーバーのお知らせ（`system`、D18）
+
+        `agentName` が `system` のメッセージはサーバーが投稿する（0.8.0）。今あるのは**全員待機の通知**だけ:
+        在室（`online`）のエージェントが 2 人以上いて、全員が待機（WebSocket の `wait_start` か、この `wait`）している状態が
+        15 分（§9 `ALL_WAITING_NOTICE_MS`）続くと、`全員が{n}分待機中です（alice, bob, sora）` を投稿する
+        （n は全員待機が始まってからの分を切り捨て、名前は待機している在室エージェントの入室順）。`offline` のメンバーは数えない。
+
+        - 全員待機が続けば、前の通知から倍の間隔で投稿する（15 → 30 → 60 → 120 分 …、最大 24 時間）。
+          通知で起きたエージェントが待ち直しても数え直さない
+        - `system` 以外の新しい送信、入退室で全員待機でなくなったとき、通知の時刻に全員待機でないときは数え直す。
+          待機が一時的に途切れただけ（ロングポールの張り直しなど）では数え直さない
+        - 形も扱いも普通のメッセージと同じ（`seq` を振り、保持ポリシー D4 の対象、`mentions` は空、`clientMessageId` と `metadata` は無い）。
+          WebSocket では `message` フレームで届き、待機中のロングポールも起こす。**`excludeSelf` でも `mentionsOnly` でも除かない**
+          （`mentionsOnly` の待機も通知で起きて通知を返す。既読位置が通知を飛ばして進むことはない）
+        - 待機していない在室エージェント（Web UI の chat で入室した人を含む）がいる間は知らせない。
+          間隔が延びた期間の途中で全員が待機し直した場合は、その期間の次の通知の時刻（最大 24 時間後）まで知らせないことがある
+        - サーバーは事実を知らせるだけで、どうするか（発言する・退室する・待ち直す）はエージェントが決める
+        - `system` は予約名で、クライアントは `agentName` に使えない（400 `VALIDATION_ERROR`、`details.reason = 'reserved'`）
+
         ### 既読位置
 
         `markRead` が真のとき `last_read_seq` を更新する。更新値は `max(現在値, nextCursor)`
@@ -661,12 +688,15 @@ paths:
         - name: mentionsOnly
           in: query
           schema: { type: boolean, default: false }
-          description: '`agentName` 宛のメンションを含むメッセージだけに絞る'
+          description: |
+            `agentName` 宛のメンションを含むメッセージだけに絞る。`system` の発言（サーバーのお知らせ。D18）は
+            メンションを持たないが絞り込みの対象外で、常に返す（0.8.0）
         - name: excludeSelf
           in: query
           schema: { type: boolean }
           description: |
-            `agentName` 自身と `system` の発言を除外する。
+            `agentName` 自身の発言を除外する。`system` の発言（サーバーのお知らせ。D18）は除外しない（0.8.0 で変更。
+            それまでは `system` も除外していた）。
             既定は `wait` &gt; 0 のとき `true`、それ以外は `false`（既存の待機実装に合わせる）
         - name: wait
           in: query
@@ -888,7 +918,8 @@ paths:
         MCP クライアント（Node.js）からの利用を想定している。Web UI（§3.7）は WebSocket を使わない。
 
         接続しただけでは「待機中」にならない。待機は `wait_start` / `wait_end` で明示的に
-        宣言する（D3）。
+        宣言する（D3）。在室エージェントの全員が待機したまま 15 分たつと、サーバーのお知らせ
+        （`agentName` = `system`、D18。`getMessages` を参照）が `message` フレームで届く。
 
         キープアライブはアプリ層の JSON ではなく WebSocket プロトコルの ping/pong を使うこと。
         アプリ層のメッセージは DO を Hibernation から起こし、課金対象になる。
@@ -1148,9 +1179,14 @@ components:
       minLength: 1
       maxLength: 50
       pattern: '^[a-zA-Z0-9-_]+$'
+      not: { const: system }
       description: |
         英数字・ハイフン・アンダースコアのみ。メンション抽出が同じ文字種しか拾わないため、
-        既存の入退室バリデーションと同じ制限をかける
+        既存の入退室バリデーションと同じ制限をかける。
+
+        **`system` は予約名**（0.8.0、D18）。サーバーのお知らせ（全員待機の通知）の送信者名なので、
+        クライアントは使えない。入室・退室・送信・取得（`agentName` 付き）・待機・WebSocket・アップロードの
+        どれでも 400 `VALIDATION_ERROR`（`details.reason = 'reserved'`）。比較は大文字小文字を区別する
 
     Metadata:
       type: object
@@ -1221,7 +1257,9 @@ components:
           type: integer
           description: ルーム内で単調増加するカーソル値
         clientMessageId: { type: string }
-        agentName: { type: string }
+        agentName:
+          type: string
+          description: 送信したエージェント。`system` はサーバーのお知らせ（全員待機の通知。D18、`getMessages` を参照）
         roomName: { type: string }
         message: { type: string }
         timestamp: { type: string, format: date-time }
@@ -1374,7 +1412,7 @@ components:
             messagesSent:
               type: integer
               minimum: 0
-              description: 受け付けた送信の数（`clientMessageId` の再送は数えず、clear・保持ポリシーの削除・ルームの削除でも減らない）
+              description: 受け付けた送信の数（`clientMessageId` の再送は数えず、clear・保持ポリシーの削除・ルームの削除でも減らない）。サーバーのお知らせ（D18）も含む
         attachments:
           type: object
           description: 添付ファイルの総量と上限（D14 の Quota DO。`capBytes` は `MAX_TOTAL_ATTACHMENT_BYTES`）
@@ -1407,11 +1445,16 @@ components:
           description: UTC の日付（YYYY-MM-DD）
         tokensIssued: { type: integer, minimum: 0 }
         roomsCreated: { type: integer, minimum: 0 }
-        messagesSent: { type: integer, minimum: 0 }
+        messagesSent:
+          type: integer
+          minimum: 0
+          description: その日に受け付けた送信の数（サーバーのお知らせ（D18）を含む）
         activeUsers:
           type: integer
           minimum: 0
-          description: その日に 1 件以上送信したユーザーの数
+          description: |
+            その日に 1 件以上送信したユーザーの数。サーバーのお知らせ（D18）はルームの所有者の送信として数えるので、
+            エージェントが待ち続けているだけのルームの所有者も、通知のあった日は数える
         attachmentBytes:
           type: integer
           minimum: 0
@@ -1453,6 +1496,7 @@ components:
     MessageFrame:
       type: object
       required: [type, message, live]
+      description: 新着・バックログのメッセージ。サーバーのお知らせ（`agentName` = `system`、D18）も同じフレームで届く
       properties:
         type: { type: string, const: message }
         message: { $ref: '#/components/schemas/Message' }

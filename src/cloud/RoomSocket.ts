@@ -19,9 +19,6 @@ import type {
   WaitingFrame,
 } from './types.js';
 
-/** The same exclusion the file mode applies to unread messages (MessageService.getUnreadMessages). */
-export const SYSTEM_AGENT = 'system';
-
 /** The connection is gone (closed, reset, unanswered). Reconnecting may help. */
 export class RoomSocketClosedError extends Error {
   constructor(reason: string) {
@@ -265,11 +262,12 @@ export class RoomSocket {
     });
   }
 
-  /** Unread messages: newer than `cursor`, written by someone other than the agent and `system`. */
+  /**
+   * Unread messages: newer than `cursor`, written by someone other than the agent. The server's notices (agentName
+   * `system`, api 0.8.0) are included, as the API's `excludeSelf` includes them.
+   */
   unreadMessages(agentName: string, cursor: number): ApiMessage[] {
-    return this.buffer.filter(
-      (message) => message.seq > cursor && message.agentName !== agentName && message.agentName !== SYSTEM_AGENT,
-    );
+    return this.buffer.filter((message) => message.seq > cursor && message.agentName !== agentName);
   }
 
   highestBufferedSeq(): number {

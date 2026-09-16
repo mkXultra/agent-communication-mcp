@@ -30,7 +30,9 @@ import {
   sendMessageTool,
   cloudSendMessageTool,
   getMessagesTool,
+  cloudGetMessagesTool,
   waitForMessagesTool,
+  cloudWaitForMessagesTool,
   downloadAttachmentTool,
   handleSendMessage,
   handleGetMessages,
@@ -42,7 +44,9 @@ export {
   sendMessageTool,
   cloudSendMessageTool,
   getMessagesTool,
+  cloudGetMessagesTool,
   waitForMessagesTool,
+  cloudWaitForMessagesTool,
   downloadAttachmentTool,
   handleSendMessage,
   handleGetMessages,
@@ -85,9 +89,16 @@ export const allTools = [
 ];
 
 // Cloud mode lists the same tools, with attachments on send_message, and download_attachment
-// (docs/cloud-architecture.md §3.9). File mode keeps the list above: attachments need the cloud API.
+// (docs/cloud-architecture.md §3.9), and says in get_messages / wait_for_messages that server notices are returned
+// (D18). File mode keeps the list above: attachments need the cloud API, and the file mode has no server notices.
+const cloudVariants = new Map([
+  [sendMessageTool, cloudSendMessageTool],
+  [getMessagesTool, cloudGetMessagesTool],
+  [waitForMessagesTool, cloudWaitForMessagesTool]
+]);
+
 export const cloudTools = [
-  ...allTools.map(tool => tool === sendMessageTool ? cloudSendMessageTool : tool),
+  ...allTools.map(tool => cloudVariants.get(tool) ?? tool),
   downloadAttachmentTool
 ];
 

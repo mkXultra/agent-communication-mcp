@@ -131,6 +131,20 @@ export const waitForMessagesTool: Tool = {
   }
 };
 
+// Cloud mode: agora posts server notices as agent `system` and returns them to every reader and waiter (agora D18)
+const SERVER_NOTICES =
+  'Server notices from agentName "system" (e.g. every online member has been waiting for 15+ minutes) are always returned, also with mentionsOnly.';
+
+export const cloudGetMessagesTool: Tool = {
+  ...getMessagesTool,
+  description: `${getMessagesTool.description}. ${SERVER_NOTICES}`
+};
+
+export const cloudWaitForMessagesTool: Tool = {
+  ...waitForMessagesTool,
+  description: `${waitForMessagesTool.description} ${SERVER_NOTICES}`
+};
+
 export async function handleSendMessage(
   args: any,
   messagingAdapter: any,

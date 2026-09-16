@@ -4,14 +4,16 @@
 // - One WebSocket per room x agent, kept for the lifetime of the process and reconnected lazily
 //   by the next call after it drops.
 // - Every call declares its wait with `wait_start` / `wait_end` and returns when a message from
-//   another agent arrives (live, or buffered since the previous call), or when the timeout passes.
+//   another agent arrives (live, or buffered since the previous call), or when the timeout passes. The server's notices
+//   (agentName `system`, api 0.8.0, D18) count as such a message on every path, as they do for the API's `excludeSelf`.
 // - `timeout: 0` waits until a message arrives (§5.4): the wait is declared again (same requestId) before the server
 //   drops it, a dropped connection is made again, and a wait that has to long poll goes back to the WebSocket after
 //   each cooldown. Failures another attempt may get past are retried; the others (4xx) end the wait.
 // - A call ends without a result, consuming nothing, when its signal aborts (the MCP request was cancelled, the server
 //   shuts down) or when a newer call for the same room x agent takes over from one without a time limit.
-// - `mentionsOnly` returns only messages whose `mentions` (extracted by the server) name the agent. The others are read
-//   as the wait passes over them, the way a long poll with `mentionsOnly` moves `nextCursor` and the read position past
+// - `mentionsOnly` returns only messages whose `mentions` (extracted by the server) name the agent, and the server's
+//   notices, which the API's `mentionsOnly` never filters out either. The others are read as the wait passes over them,
+//   the way a long poll with `mentionsOnly` moves `nextCursor` and the read position past
 //   them: a long poll passes the parameter on; over the WebSocket, which delivers every message, the client consumes
 //   them, moves its cursor and keeps waiting. A call that ends without a result still leaves unread what it would have
 //   returned; what it passed over stays read. The server read position of what the WebSocket passed over belongs to the
@@ -36,14 +38,13 @@ import { OpenEndedWaits } from '../features/messaging/OpenEndedWaits.js';
 import { settledOrAborted, sleep } from '../utils/abort.js';
 import { createLogger } from '../utils/logger.js';
 import { CloudApiClient } from './CloudApiClient.js';
-import { toWaitResult, type WaitForMessagesResult } from './mappers.js';
+import { passesMentionsOnly, toWaitResult, type WaitForMessagesResult } from './mappers.js';
 import {
   RoomSocket,
   type AckResult,
   type FetchRange,
   RoomSocketClosedError,
   RoomSocketUnavailableError,
-  SYSTEM_AGENT,
   frameErrorToAppError,
   isDefinitiveAppError,
 } from './RoomSocket.js';
@@ -133,20 +134,15 @@ function noteWaiting(call: WaitCall, waiting: { waitingAgents?: string[] } | und
   call.waitingKnown = true;
 }
 
-/** Messages to return: newer than the cursor already, from others than the agent and `system`, one per seq. */
+/** Messages to return: newer than the cursor already, from others than the agent (server notices included), one per seq. */
 function mergeUnread(agentName: string, ...sources: ApiMessage[][]): ApiMessage[] {
   const bySeq = new Map<number, ApiMessage>();
   for (const source of sources) {
     for (const message of source) {
-      if (message.agentName !== agentName && message.agentName !== SYSTEM_AGENT) bySeq.set(message.seq, message);
+      if (message.agentName !== agentName) bySeq.set(message.seq, message);
     }
   }
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
-}
-
-/** `mentionsOnly`: whether the `mentions` the server extracted from the message name the agent. */
-function mentionsAgent(message: ApiMessage, agentName: string): boolean {
-  return Array.isArray(message.mentions) && message.mentions.includes(agentName);
 }
 
 export class CloudWaitService {
@@ -176,9 +172,10 @@ export class CloudWaitService {
   }
 
   /**
-   * Waits up to `timeoutMs` (0: until a message arrives); with `mentionsOnly`, for a message that mentions the agent,
-   * reading the others as it passes over them. Rejects with WaitCancelledError, consuming nothing it would have
-   * returned, when `signal` aborts or a newer call for the same room x agent takes over from a wait without a time limit.
+   * Waits up to `timeoutMs` (0: until a message arrives); with `mentionsOnly`, for a message that mentions the agent or a
+   * server notice, reading the others as it passes over them. Rejects with WaitCancelledError, consuming nothing it
+   * would have returned, when `signal` aborts or a newer call for the same room x agent takes over from a wait without a
+   * time limit.
    */
   async waitForMessages(
     agentName: string,
@@ -480,7 +477,7 @@ export class CloudWaitService {
         for (const range of fetches) socket.resolveFetch(range);
 
         const unread = mergeUnread(agentName, buffered, fetched);
-        messages = call.mentionsOnly ? unread.filter((message) => mentionsAgent(message, agentName)) : unread;
+        messages = call.mentionsOnly ? unread.filter((message) => passesMentionsOnly(message, agentName)) : unread;
         consumedThrough = Math.max(consumedThrough, through);
         if (messages.length > 0) break;
         if (unread.length > 0) {

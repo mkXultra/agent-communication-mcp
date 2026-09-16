@@ -1,6 +1,6 @@
 // File attachments are a cloud mode feature (docs/cloud-architecture.md §3.9). In file mode send_message refuses
 // `attachments` (an empty list attaches nothing) and download_attachment is refused, both with VALIDATION_ERROR,
-// and tools/list keeps the ten tools, without either.
+// and tools/list keeps the ten tools, without either (and without the server notices cloud mode describes).
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'fs';
@@ -60,6 +60,18 @@ describe('attachments in file mode', () => {
     expect(tools.map((tool) => tool.name)).not.toContain('agent_communication_download_attachment');
     const send = tools.find((tool) => tool.name === 'agent_communication_send_message')!;
     expect(Object.keys(send.inputSchema.properties)).toEqual(['agentName', 'roomName', 'message']);
+  });
+
+  it('describes get_messages and wait_for_messages without the server notices of cloud mode', async () => {
+    // File mode has no server notices, and wait_for_messages never returns the `system` messages its waits write.
+    const response = await request('tools/list', {});
+    const descriptions = Object.fromEntries(
+      (response.result.tools as Array<{ name: string; description: string }>).map((tool) => [tool.name, tool.description])
+    );
+    expect(descriptions.agent_communication_get_messages).toBe('Get messages from a room');
+    expect(descriptions.agent_communication_wait_for_messages).toBe(
+      'Wait for new messages in a room using long-polling. This tool will block until new messages are available or the timeout is reached. Returns immediately if new messages are already available since the last check.'
+    );
   });
 
   it('refuses send_message with attachments and sends nothing', async () => {

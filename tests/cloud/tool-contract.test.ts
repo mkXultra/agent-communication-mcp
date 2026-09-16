@@ -24,6 +24,23 @@ interface ToolMessage {
   metadata?: Record<string, unknown>;
 }
 
+/** tools/list of a server built the way src/index.ts builds it, in cloud mode (AGENT_COMM_TOKEN is set). */
+async function listedTools(): Promise<Array<{ name: string; description: string; inputSchema: any }>> {
+  const server = new Server({ name: 'agent-communication', version: '1.0.0' }, { capabilities: { tools: {} } });
+  const transport = new MemoryTransport();
+  const registry = new ToolRegistry();
+  await server.connect(transport);
+  await registry.registerAll(server);
+  try {
+    expect(registry.mode).toBe('cloud');
+    const response = await transport.simulateRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
+    return (response.result as { tools: Array<{ name: string; description: string; inputSchema: any }> }).tools;
+  } finally {
+    await transport.close();
+    await registry.shutdown();
+  }
+}
+
 describe('tool outputs in cloud mode', () => {
   let client: McpTestClient;
   const api = new CloudApiClient({ apiUrl: agoraUrl, token });
@@ -102,27 +119,14 @@ describe('tool outputs in cloud mode', () => {
   }, 120000);
 
   it('wait_for_messages lists mentionsOnly (a boolean, false by default) and returns only the messages that mention agentName', async () => {
-    const server = new Server({ name: 'agent-communication', version: '1.0.0' }, { capabilities: { tools: {} } });
-    const transport = new MemoryTransport();
-    const registry = new ToolRegistry();
-    await server.connect(transport);
-    await registry.registerAll(server);
-    try {
-      expect(registry.mode).toBe('cloud');
-      const response = await transport.simulateRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
-      const tools = (response.result as { tools: Array<{ name: string; inputSchema: any }> }).tools;
-      const wait = tools.find((tool) => tool.name === 'agent_communication_wait_for_messages')!;
-      expect(Object.keys(wait.inputSchema.properties)).toEqual(['agentName', 'roomName', 'timeout', 'mentionsOnly']);
-      expect(wait.inputSchema.properties.mentionsOnly).toEqual({
-        type: 'boolean',
-        description: 'Only return messages that mention agentName; other new messages are marked read without being returned',
-        default: false,
-      });
-      expect(wait.inputSchema.required).toEqual(['agentName', 'roomName']);
-    } finally {
-      await transport.close();
-      await registry.shutdown();
-    }
+    const wait = (await listedTools()).find((tool) => tool.name === 'agent_communication_wait_for_messages')!;
+    expect(Object.keys(wait.inputSchema.properties)).toEqual(['agentName', 'roomName', 'timeout', 'mentionsOnly']);
+    expect(wait.inputSchema.properties.mentionsOnly).toEqual({
+      type: 'boolean',
+      description: 'Only return messages that mention agentName; other new messages are marked read without being returned',
+      default: false,
+    });
+    expect(wait.inputSchema.required).toEqual(['agentName', 'roomName']);
 
     await client.call('create_room', { roomName: 'mentions-contract' });
     for (const agentName of ['alice', 'bob']) await client.call('enter_room', { agentName, roomName: 'mentions-contract' });
@@ -144,6 +148,18 @@ describe('tool outputs in cloud mode', () => {
       hasNewMessages: true,
       timedOut: false,
     });
+  });
+
+  it('get_messages and wait_for_messages say that server notices from agent system are always returned', async () => {
+    // The server notices of agora 0.8.0 (D18): tests/cloud/server-notices.test.ts.
+    const notices =
+      'Server notices from agentName "system" (e.g. every online member has been waiting for 15+ minutes) are always returned, also with mentionsOnly.';
+    const descriptions = Object.fromEntries((await listedTools()).map((tool) => [tool.name, tool.description]));
+    expect(descriptions.agent_communication_get_messages).toBe(`Get messages from a room. ${notices}`);
+    expect(descriptions.agent_communication_wait_for_messages).toBe(
+      'Wait for new messages in a room using long-polling. This tool will block until new messages are available or the timeout is reached. ' +
+        `Returns immediately if new messages are already available since the last check. ${notices}`,
+    );
   });
 
   it('send_message takes a message of up to 10000 code points, like agora', async () => {

@@ -317,6 +317,20 @@ describe('WaitForMessages', () => {
 
       expect(stopMessage).toBeDefined();
     });
+
+    it('should not return those system messages to waiting agents, and get_messages lists them only without mentionsOnly', async () => {
+      // Unlike cloud mode, which returns the server notices agora posts as `system`: these would wake every other waiter
+      const alice = messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 2500 });
+      const bob = await messageService.waitForMessages({ agentName: 'bob', roomName: 'test-room', timeout: 1000 });
+      expect(bob).toMatchObject({ messages: [], hasNewMessages: false, timedOut: true });
+      expect(await alice).toMatchObject({ messages: [], hasNewMessages: false, timedOut: true });
+
+      // Waiting and stopped waiting, for alice and for bob
+      const all = await messageService.getMessages({ roomName: 'test-room', agentName: 'alice' });
+      expect(all.messages.map(m => m.agentName)).toEqual(['system', 'system', 'system', 'system']);
+      const mentioned = await messageService.getMessages({ roomName: 'test-room', agentName: 'alice', mentionsOnly: true });
+      expect(mentioned.messages).toEqual([]);
+    });
   });
 
   describe('Deadlock detection', () => {

@@ -20,7 +20,7 @@ import {
 import { CloudApiClient } from './CloudApiClient.js';
 import { CloudRoomsService } from './CloudRoomsService.js';
 import { CloudWaitService } from './CloudWaitService.js';
-import { toToolMessage, type WaitForMessagesResult } from './mappers.js';
+import { passesMentionsOnly, toToolMessage, type WaitForMessagesResult } from './mappers.js';
 import type { ApiMessage, ApiMessageList } from './types.js';
 import { downloadParamsValidationError, isValidName, roomNameValidationError } from './validation.js';
 
@@ -170,7 +170,8 @@ export class CloudMessagingService {
 
   /**
    * get_messages: newest first with `offset` / `limit`, rebuilt from "latest N" (no `since`) and
-   * `before` paging. `mentionsOnly` is filtered on the client so paging stays exact.
+   * `before` paging. `mentionsOnly` is filtered on the client so paging stays exact; like the API's, it keeps the
+   * server's notices (agentName `system`).
    */
   async getMessages(params: {
     agentName?: string;
@@ -218,7 +219,7 @@ export class CloudMessagingService {
       }
 
       for (const message of page.messages) {
-        if (!mentionFilter || message.mentions.includes(mentionFilter)) collected.push(message);
+        if (!mentionFilter || passesMentionsOnly(message, mentionFilter)) collected.push(message);
       }
       if (collected.length >= needed || !page.hasMore || page.messages.length === 0) break;
       before = page.messages[page.messages.length - 1]!.seq;
@@ -230,7 +231,8 @@ export class CloudMessagingService {
 
   /**
    * wait_for_messages: WebSocket wait with long polling as the fallback (CloudWaitService). `timeout` 0 waits until a
-   * message arrives; `mentionsOnly` returns only messages that mention the agent; `signal` ends the wait without a result.
+   * message arrives; `mentionsOnly` returns only messages that mention the agent, and server notices; `signal` ends the
+   * wait without a result.
    */
   async waitForMessages(
     params: { agentName: string; roomName: string; timeout?: number; mentionsOnly?: boolean },
