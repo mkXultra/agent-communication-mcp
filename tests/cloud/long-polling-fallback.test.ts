@@ -93,6 +93,99 @@ describe('wait_for_messages falls back to long polling', () => {
     expect(longPolls().every((r) => r.path.includes('agentName=alice'))).toBe(true);
   });
 
+  it('passes mentionsOnly to the long poll, which waits through messages that do not mention the agent and reads them', async () => {
+    const roomName = 'fallback-mentions';
+    await setupRoom(roomName, ['alice', 'bob', 'carol']);
+    setTimeout(() => void client.call('send_message', { agentName: 'bob', roomName, message: 'question for anyone' }), 300);
+    setTimeout(() => void client.call('send_message', { agentName: 'carol', roomName, message: 'over to you @alice' }), 1500);
+
+    const started = Date.now();
+    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 6, mentionsOnly: true });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1400);
+    expect(result.messages.map((m) => m.message)).toEqual(['over to you @alice']);
+    expect(result).toMatchObject({ hasNewMessages: true, timedOut: false });
+    expect(longPolls().length).toBeGreaterThanOrEqual(1);
+    for (const poll of longPolls()) {
+      expect(queryOf(poll.path).get('mentionsOnly')).toBe('true');
+      expect(queryOf(poll.path).get('agentName')).toBe('alice');
+    }
+
+    // The server moved the read position and `nextCursor` past the message it passed over: the next wait, without
+    // mentionsOnly, asks from after it (and without the parameter) and returns nothing.
+    const stored = await api.getMessages(roomName, { since: 0 });
+    expect((await api.listMembers(roomName)).members.find((m) => m.agentName === 'alice')!.lastReadSeq).toBe(stored.latestSeq);
+    proxy.requests.length = 0;
+    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 1 });
+    expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+    expect(longPolls().length).toBeGreaterThanOrEqual(1);
+    for (const poll of longPolls()) {
+      expect(queryOf(poll.path).get('since')).toBe(String(stored.latestSeq));
+      expect(queryOf(poll.path).has('mentionsOnly')).toBe(false);
+    }
+  });
+
+  it('passes mentionsOnly on the follow-up pages too, when more than 1000 unread messages mention the agent', async () => {
+    const roomName = 'fallback-mentions-pages';
+    await setupRoom(roomName, ['alice', 'bob']);
+    const send = (message: string, id: string) => api.sendMessage(roomName, { agentName: 'bob', message, clientMessageId: `${roomName}-${id}` });
+    await send('for anyone first', 'head-1');
+    await send('for anyone second', 'head-2');
+    // 1000 mentions (in parallel batches: their order among themselves does not matter) fill the first page ...
+    for (let i = 0; i < 1000; i += 50) {
+      await Promise.all(Array.from({ length: Math.min(50, 1000 - i) }, (_, j) => send(`@alice ${i + j}`, `mention-${i + j}`)));
+    }
+    // ... and the rest of the room, one after another, mixes mentions with messages for others after that page.
+    for (let i = 1000; i < 1010; i++) {
+      await send(`for anyone before ${i}`, `tail-other-${i}`);
+      await send(`@alice ${i}`, `mention-${i}`);
+    }
+    await send('for anyone last', 'tail-last');
+    const firstPage = await api.getMessages(roomName, { since: 0, limit: 1000 });
+    const secondPage = await api.getMessages(roomName, { since: firstPage.nextCursor, limit: 1000 });
+    const all = [...firstPage.messages, ...secondPage.messages];
+    expect(all).toHaveLength(1023);
+    const mentions = all.filter((message) => message.mentions.includes('alice'));
+    expect(mentions).toHaveLength(1010);
+
+    const result = await client.call<Omit<WaitResult, 'messages'> & { messages: Array<{ id: string }> }>('wait_for_messages', {
+      agentName: 'alice',
+      roomName,
+      timeout: 5,
+      mentionsOnly: true,
+    });
+    expect(result.messages.map((m) => m.id)).toEqual(mentions.map((m) => m.id));
+    expect(result).toMatchObject({ hasNewMessages: true, timedOut: false });
+    // The long poll and the page after it both ask for the mentions only.
+    const requests = proxy.requests.filter((r) => r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/messages?`));
+    expect(requests.some((r) => queryOf(r.path).has('wait'))).toBe(true);
+    expect(requests.some((r) => !queryOf(r.path).has('wait'))).toBe(true);
+    for (const request of requests) {
+      expect(queryOf(request.path).get('mentionsOnly')).toBe('true');
+      expect(queryOf(request.path).get('agentName')).toBe('alice');
+    }
+
+    // Everything the pages looked at is read: the next wait, without mentionsOnly, returns nothing.
+    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 1 });
+    expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+  }, 60000);
+
+  it('times out over long polling with only messages that do not mention the agent, and does not return them again', async () => {
+    const roomName = 'fallback-mentions-timeout';
+    await setupRoom(roomName, ['alice', 'bob']);
+    setTimeout(() => void client.call('send_message', { agentName: 'bob', roomName, message: 'for anyone' }), 300);
+
+    const started = Date.now();
+    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 2, mentionsOnly: true });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(2000);
+    expect(result).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+
+    const stored = await api.getMessages(roomName, { since: 0 });
+    expect(stored.messages.map((m) => m.message)).toEqual(['for anyone']);
+    expect((await api.listMembers(roomName)).members.find((m) => m.agentName === 'alice')!.lastReadSeq).toBe(stored.latestSeq);
+    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 1 });
+    expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+  });
+
   it('keeps the client read cursor so replying does not hide earlier messages', async () => {
     await setupRoom('fallback-cursor', ['alice', 'bob']);
     await client.call('send_message', { agentName: 'bob', roomName: 'fallback-cursor', message: 'question 1' });

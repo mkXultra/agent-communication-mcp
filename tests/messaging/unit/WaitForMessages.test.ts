@@ -584,6 +584,154 @@ describe('WaitForMessages', () => {
     });
   });
 
+  describe('Waiting only for mentions (mentionsOnly)', () => {
+    const roomDir = () => path.join(testDataDir, 'rooms', 'test-room');
+    const readWaitingAgents = async () => JSON.parse(await fs.readFile(path.join(roomDir(), 'waiting_agents.json'), 'utf-8'));
+    const lastReadMessageId = async (agentName: string): Promise<string | undefined> => {
+      const readStatus = await fs.readFile(path.join(roomDir(), 'read_status.json'), 'utf-8').catch(() => '{}');
+      return JSON.parse(readStatus)[agentName]?.lastReadMessageId;
+    };
+    const send = (agentName: string, message: string) => messageService.sendMessage({ agentName, roomName: 'test-room', message });
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    it('should wait through messages that do not mention the agent, marking them read, and return the one that does', async () => {
+      let settled = false;
+      const startTime = Date.now();
+      const waitPromise = messageService.waitForMessages({
+        agentName: 'alice',
+        roomName: 'test-room',
+        timeout: 10000,
+        mentionsOnly: true
+      }).finally(() => { settled = true; });
+
+      await sleep(100);
+      await send('bob', 'A question for anyone');
+      const forBob = await send('charlie', 'Over to you @bob');
+      await send('alice', 'A note to myself @alice');
+      await sleep(1500);
+      // Passed over and marked read (the agent's own message is never returned), still waiting
+      expect(settled).toBe(false);
+      expect(await lastReadMessageId('alice')).toBe(forBob.messageId);
+      expect(await readWaitingAgents()).toEqual([expect.objectContaining({ agentName: 'alice', timeout: 10000 })]);
+
+      const mention = await send('bob', '@alice can you take a look?');
+      const result = await waitPromise;
+      expect(Date.now() - startTime).toBeGreaterThanOrEqual(1600);
+      expect(result).toEqual({
+        messages: [expect.objectContaining({ id: mention.messageId, agentName: 'bob', message: '@alice can you take a look?', mentions: ['alice'] })],
+        hasNewMessages: true,
+        timedOut: false,
+        warning: undefined,
+        waitingAgents: undefined
+      });
+      expect(await lastReadMessageId('alice')).toBe(mention.messageId);
+      expect(await readWaitingAgents()).toEqual([]);
+
+      // What it passed over is not returned again
+      const next = await messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 1000 });
+      expect(next).toMatchObject({ messages: [], hasNewMessages: false, timedOut: true });
+    });
+
+    it('should return at once only the mentions among the unread messages, and mark all of them read', async () => {
+      await send('bob', 'Before: for anyone');
+      const first = await send('charlie', '@alice first');
+      const second = await send('bob', 'Also for @charlie and @alice');
+      const last = await send('charlie', 'After: for anyone');
+
+      const startTime = Date.now();
+      const result = await messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 5000, mentionsOnly: true });
+      expect(Date.now() - startTime).toBeLessThan(1000);
+      expect(result.messages.map(m => m.id)).toEqual([first.messageId, second.messageId]);
+      expect(result.timedOut).toBe(false);
+      // Read up to the last unread message it looked at, the one after the mentions included
+      expect(await lastReadMessageId('alice')).toBe(last.messageId);
+
+      const next = await messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 1000 });
+      expect(next.messages).toEqual([]);
+    });
+
+    it('should time out with only messages that do not mention the agent, returning none and leaving them read', async () => {
+      const startTime = Date.now();
+      const waitPromise = messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 2000, mentionsOnly: true });
+      await sleep(200);
+      await send('bob', 'For anyone');
+      const last = await send('charlie', 'For @bob');
+
+      const result = await waitPromise;
+      expect(Date.now() - startTime).toBeGreaterThanOrEqual(2000);
+      expect(result).toEqual({ messages: [], hasNewMessages: false, timedOut: true, warning: undefined, waitingAgents: undefined });
+      expect(await lastReadMessageId('alice')).toBe(last.messageId);
+      expect(await readWaitingAgents()).toEqual([]);
+
+      const next = await messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 1000 });
+      expect(next).toMatchObject({ messages: [], hasNewMessages: false, timedOut: true });
+    });
+
+    it('should return every unread message when mentionsOnly is false or left out', async () => {
+      await send('bob', 'For anyone');
+      const explicit = await messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 1000, mentionsOnly: false });
+      expect(explicit.messages.map(m => m.message)).toEqual(['For anyone']);
+
+      await send('charlie', 'Also for anyone');
+      const leftOut = await messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 1000 });
+      expect(leftOut.messages.map(m => m.message)).toEqual(['Also for anyone']);
+    });
+
+    it('should keep waiting without a time limit (timeout 0) until a message mentions the agent', async () => {
+      let settled = false;
+      const waitPromise = messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 0, mentionsOnly: true })
+        .finally(() => { settled = true; });
+      await sleep(200);
+      const forAnyone = await send('bob', 'Not for alice');
+      await sleep(2000);
+      expect(settled).toBe(false);
+      expect(await lastReadMessageId('alice')).toBe(forAnyone.messageId);
+      expect(await readWaitingAgents()).toEqual([expect.objectContaining({ agentName: 'alice', timeout: 0 })]);
+
+      const mention = await send('charlie', 'Finally, @alice');
+      const result = await waitPromise;
+      expect(result.messages.map(m => m.id)).toEqual([mention.messageId]);
+    });
+
+    it('should stay in the waiting list while it passes over messages, so that others get the deadlock warning', async () => {
+      const alicePromise = messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 10000, mentionsOnly: true });
+      await sleep(100);
+      const forAnyone = await send('charlie', 'For anyone');
+      for (let i = 0; i < 30 && (await lastReadMessageId('alice')) !== forAnyone.messageId; i++) await sleep(100);
+      expect(await lastReadMessageId('alice')).toBe(forAnyone.messageId);
+
+      const bobResult = await messageService.waitForMessages({ agentName: 'bob', roomName: 'test-room', timeout: 5000 });
+      expect(bobResult.messages.map(m => m.message)).toEqual(['For anyone']);
+      expect(bobResult.waitingAgents).toEqual(['alice']);
+      expect(bobResult.warning).toBe('Potential deadlock detected: 1 other agent(s) are also waiting for messages');
+
+      await send('bob', 'Done, @alice');
+      const aliceResult = await alicePromise;
+      expect(aliceResult.messages.map(m => m.message)).toEqual(['Done, @alice']);
+      expect(aliceResult.warning).toBeUndefined();
+    });
+
+    it('should leave read what it passed over when the signal aborts, and the next mention for the next call', async () => {
+      const controller = new AbortController();
+      const waitPromise = messageService.waitForMessages(
+        { agentName: 'alice', roomName: 'test-room', timeout: 0, mentionsOnly: true },
+        controller.signal
+      );
+      await sleep(100);
+      const forAnyone = await send('bob', 'Not for alice');
+      for (let i = 0; i < 30 && (await lastReadMessageId('alice')) !== forAnyone.messageId; i++) await sleep(100);
+      expect(await lastReadMessageId('alice')).toBe(forAnyone.messageId);
+
+      controller.abort();
+      await expect(waitPromise).rejects.toThrow(WaitCancelledError);
+      expect(await readWaitingAgents()).toEqual([]);
+
+      const mention = await send('charlie', '@alice after the cancel');
+      const next = await messageService.waitForMessages({ agentName: 'alice', roomName: 'test-room', timeout: 1000 });
+      expect(next.messages.map(m => m.id)).toEqual([mention.messageId]);
+    });
+  });
+
   describe('Error cases', () => {
     it('should throw RoomNotFoundError for non-existent room', async () => {
       await expect(messageService.waitForMessages({

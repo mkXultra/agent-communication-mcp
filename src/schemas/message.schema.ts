@@ -91,6 +91,7 @@ export const getMessagesOutputSchema = z.object({
 });
 
 // wait_for_messages ツール（timeout はミリ秒。ツール定義の 1〜300 秒・既定 30 秒と同じ範囲で、0 はメッセージが届くまで無期限に待つ）
+// mentionsOnly は agentName 宛のメンションを含むメッセージだけを返す（それ以外は既読にして待ち続ける）
 export const waitForMessagesInputSchema = z.object({
   agentName: agentNameSchema,
   roomName: roomNameSchema,
@@ -100,6 +101,7 @@ export const waitForMessagesInputSchema = z.object({
     .refine((timeout) => timeout <= 300000, 'Timeout cannot exceed 300000ms')
     .optional()
     .default(30000),
+  mentionsOnly: z.boolean().optional().default(false),
 });
 
 export const waitForMessagesOutputSchema = z.object({

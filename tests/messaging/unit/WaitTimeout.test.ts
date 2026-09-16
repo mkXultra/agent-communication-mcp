@@ -28,9 +28,9 @@ describe('wait_for_messages timeout', () => {
 
   it('is accepted internally as 0 or 1000..300000 ms, or left out', () => {
     for (const timeout of [0, 1000, 30000, 300000]) {
-      expect(MessageValidator.validateWaitForMessages({ ...base, timeout })).toEqual({ ...base, timeout });
+      expect(MessageValidator.validateWaitForMessages({ ...base, timeout })).toEqual({ ...base, timeout, mentionsOnly: false });
     }
-    expect(MessageValidator.validateWaitForMessages(base)).toEqual(base);
+    expect(MessageValidator.validateWaitForMessages(base)).toEqual({ ...base, mentionsOnly: false });
   });
 
   it('is rejected internally between 0 and 1000 ms, above 300000 ms, when negative and when not whole', () => {
@@ -63,11 +63,11 @@ describe('wait_for_messages timeout', () => {
     await handleWaitForMessages({ ...base }, adapter);
 
     expect(adapter.waitForMessages.mock.calls).toEqual([
-      [{ ...base, timeout: 300000 }, signal],
+      [{ ...base, timeout: 300000, mentionsOnly: false }, signal],
       // Rejected by the validator behind the adapter (above 300000 ms).
-      [{ ...base, timeout: 301000 }, undefined],
-      [{ ...base, timeout: 0 }, undefined],
-      [{ ...base, timeout: undefined }, undefined],
+      [{ ...base, timeout: 301000, mentionsOnly: false }, undefined],
+      [{ ...base, timeout: 0, mentionsOnly: false }, undefined],
+      [{ ...base, timeout: undefined, mentionsOnly: false }, undefined],
     ]);
   });
 });

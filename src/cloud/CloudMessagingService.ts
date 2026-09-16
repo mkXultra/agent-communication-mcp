@@ -230,10 +230,10 @@ export class CloudMessagingService {
 
   /**
    * wait_for_messages: WebSocket wait with long polling as the fallback (CloudWaitService). `timeout` 0 waits until a
-   * message arrives; `signal` ends the wait without a result.
+   * message arrives; `mentionsOnly` returns only messages that mention the agent; `signal` ends the wait without a result.
    */
   async waitForMessages(
-    params: { agentName: string; roomName: string; timeout?: number },
+    params: { agentName: string; roomName: string; timeout?: number; mentionsOnly?: boolean },
     signal?: AbortSignal,
   ): Promise<WaitForMessagesResult> {
     const { agentName, roomName } = params;
@@ -247,6 +247,6 @@ export class CloudMessagingService {
       throw error;
     }
     const timeoutMs = validated.timeout ?? WAIT_CONSTANTS.DEFAULT_TIMEOUT;
-    return this.waits.waitForMessages(validated.agentName, validated.roomName, timeoutMs, signal);
+    return this.waits.waitForMessages(validated.agentName, validated.roomName, timeoutMs, validated.mentionsOnly ?? false, signal);
   }
 }

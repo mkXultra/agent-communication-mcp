@@ -108,6 +108,34 @@ describe('wait_for_messages: the same results in file mode and cloud mode', () =
     expect(cloud.bob.messages.map((m) => m.message)).toEqual(['wake up @alice @bob']);
   }, 60000);
 
+  it('with mentionsOnly, returns only the mentions, keeps the agent listed as waiting and reads what it passed over', async () => {
+    const { file, cloud } = await inBothModes(async ({ client, untilWaiting }) => {
+      const roomName = 'parity-mentions';
+      await client.call('create_room', { roomName });
+      for (const agentName of ['alice', 'bob', 'carol']) await client.call('enter_room', { agentName, roomName });
+
+      const alice = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 15, mentionsOnly: true });
+      await untilWaiting(roomName, 'alice');
+      await client.call('send_message', { agentName: 'carol', roomName, message: 'question for anyone' });
+      await client.call('send_message', { agentName: 'carol', roomName, message: 'and one for @bob' });
+      // bob gets carol's messages at once; alice passes over them and is still waiting.
+      const bob = await client.call<WaitResult>('wait_for_messages', { agentName: 'bob', roomName, timeout: 5 });
+      await client.call('send_message', { agentName: 'bob', roomName, message: 'answered, @alice' });
+      const first = await alice;
+      const second = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 1 });
+      return { bob: withoutIds(bob), alice: [first, second].map(withoutIds) };
+    });
+
+    expect(cloud).toEqual(file);
+    expect(cloud.bob.messages.map((m) => m.message)).toEqual(['question for anyone', 'and one for @bob']);
+    expect(cloud.bob.waitingAgents).toEqual(['alice']);
+    expect(cloud.bob.warning).toBe('Potential deadlock detected: 1 other agent(s) are also waiting for messages');
+    expect(cloud.alice[0]!.messages).toEqual([{ agentName: 'bob', roomName: 'parity-mentions', message: 'answered, @alice', mentions: ['alice'] }]);
+    expect(cloud.alice[0]).toMatchObject({ hasNewMessages: true, timedOut: false });
+    expect(cloud.alice[0]!.warning).toBeUndefined();
+    expect(cloud.alice[1]).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+  }, 60000);
+
   it('returns what others sent before the agent spoke, then only what is new', async () => {
     const { file, cloud } = await inBothModes(async ({ client }) => {
       const roomName = 'parity-reply';

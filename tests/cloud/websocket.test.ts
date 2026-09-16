@@ -4,9 +4,10 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getCloudBackend, CloudApiClient, CloudBackend } from '../../src/cloud/index.js';
+import { WaitCancelledError } from '../../src/errors/index.js';
 import { issueToken, startAgora, type AgoraInstance } from './harness/agora.js';
 import { createMcpClient, McpCallError, sleep, waitUntil, withEnv, type McpTestClient } from './harness/mcp.js';
-import { AgoraProxy } from './harness/proxy.js';
+import { AgoraProxy, type RecordedRequest } from './harness/proxy.js';
 
 const agoraUrl = process.env.AGENT_COMM_API_URL!;
 const token = process.env.AGENT_COMM_TOKEN!;
@@ -173,6 +174,373 @@ describe('wait_for_messages over WebSocket', () => {
     expect(next.messages.map((m) => m.message)).toEqual(['for the next call']);
     // No response is sent for a cancelled call.
     expect(answered).toBe(false);
+  });
+
+  it('with mentionsOnly, waits through messages that do not mention the agent and returns on a mention, reading the others', async () => {
+    await setupRoom('mentions', ['alice', 'bob', 'carol']);
+    const aliceWaiting = async () => (await membersOf(api, 'mentions')).alice!.waiting === true;
+
+    let settled = false;
+    const waiting = client
+      .call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mentions', timeout: 10, mentionsOnly: true })
+      .finally(() => {
+        settled = true;
+      });
+    await waitUntil(aliceWaiting, 5000, 'alice waiting');
+    await client.call('send_message', { agentName: 'bob', roomName: 'mentions', message: 'question for anyone' });
+    await client.call('send_message', { agentName: 'carol', roomName: 'mentions', message: 'over to you @bob' });
+    await client.call('send_message', { agentName: 'alice', roomName: 'mentions', message: 'note to myself @alice' });
+    await sleep(500);
+    // Filtered on the client: the wait goes on, still declared on the server (D3), without another frame.
+    expect(settled).toBe(false);
+    expect(await aliceWaiting()).toBe(true);
+    expect(proxy.clientFrames.map((frame) => frame.type)).toEqual(['wait_start']);
+
+    await client.call('send_message', { agentName: 'bob', roomName: 'mentions', message: 'your turn @alice' });
+    const result = await waiting;
+    expect(result.messages.map((m) => m.message)).toEqual(['your turn @alice']);
+    expect(result.messages[0]!.mentions).toEqual(['alice']);
+    expect(result).toMatchObject({ hasNewMessages: true, timedOut: false });
+
+    // One read position for the whole wait, past the messages it passed over; nothing went over HTTP.
+    const stored = await api.getMessages('mentions', { since: 0 });
+    expect(proxy.clientFrames.map((frame) => frame.type)).toEqual(['wait_start', 'wait_end', 'read']);
+    expect(proxy.clientFrames[2]).toEqual({ type: 'read', seq: stored.latestSeq, requestId: expect.any(String) });
+    expect((await membersOf(api, 'mentions')).alice!.lastReadSeq).toBe(stored.latestSeq);
+    expect(proxy.requests.some((r) => r.method === 'GET' && r.path.includes('/messages?'))).toBe(false);
+
+    // The client cursor moved past them as well: the next wait, without mentionsOnly, does not return them.
+    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mentions', timeout: 1 });
+    expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+  });
+
+  it('with mentionsOnly, times out with only messages that do not mention the agent and stores the read position past them', async () => {
+    await setupRoom('mentions-timeout', ['alice', 'bob']);
+    setTimeout(() => void client.call('send_message', { agentName: 'bob', roomName: 'mentions-timeout', message: 'for anyone' }), 300);
+
+    const started = Date.now();
+    const result = await client.call<WaitResult>('wait_for_messages', {
+      agentName: 'alice',
+      roomName: 'mentions-timeout',
+      timeout: 2,
+      mentionsOnly: true,
+    });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(2000);
+    expect(result).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+
+    const stored = await api.getMessages('mentions-timeout', { since: 0 });
+    expect(stored.messages.map((m) => m.message)).toEqual(['for anyone']);
+    expect(proxy.clientFrames.map((frame) => frame.type)).toEqual(['wait_start', 'wait_end', 'read']);
+    expect(proxy.clientFrames[2]).toEqual({ type: 'read', seq: stored.latestSeq, requestId: expect.any(String) });
+    expect((await membersOf(api, 'mentions-timeout')).alice!.lastReadSeq).toBe(stored.latestSeq);
+
+    // Returned again neither by this process (client cursor) nor by another one (server read position).
+    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mentions-timeout', timeout: 1 });
+    expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+    const other = new CloudBackend({ apiUrl: proxy.url, token });
+    try {
+      const elsewhere = await other.messaging.waitForMessages({ agentName: 'alice', roomName: 'mentions-timeout', timeout: 1000 });
+      expect(elsewhere).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+    } finally {
+      await other.close();
+    }
+  });
+
+  it('with mentionsOnly, returns only the mentions among the messages buffered since the last call and consumes the rest', async () => {
+    await setupRoom('mentions-buffered', ['alice', 'bob']);
+    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'mentions-buffered', timeout: 1 });
+    for (const message of ['before', 'first @alice', 'between', 'second @alice', 'after']) {
+      await client.call('send_message', { agentName: 'bob', roomName: 'mentions-buffered', message });
+    }
+    await sleep(300);
+
+    const started = Date.now();
+    const result = await client.call<WaitResult>('wait_for_messages', {
+      agentName: 'alice',
+      roomName: 'mentions-buffered',
+      timeout: 5,
+      mentionsOnly: true,
+    });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(result.messages.map((m) => m.message)).toEqual(['first @alice', 'second @alice']);
+    // Like the `nextCursor` of the API, the read position covers every message the wait looked at, 'after' included.
+    const stored = await api.getMessages('mentions-buffered', { since: 0 });
+    expect((await membersOf(api, 'mentions-buffered')).alice!.lastReadSeq).toBe(stored.latestSeq);
+
+    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mentions-buffered', timeout: 1 });
+    expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+  });
+
+  it('with mentionsOnly, a cancelled wait leaves read what it passed over, and the mention that follows for the next call', async () => {
+    await setupRoom('mentions-cancelled', ['alice', 'bob']);
+    const member = async () => (await membersOf(api, 'mentions-cancelled')).alice!;
+
+    const pending = client.start<WaitResult>('wait_for_messages', {
+      agentName: 'alice',
+      roomName: 'mentions-cancelled',
+      timeout: 0,
+      mentionsOnly: true,
+    });
+    let answered = false;
+    pending.result.then(
+      () => {
+        answered = true;
+      },
+      (error: unknown) => {
+        if (error instanceof McpCallError) answered = true;
+      },
+    );
+    await waitUntil(async () => (await member()).waiting === true, 5000, 'alice waiting');
+    await client.call('send_message', { agentName: 'bob', roomName: 'mentions-cancelled', message: 'for anyone' });
+    await sleep(500);
+
+    pending.cancel('tool call timed out');
+    await waitUntil(async () => (await member()).waiting === false, 3000, 'wait ended on the server');
+    const stored = await api.getMessages('mentions-cancelled', { since: 0 });
+    await waitUntil(async () => (await member()).lastReadSeq === stored.latestSeq, 3000, 'read position stored');
+    expect(proxy.clientFrames.map((frame) => frame.type)).toEqual(['wait_start', 'wait_end', 'read']);
+
+    // The connection drops before the next call, which connects again from the client cursor: past what the cancelled
+    // wait passed over.
+    proxy.destroyWebSockets();
+    await waitUntil(() => !backend().waits.hasOpenSocket('mentions-cancelled', 'alice'), 5000, 'socket closed');
+    await client.call('send_message', { agentName: 'bob', roomName: 'mentions-cancelled', message: 'now for @alice' });
+    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mentions-cancelled', timeout: 3 });
+    expect(next.messages.map((m) => m.message)).toEqual(['now for @alice']);
+    expect(proxy.requests.filter((r) => r.method === 'UPGRADE').map((r) => r.path)).toEqual([
+      '/rooms/mentions-cancelled/ws?agentName=alice&since=0',
+      `/rooms/mentions-cancelled/ws?agentName=alice&since=${stored.latestSeq}`,
+    ]);
+    expect(answered).toBe(false);
+  });
+
+  it('with mentionsOnly, stores the read position of what it passed over on a connection that dropped before the wait timed out', async () => {
+    const roomName = 'mentions-dropped';
+    await setupRoom(roomName, ['alice', 'bob']);
+    const member = async () => (await membersOf(api, roomName)).alice!;
+    const markReads = () =>
+      proxy.requests.filter((r) => r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/messages?`)).map((r) => r.path);
+
+    const waiting = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 5, mentionsOnly: true });
+    await waitUntil(async () => (await member()).waiting === true, 5000, 'alice waiting');
+    await client.call('send_message', { agentName: 'bob', roomName, message: 'for anyone' });
+    await sleep(500);
+    // Passed over on the first connection, which drops; the call connects again and waits out its timeout there.
+    proxy.destroyWebSockets();
+    await waitUntil(() => proxy.clientFrames.filter((frame) => frame.type === 'wait_start').length === 2, 5000, 'declared again');
+    expect((await member()).lastReadSeq).toBe(0);
+
+    const result = await waiting;
+    expect(result).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+    const stored = await api.getMessages(roomName, { since: 0 });
+    expect((await member()).lastReadSeq).toBe(stored.latestSeq);
+    // The second connection did not deliver the message, so the read position went over HTTP, after a check without
+    // side effects that the message is still there.
+    expect(proxy.clientFrames.map((frame) => frame.type)).toEqual(['wait_start', 'wait_start', 'wait_end']);
+    expect(markReads()).toEqual([
+      `/rooms/${roomName}/messages?before=${stored.latestSeq + 1}&limit=1`,
+      `/rooms/${roomName}/messages?agentName=alice&before=${stored.latestSeq + 1}&limit=1&markRead=true`,
+    ]);
+
+    // Returned again neither by this process (client cursor) nor by another one (server read position).
+    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 1 });
+    expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+    const other = new CloudBackend({ apiUrl: proxy.url, token });
+    try {
+      const elsewhere = await other.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 1000 });
+      expect(elsewhere).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+    } finally {
+      await other.close();
+    }
+  });
+
+  it('with mentionsOnly, stores that read position when a wait without a time limit is cancelled on the connection made after a drop', async () => {
+    const roomName = 'mentions-dropped-cancelled';
+    await setupRoom(roomName, ['alice', 'bob']);
+    const member = async () => (await membersOf(api, roomName)).alice!;
+    // Connects again at once after a drop, instead of long polling until the cooldown is over.
+    const other = new CloudBackend({ apiUrl: proxy.url, token }, { wait: { webSocketRetryCooldownMs: 50 } });
+    try {
+      const controller = new AbortController();
+      const outcome = other.messaging
+        .waitForMessages({ agentName: 'alice', roomName, timeout: 0, mentionsOnly: true }, controller.signal)
+        .then(
+          () => 'resolved',
+          (error: unknown) => error,
+        );
+      await waitUntil(async () => (await member()).waiting === true, 5000, 'alice waiting');
+      await client.call('send_message', { agentName: 'bob', roomName, message: 'for anyone' });
+      await sleep(500);
+      proxy.destroyWebSockets();
+      await waitUntil(() => proxy.clientFrames.filter((frame) => frame.type === 'wait_start').length === 2, 5000, 'declared again');
+
+      controller.abort();
+      expect(await outcome).toBeInstanceOf(WaitCancelledError);
+      const stored = await api.getMessages(roomName, { since: 0 });
+      expect((await member()).lastReadSeq).toBe(stored.latestSeq);
+      expect(other.waits.stats.longPollRequests).toBe(0);
+
+      const fresh = new CloudBackend({ apiUrl: proxy.url, token });
+      try {
+        const elsewhere = await fresh.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 1000 });
+        expect(elsewhere).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await other.close();
+    }
+  });
+
+  it('with mentionsOnly, stores that read position over HTTP when the call ends with no connection left to store it', async () => {
+    const roomName = 'mentions-no-connection';
+    await setupRoom(roomName, ['alice', 'bob']);
+    const member = async () => (await membersOf(api, roomName)).alice!;
+    const longPoll = (r: RecordedRequest): boolean =>
+      r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/messages?`) && /[?&]wait=/.test(r.path);
+    const other = new CloudBackend({ apiUrl: proxy.url, token });
+    try {
+      const controller = new AbortController();
+      const outcome = other.messaging
+        .waitForMessages({ agentName: 'alice', roomName, timeout: 0, mentionsOnly: true }, controller.signal)
+        .then(
+          () => 'resolved',
+          (error: unknown) => error,
+        );
+      await waitUntil(async () => (await member()).waiting === true, 5000, 'alice waiting');
+      await client.call('send_message', { agentName: 'bob', roomName, message: 'for anyone' });
+      await sleep(500);
+      // The connection drops, the WebSocket cannot be made again, and the long poll that follows is never answered.
+      proxy.webSocketPolicy = 'reject';
+      proxy.holdRequests(longPoll);
+      proxy.destroyWebSockets();
+      await waitUntil(() => proxy.requests.some(longPoll), 10000, 'long poll held');
+      expect((await member()).lastReadSeq).toBe(0);
+
+      controller.abort();
+      expect(await outcome).toBeInstanceOf(WaitCancelledError);
+      const stored = await api.getMessages(roomName, { since: 0 });
+      expect((await member()).lastReadSeq).toBe(stored.latestSeq);
+      expect(proxy.requests.filter((r) => r.method === 'GET' && r.path.includes('before=')).map((r) => r.path)).toEqual([
+        `/rooms/${roomName}/messages?before=${stored.latestSeq + 1}&limit=1`,
+        `/rooms/${roomName}/messages?agentName=alice&before=${stored.latestSeq + 1}&limit=1&markRead=true`,
+      ]);
+    } finally {
+      proxy.holdRequests(undefined);
+      await other.close();
+    }
+  });
+
+  /**
+   * The setup of the test above: alice's mentionsOnly wait in `other` passes over 'for anyone', then loses its connection
+   * with no way left to store that read position before the call ends (WebSocket refused, long poll held). Returns the
+   * outcome of the wait and the seq passed over.
+   */
+  async function passOverWithNoConnectionLeft(
+    roomName: string,
+    other: CloudBackend,
+    signal: AbortSignal,
+  ): Promise<{ outcome: Promise<unknown>; passedOverSeq: number }> {
+    await setupRoom(roomName, ['alice', 'bob']);
+    const longPoll = (r: RecordedRequest): boolean =>
+      r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/messages?`) && /[?&]wait=/.test(r.path);
+    const outcome = other.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 0, mentionsOnly: true }, signal).then(
+      () => 'resolved',
+      (error: unknown) => error,
+    );
+    await waitUntil(async () => (await membersOf(api, roomName)).alice!.waiting === true, 5000, 'alice waiting');
+    const sent = await client.call<{ messageId: string }>('send_message', { agentName: 'bob', roomName, message: 'for anyone' });
+    await sleep(500);
+    proxy.webSocketPolicy = 'reject';
+    proxy.holdRequests(longPoll);
+    proxy.destroyWebSockets();
+    await waitUntil(() => proxy.requests.some(longPoll), 10000, 'long poll held');
+    const passedOver = (await api.getMessages(roomName, { since: 0 })).messages.find((m) => m.id === sent.messageId)!;
+    return { outcome, passedOverSeq: passedOver.seq };
+  }
+
+  /** The IDs another process's default wait for alice returns (straight to agora, past the proxy's rules). */
+  async function returnedToAnotherProcess(roomName: string): Promise<string[]> {
+    const fresh = new CloudBackend({ apiUrl: agoraUrl, token });
+    try {
+      return (await fresh.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 3000 })).messages.map((m) => m.id);
+    } finally {
+      await fresh.close();
+    }
+  }
+
+  it('with mentionsOnly, does not mark a message sent after clear_room_messages read when storing that read position over HTTP', async () => {
+    const roomName = 'mentions-cleared-meanwhile';
+    const other = new CloudBackend({ apiUrl: proxy.url, token });
+    const controller = new AbortController();
+    try {
+      const { outcome, passedOverSeq } = await passOverWithNoConnectionLeft(roomName, other, controller.signal);
+      await api.clearRoomMessages(roomName, true);
+      const clearedTo = (await membersOf(api, roomName)).alice!.lastReadSeq;
+      const sent = await api.sendMessage(roomName, { agentName: 'bob', message: 'after the clear', clientMessageId: `${roomName}-new` });
+
+      controller.abort();
+      expect(await outcome).toBeInstanceOf(WaitCancelledError);
+      // No message at or below the seq passed over is left, so only the check went out: a markRead request that finds
+      // nothing stores the room's latest seq, past the message sent after the clear.
+      expect(proxy.requests.filter((r) => r.method === 'GET' && r.path.includes('before=')).map((r) => r.path)).toEqual([
+        `/rooms/${roomName}/messages?before=${passedOverSeq + 1}&limit=1`,
+      ]);
+      expect((await membersOf(api, roomName)).alice!.lastReadSeq).toBe(clearedTo);
+      expect(await returnedToAnotherProcess(roomName)).toEqual([sent.messageId]);
+    } finally {
+      controller.abort();
+      proxy.holdRequests(undefined);
+      await other.close();
+    }
+  });
+
+  it('with mentionsOnly, does not mark read by that read position a room deleted, created again and rejoined meanwhile', async () => {
+    const roomName = 'mentions-recreated-meanwhile';
+    const other = new CloudBackend({ apiUrl: proxy.url, token });
+    const controller = new AbortController();
+    try {
+      const { outcome, passedOverSeq } = await passOverWithNoConnectionLeft(roomName, other, controller.signal);
+      await api.deleteRoom(roomName);
+      await api.createRoom(roomName);
+      await api.joinRoom(roomName, 'alice');
+      await api.joinRoom(roomName, 'bob');
+      const joinedAt = (await membersOf(api, roomName)).alice!.lastReadSeq;
+      const sent = await api.sendMessage(roomName, { agentName: 'bob', message: 'in the room created again', clientMessageId: `${roomName}-new` });
+      // The new room has a message at or below the seq passed over in the old one: only the epoch tells them apart.
+      expect(sent.seq).toBeLessThanOrEqual(passedOverSeq);
+
+      controller.abort();
+      expect(await outcome).toBeInstanceOf(WaitCancelledError);
+      expect(proxy.requests.filter((r) => r.method === 'GET' && r.path.includes('before=')).map((r) => r.path)).toEqual([
+        `/rooms/${roomName}/messages?before=${passedOverSeq + 1}&limit=1`,
+      ]);
+      expect((await membersOf(api, roomName)).alice!.lastReadSeq).toBe(joinedAt);
+      expect(await returnedToAnotherProcess(roomName)).toEqual([sent.messageId]);
+    } finally {
+      controller.abort();
+      proxy.holdRequests(undefined);
+      await other.close();
+    }
+  });
+
+  it('with mentionsOnly, stores the read position of what a wait passed over when the server shuts down', async () => {
+    const roomName = 'mentions-shutdown';
+    await setupRoom(roomName, ['alice', 'bob']);
+    const member = async () => (await membersOf(api, roomName)).alice!;
+
+    const pending = client.start<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 0, mentionsOnly: true });
+    pending.result.catch(() => undefined);
+    await waitUntil(async () => (await member()).waiting === true, 5000, 'alice waiting');
+    await client.call('send_message', { agentName: 'bob', roomName, message: 'for anyone' });
+    await sleep(500);
+
+    await client.registry.shutdown();
+    // The wait ended over its open connection before the server closed it.
+    expect(proxy.clientFrames.map((frame) => frame.type)).toEqual(['wait_start', 'wait_end', 'read']);
+    const stored = await api.getMessages(roomName, { since: 0 });
+    expect((await member()).lastReadSeq).toBe(stored.latestSeq);
+    await waitUntil(async () => (await member()).connected === false, 5000, 'alice disconnected');
   });
 
   it('returns messages that arrived while no wait was running, then only new ones', async () => {

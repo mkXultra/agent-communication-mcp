@@ -51,6 +51,7 @@ export interface WaitForMessagesParams {
   agentName: string;
   roomName: string;
   timeout?: number;
+  mentionsOnly?: boolean;
 }
 
 export interface WaitForMessagesResponse {

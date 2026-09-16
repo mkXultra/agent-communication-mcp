@@ -1,6 +1,6 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { sendMessageSchema, getMessagesSchema, downloadAttachmentSchema } from '../schemas/index.js';
+import { sendMessageSchema, getMessagesSchema, downloadAttachmentSchema, waitForMessagesInputSchema } from '../schemas/index.js';
 
 export const sendMessageTool: Tool = {
   name: 'agent_communication_send_message',
@@ -119,6 +119,11 @@ export const waitForMessagesTool: Tool = {
         minimum: 0,
         maximum: 300,
         default: 30
+      },
+      mentionsOnly: {
+        type: 'boolean',
+        description: 'Only return messages that mention agentName; other new messages are marked read without being returned',
+        default: false
       }
     },
     required: ['agentName', 'roomName'],
@@ -175,13 +180,17 @@ export async function handleWaitForMessages(
   messagingAdapter: any,
   signal?: AbortSignal
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
+  // mentionsOnly is parsed here like the arguments of the other tools (a boolean, false when left out). The schema's
+  // timeout is in milliseconds, so the other arguments are checked behind the adapter, after the room and the membership
+  const { mentionsOnly } = waitForMessagesInputSchema.pick({ mentionsOnly: true }).parse(args);
   // Convert timeout from seconds to milliseconds; 0 (wait until a message arrives) stays 0
   const timeoutMs = args.timeout === 0 ? 0 : args.timeout ? args.timeout * 1000 : undefined;
-  
+
   const result = await messagingAdapter.waitForMessages({
     agentName: args.agentName,
     roomName: args.roomName,
-    timeout: timeoutMs
+    timeout: timeoutMs,
+    mentionsOnly
   }, signal);
   
   return {

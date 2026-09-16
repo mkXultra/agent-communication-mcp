@@ -10,7 +10,10 @@ import { AppError, WaitCancelledError } from '../errors/index';
 import { getCloudBackend, type CloudBackend, type OperatingMode } from '../cloud/index';
 import { linkAbortSignals, settledOrAborted } from '../utils/abort';
 
-/** How long shutdown() gives the waits it ends to finish (wait_end, the waiting-agents entry) before it returns. */
+/**
+ * How long shutdown() gives the waits it ends to finish (wait_end, the read position of what a mentionsOnly wait passed
+ * over, the waiting-agents entry) before it closes the connections and returns.
+ */
 const SHUTDOWN_GRACE_MS = 2000;
 
 // Type guard for tool names
@@ -170,12 +173,11 @@ export class ToolRegistry {
     // End the waits in progress. A cancelled wait returns nothing and consumes nothing: what arrived stays unread.
     const waits = [...this.waits];
     for (const wait of waits) wait.abort(new WaitCancelledError('the server is shutting down'));
-    await Promise.all([
-      // Cloud mode keeps a WebSocket per room x agent for the process lifetime; close them.
-      this.cloud?.close(),
-      // AbortSignal.timeout does not keep the process alive once the waits are done.
-      settledOrAborted(Promise.all(waits.map((wait) => wait.settled)), AbortSignal.timeout(SHUTDOWN_GRACE_MS)),
-    ]);
+    // The waits end first, while their connections are still open: wait_end, and the read position of what a
+    // mentionsOnly wait passed over. AbortSignal.timeout does not keep the process alive once the waits are done.
+    await settledOrAborted(Promise.all(waits.map((wait) => wait.settled)), AbortSignal.timeout(SHUTDOWN_GRACE_MS));
+    // Cloud mode keeps a WebSocket per room x agent for the process lifetime; close them.
+    await this.cloud?.close();
   }
   
   private async waitForMessages(args: unknown, requestSignal: AbortSignal): Promise<{ content: Array<{ type: string; text: string }> }> {

@@ -124,6 +124,82 @@ describe('wait_for_messages without a time limit (timeout 0)', () => {
     expect(await isWaiting(roomName, 'alice')).toBe(false);
   }, 30000);
 
+  it('with mentionsOnly, keeps declaring the wait through messages that do not mention the agent, and returns on a mention', async () => {
+    const roomName = 'mentions';
+    const backend = backendWith();
+    await setupRoom(backend, roomName);
+
+    let settled = false;
+    const waiting = backend.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 0, mentionsOnly: true }).finally(() => {
+      settled = true;
+    });
+    await waitUntil(() => proxy.clientFrames.length > 0, 5000, 'first wait_start');
+
+    // Messages for others across several declarations (each lasts 2 s on the server); alice stays listed as waiting.
+    for (let i = 0; i < 4; i++) {
+      await sleep(1200);
+      await backend.messaging.sendMessage({ agentName: 'bob', roomName, message: `for anyone ${i}` });
+      expect(await isWaiting(roomName, 'alice')).toBe(true);
+    }
+    await sleep(1000);
+    expect(settled).toBe(false);
+    expect(await isWaiting(roomName, 'alice')).toBe(true);
+
+    const sent = await backend.messaging.sendMessage({ agentName: 'bob', roomName, message: 'finally @alice' });
+    const result = await waiting;
+    expect(result.messages.map((message) => message.id)).toEqual([sent.messageId]);
+    expect(result.timedOut).toBe(false);
+
+    // One wait: wait_start with the same requestId every 1.5 s, unaffected by the messages passed over, then wait_end and
+    // a single read position past everything.
+    const frames = proxy.clientFrameLog;
+    const starts = frames.filter(({ frame }) => frame.type === 'wait_start');
+    expect(starts.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(starts.map(({ frame }) => frame.requestId)).size).toBe(1);
+    const intervals = starts.slice(1).map(({ at }, i) => at - starts[i]!.at);
+    for (const interval of intervals) {
+      expect(interval).toBeGreaterThanOrEqual(1400);
+      expect(interval).toBeLessThan(1900);
+    }
+    const latestSeq = (await api.getMessages(roomName, { since: 0 })).latestSeq;
+    expect(frames.slice(starts.length).map(({ frame }) => frame)).toEqual([
+      { type: 'wait_end', requestId: starts[0]!.frame.requestId },
+      { type: 'read', seq: latestSeq, requestId: expect.any(String) },
+    ]);
+    expect(backend.waits.stats.longPollRequests).toBe(0);
+  }, 30000);
+
+  it('with mentionsOnly over long polling, passes mentionsOnly on every long poll until a mention arrives', async () => {
+    const roomName = 'mentions-long-poll';
+    const backend = backendWith({ webSocketRetryCooldownMs: 1500 });
+    await setupRoom(backend, roomName);
+    proxy.webSocketPolicy = 'reject';
+
+    let settled = false;
+    const waiting = backend.messaging.waitForMessages({ agentName: 'alice', roomName, timeout: 0, mentionsOnly: true }).finally(() => {
+      settled = true;
+    });
+    await waitUntil(() => isWaiting(roomName, 'alice'), 5000, 'alice waiting');
+    await backend.messaging.sendMessage({ agentName: 'bob', roomName, message: 'for anyone' });
+    // Several long-poll rounds (the WebSocket is tried again after each 1.5 s cooldown).
+    await sleep(4000);
+    expect(settled).toBe(false);
+    await waitUntil(() => isWaiting(roomName, 'alice'), 3000, 'alice still waiting');
+
+    const sent = await backend.messaging.sendMessage({ agentName: 'bob', roomName, message: 'now @alice' });
+    const result = await waiting;
+    expect(result.messages.map((message) => message.id)).toEqual([sent.messageId]);
+    const polls = longPolls(roomName);
+    expect(polls.length).toBeGreaterThanOrEqual(2);
+    for (const poll of polls) {
+      expect(queryOf(poll.path).get('mentionsOnly')).toBe('true');
+      expect(queryOf(poll.path).get('agentName')).toBe('alice');
+    }
+    // After the first round, the rounds ask from after the message passed over.
+    const forAnyoneSeq = (await api.getMessages(roomName, { since: 0 })).messages.find((m) => m.message === 'for anyone')!.seq;
+    expect(Number(queryOf(polls[polls.length - 1]!.path).get('since'))).toBeGreaterThanOrEqual(forAnyoneSeq);
+  }, 30000);
+
   it('connects again when agora restarts during the wait, and returns the message sent after the restart', async () => {
     const roomName = 'restart';
     const backend = backendWith({ webSocketRetryCooldownMs: 1000 });

@@ -417,11 +417,14 @@ describe('file attachments in cloud mode', () => {
     await setupRoom(client, 'lp-files', ['alice', 'bob']);
     const image = await localFile('chart.png', randomBytes(2048));
 
-    setTimeout(
-      () => void client.call('send_message', { agentName: 'bob', roomName: 'lp-files', message: 'chart @alice', attachments: [image] }),
-      500,
+    const sending = sleep(500).then(() =>
+      client.call('send_message', { agentName: 'bob', roomName: 'lp-files', message: 'chart @alice', attachments: [image] }),
     );
+    sending.catch(() => undefined);
     const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'lp-files', timeout: 10 });
+    // The send is answered after the message reached the waiting call; closing the client before that answer would leave
+    // the request pending until MemoryTransport rejects it (an unhandled rejection in a later test file).
+    await sending;
     expect(result.messages[0]!.attachments).toEqual([
       { id: expect.stringMatching(UUID), name: 'chart.png', size: 2048, contentType: 'image/png' },
     ]);

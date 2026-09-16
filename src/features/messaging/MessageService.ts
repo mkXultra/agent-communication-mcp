@@ -119,8 +119,10 @@ export class MessageService {
 
   /**
    * Returns the unread messages as soon as there are any, or none once `timeout` ms have passed (0: no time limit).
+   * With `mentionsOnly`, only unread messages that mention the agent are returned: the others are marked read as the
+   * wait passes over them, and it goes on waiting.
    * When `signal` aborts, or a newer wait for the same agent and room takes over from one without a time limit, it
-   * rejects with WaitCancelledError and the messages stay unread.
+   * rejects with WaitCancelledError and the messages it would have returned stay unread.
    */
   async waitForMessages(params: WaitForMessagesParams, signal?: AbortSignal): Promise<WaitForMessagesResponse> {
     // Validate input parameters
@@ -188,20 +190,26 @@ export class MessageService {
           throw WaitCancelledError.fromSignal(signal);
         }
         
+        const messages = validatedParams.mentionsOnly
+          ? unreadMessages.filter(msg => msg.mentions.includes(validatedParams.agentName))
+          : unreadMessages;
+        
         if (unreadMessages.length > 0) {
-          // Update read status
+          // Update read status (also past the messages mentionsOnly passes over, so that the wait goes on after them)
           const lastMessage = unreadMessages[unreadMessages.length - 1]!; // Safe because we checked length > 0
           await this.updateReadStatus(
             validatedParams.roomName,
             validatedParams.agentName,
             lastMessage
           );
-          
+        }
+        
+        if (messages.length > 0) {
           // Remove from waiting list
           await this.removeWaitingAgent(validatedParams.roomName, validatedParams.agentName);
           
           return {
-            messages: unreadMessages,
+            messages,
             hasNewMessages: true,
             timedOut: false,
             warning,

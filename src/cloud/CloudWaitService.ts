@@ -10,6 +10,14 @@
 //   each cooldown. Failures another attempt may get past are retried; the others (4xx) end the wait.
 // - A call ends without a result, consuming nothing, when its signal aborts (the MCP request was cancelled, the server
 //   shuts down) or when a newer call for the same room x agent takes over from one without a time limit.
+// - `mentionsOnly` returns only messages whose `mentions` (extracted by the server) name the agent. The others are read
+//   as the wait passes over them, the way a long poll with `mentionsOnly` moves `nextCursor` and the read position past
+//   them: a long poll passes the parameter on; over the WebSocket, which delivers every message, the client consumes
+//   them, moves its cursor and keeps waiting. A call that ends without a result still leaves unread what it would have
+//   returned; what it passed over stays read. The server read position of what the WebSocket passed over belongs to the
+//   call, not to the connection: it is stored when the call ends, however it ends and over whichever connection is left
+//   (over HTTP when none can acknowledge it), unless a long poll of the same call has already stored it.
+//   Over HTTP it can race a clear or a re-created room (markReadOverHttp, https://github.com/mkXultra/agora/issues/5).
 // - The client keeps its own read cursor per room x agent, taken before the agent's first send: from the join
 //   response, or from the member list when the agent joined in an earlier process. Before api 0.4.2 agora moved
 //   `last_read_seq` when the agent *sent*, which hid messages that arrived before the agent's own message (the file
@@ -105,6 +113,14 @@ interface WaitCall {
   timeoutMs: number;
   /** `Infinity` without a time limit. */
   deadline: number;
+  /** Return only messages that mention the agent. */
+  mentionsOnly: boolean;
+  /**
+   * mentionsOnly: the client cursor after the messages this call passed over on a WebSocket, with the epoch of their
+   * room, while the server has not stored a read position that covers it. Kept across the connections and long polls
+   * of the call; stored at the latest when the call ends (storePassedOver).
+   */
+  passedOver: ReadCursor | undefined;
   signal: AbortSignal;
   /** The other agents waiting when the wait began: what the first connection or long poll that told reported. */
   waiting: { waitingAgents?: string[] } | undefined;
@@ -126,6 +142,11 @@ function mergeUnread(agentName: string, ...sources: ApiMessage[][]): ApiMessage[
     }
   }
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+}
+
+/** `mentionsOnly`: whether the `mentions` the server extracted from the message name the agent. */
+function mentionsAgent(message: ApiMessage, agentName: string): boolean {
+  return Array.isArray(message.mentions) && message.mentions.includes(agentName);
 }
 
 export class CloudWaitService {
@@ -155,10 +176,17 @@ export class CloudWaitService {
   }
 
   /**
-   * Waits up to `timeoutMs` (0: until a message arrives). Rejects with WaitCancelledError, consuming nothing, when
-   * `signal` aborts or a newer call for the same room x agent takes over from a wait without a time limit.
+   * Waits up to `timeoutMs` (0: until a message arrives); with `mentionsOnly`, for a message that mentions the agent,
+   * reading the others as it passes over them. Rejects with WaitCancelledError, consuming nothing it would have
+   * returned, when `signal` aborts or a newer call for the same room x agent takes over from a wait without a time limit.
    */
-  async waitForMessages(agentName: string, roomName: string, timeoutMs: number, signal?: AbortSignal): Promise<WaitForMessagesResult> {
+  async waitForMessages(
+    agentName: string,
+    roomName: string,
+    timeoutMs: number,
+    mentionsOnly: boolean,
+    signal?: AbortSignal,
+  ): Promise<WaitForMessagesResult> {
     const key = socketKey(roomName, agentName);
     const noTimeLimit = timeoutMs === WAIT_CONSTANTS.NO_TIMEOUT;
     const turn = this.openEndedWaits.start(key, noTimeLimit, signal);
@@ -168,15 +196,21 @@ export class CloudWaitService {
       agentName,
       timeoutMs,
       deadline: noTimeLimit ? Infinity : Date.now() + timeoutMs,
+      mentionsOnly,
+      passedOver: undefined,
       signal: turn.signal,
       waiting: undefined,
       waitingKnown: false,
     };
     try {
       // Calls for the same room x agent share one connection and one server-side waiter; run them one at a time.
-      return await this.withLock(key, call.signal, () =>
-        noTimeLimit ? this.waitWithoutTimeLimit(call) : this.waitWithTimeLimit(call),
-      );
+      return await this.withLock(key, call.signal, async () => {
+        try {
+          return await (noTimeLimit ? this.waitWithoutTimeLimit(call) : this.waitWithTimeLimit(call));
+        } finally {
+          await this.storePassedOver(call);
+        }
+      });
     } finally {
       turn.end();
     }
@@ -256,7 +290,8 @@ export class CloudWaitService {
         if (!(error instanceof RoomSocketClosedError)) throw error;
         this.forget(key, socket);
         if (Date.now() >= deadline) {
-          // No time left to reconnect. Nothing was consumed, so the next call still returns what is unread.
+          // No time left to reconnect. Nothing was returned, so the next call still returns what is unread (the read
+          // position of what a mentionsOnly call passed over is stored as the call ends).
           logger.warn('Room WebSocket dropped at the end of a wait', { roomName, agentName, reason: error.message });
           return toWaitResult(agentName, [], true, call.waiting);
         }
@@ -418,6 +453,9 @@ export class CloudWaitService {
       socket.consumeThrough(cursor);
     }
 
+    // Passed over in a room that has been deleted and created again since: nothing of it is left to mark read.
+    if (call.passedOver && call.passedOver.epoch !== socket.epoch) call.passedOver = undefined;
+
     let messages: ApiMessage[] = [];
     let consumedThrough = cursor;
     let timedOut = false;
@@ -441,9 +479,18 @@ export class CloudWaitService {
         // Resolved only after every fetch succeeded: a failure leaves them all pending for the next call.
         for (const range of fetches) socket.resolveFetch(range);
 
-        messages = mergeUnread(agentName, buffered, fetched);
+        const unread = mergeUnread(agentName, buffered, fetched);
+        messages = call.mentionsOnly ? unread.filter((message) => mentionsAgent(message, agentName)) : unread;
         consumedThrough = Math.max(consumedThrough, through);
         if (messages.length > 0) break;
+        if (unread.length > 0) {
+          // mentionsOnly: what mentions only others is read as the wait passes over it (a long poll moves `nextCursor`
+          // past it too), and the wait goes on after it. The call owes the server read position until it is stored.
+          socket.consumeThrough(consumedThrough);
+          this.cursors.set(key, { seq: consumedThrough, epoch: socket.epoch });
+          call.passedOver = { seq: consumedThrough, epoch: socket.epoch };
+          cursor = consumedThrough;
+        }
         if (outcome === 'timeout' && Date.now() >= deadline) {
           timedOut = true;
           break;
@@ -454,54 +501,89 @@ export class CloudWaitService {
         }
       }
     } catch (error) {
-      if (!(error instanceof RoomSocketClosedError)) await this.finishWait(socket, requestId, roomName, agentName, 0);
+      // A connection that is gone stores nothing: what the call passed over stays owed, to the connection or long poll
+      // that follows or to the end of the call.
+      if (!(error instanceof RoomSocketClosedError)) await this.finishWait(call, socket, requestId, false, cursor);
       throw error;
     }
 
     socket.consumeThrough(consumedThrough);
     this.cursors.set(key, { seq: consumedThrough, epoch: socket.epoch });
-    await this.finishWait(socket, requestId, roomName, agentName, messages.length > 0 ? consumedThrough : 0);
+    await this.finishWait(call, socket, requestId, messages.length > 0, consumedThrough);
     return toWaitResult(agentName, messages, timedOut, call.waiting);
   }
 
   /**
-   * `wait_end`, and when messages were returned the read position (§6: once per wait). `read` may not go past
-   * what this connection delivered, so messages that came over HTTP are marked read over HTTP. Failures are only
-   * logged: the result is already decided and the client cursor has moved on.
+   * `wait_end`, and the read position through `through` (§6: once per wait) when this wait returned messages or the
+   * call owes one for messages it passed over (mentionsOnly), on this connection or an earlier one. `read` may not go
+   * past what this connection delivered, so the rest is marked read over HTTP. Failures are only logged: the result is
+   * already decided and the client cursor has moved on. A read position owed for messages passed over that could not
+   * be stored stays owed, up to `through`, for storePassedOver.
    */
-  private async finishWait(
-    socket: RoomSocket,
-    requestId: string,
-    roomName: string,
-    agentName: string,
-    readThrough: number,
-  ): Promise<void> {
+  private async finishWait(call: WaitCall, socket: RoomSocket, requestId: string, returned: boolean, through: number): Promise<void> {
+    const { roomName, agentName } = call;
+    const owed = call.passedOver !== undefined;
+    const readThrough = returned || owed ? through : 0;
     const timeoutMs = Math.min(this.ackTimeoutMs, FINISH_TIMEOUT_MS);
-    const logFailure = (error: unknown): void =>
-      logger.warn('Could not store the read position', { roomName, agentName, reason: String(error) });
-    const tasks: Array<Promise<unknown>> = [
-      // An already expired or replaced wait answers wait_end with an error, which is fine here.
-      socket.request({ type: 'wait_end', requestId }, timeoutMs, false).catch(() => undefined),
-    ];
+    const stored = (task: Promise<unknown>): Promise<boolean> =>
+      task.then(
+        () => true,
+        (error: unknown) => {
+          logger.warn('Could not store the read position', { roomName, agentName, reason: String(error) });
+          return false;
+        },
+      );
+    // An already expired or replaced wait answers wait_end with an error, which is fine here.
+    const ended = socket.request({ type: 'wait_end', requestId }, timeoutMs, false).catch(() => undefined);
+    const reads: Array<Promise<boolean>> = [];
     const overSocket = Math.min(readThrough, socket.deliveredUpToSeq);
     if (overSocket > 0) {
-      tasks.push(socket.request({ type: 'read', seq: overSocket, requestId: randomUUID() }, timeoutMs, false).catch(logFailure));
+      reads.push(stored(socket.request({ type: 'read', seq: overSocket, requestId: randomUUID() }, timeoutMs, false)));
     }
     if (readThrough > socket.deliveredUpToSeq) {
-      tasks.push(this.markReadOverHttp(roomName, agentName, readThrough, timeoutMs).catch(logFailure));
+      reads.push(stored(this.markReadOverHttp(roomName, agentName, { seq: readThrough, epoch: socket.epoch }, timeoutMs)));
     }
-    await Promise.all(tasks);
+    const [, ...results] = await Promise.all([ended, ...reads]);
+    if (owed) call.passedOver = results.every(Boolean) ? undefined : { seq: readThrough, epoch: socket.epoch };
   }
 
   /**
-   * Marks messages up to `seq` read with GET …/messages?before=seq+1&limit=1&markRead=true: the newest message at
-   * or below `seq` is the one returned, and the server stores the position of what it returned, never beyond.
+   * mentionsOnly: as the call ends, however it ends, stores the read position it still owes for messages it passed
+   * over: on a connection that was lost before the call ended, or whose read position could not be stored. No
+   * connection of the call is left to acknowledge it, so over HTTP. Failures are only logged.
    */
-  private async markReadOverHttp(roomName: string, agentName: string, seq: number, timeoutMs: number): Promise<void> {
+  private async storePassedOver(call: WaitCall): Promise<void> {
+    const through = call.passedOver;
+    if (!through) return;
+    call.passedOver = undefined;
+    const { roomName, agentName } = call;
+    await this.markReadOverHttp(roomName, agentName, through, FINISH_TIMEOUT_MS).catch((error: unknown) =>
+      logger.warn('Could not store the read position', { roomName, agentName, reason: String(error) }),
+    );
+  }
+
+  /**
+   * Marks messages up to `through.seq` read over HTTP. GET …/messages?before=seq+1&limit=1 first checks, without side
+   * effects, that the room is still the one of `through.epoch` and that a message at or below the seq is still stored:
+   * a markRead request that finds none (the messages were cleared) stores the room's latest seq instead, past messages
+   * sent since. The same request with agentName and markRead=true then stores the position of the message it returns.
+   * Both requests together take at most `timeoutMs`.
+   *
+   * The check and the markRead are separate requests, and the HTTP API has no atomic precondition on the epoch and the
+   * seq. A clear, or the room deleted, created again and rejoined, plus a new message, landing between the two can still
+   * mark that message read without it being returned. A WebSocket `read`, used whenever the connection delivered the
+   * seq, has no such window. Follow-up in agora (markRead must never store past the delivered seq, and must fail on an
+   * epoch mismatch): https://github.com/mkXultra/agora/issues/5
+   */
+  private async markReadOverHttp(roomName: string, agentName: string, through: ReadCursor, timeoutMs: number): Promise<void> {
+    const until = Date.now() + timeoutMs;
+    const context = { roomName, agentName };
+    const newest = await this.api.getMessages(roomName, { before: through.seq + 1, limit: 1 }, { timeoutMs, retry: false, context });
+    if (newest.messages.length === 0 || (newest.epoch !== undefined && newest.epoch !== through.epoch)) return;
     await this.api.getMessages(
       roomName,
-      { agentName, before: seq + 1, limit: 1, markRead: true },
-      { timeoutMs, retry: false, context: { roomName, agentName } },
+      { agentName, before: through.seq + 1, limit: 1, markRead: true },
+      { timeoutMs: Math.max(1, until - Date.now()), retry: false, context },
     );
   }
 
@@ -540,7 +622,7 @@ export class CloudWaitService {
    * WebSocket may be tried again).
    */
   private async waitWithLongPoll(call: WaitCall, deadline: number): Promise<WaitForMessagesResult> {
-    const { key, roomName, agentName, signal } = call;
+    const { key, roomName, agentName, mentionsOnly, signal } = call;
     const context = { roomName, agentName };
     let lastError: unknown;
     let epochChecked = false;
@@ -553,6 +635,8 @@ export class CloudWaitService {
       try {
         const cursor = await this.longPollCursor(key, roomName, agentName, deadline, !epochChecked, signal);
         epochChecked = true;
+        // Passed over in a room that has been deleted and created again since: nothing of it is left to mark read.
+        if (call.passedOver && call.passedOver.epoch !== cursor.epoch) call.passedOver = undefined;
         const remaining = deadline - Date.now();
         // Whole seconds up to 30, at least one while any time is left: the request declares the wait (and a `wait=0`
         // request answers at once, so the loop would spin). Past the deadline, one immediate check.
@@ -562,8 +646,18 @@ export class CloudWaitService {
         const page = await this.api.getMessages(
           roomName,
           // An explicit `since` on every request: the long poll also moves the server read position, so a request
-          // that started from the server-side position could not be repeated after a lost response.
-          { agentName, since: cursor.seq, wait: waitSeconds, limit: PAGE_LIMIT, excludeSelf: true, markRead: true },
+          // that started from the server-side position could not be repeated after a lost response. With
+          // `mentionsOnly` the server waits for a message that mentions the agent, and `nextCursor` and the read
+          // position move past the ones it passes over.
+          {
+            agentName,
+            since: cursor.seq,
+            wait: waitSeconds,
+            limit: PAGE_LIMIT,
+            excludeSelf: true,
+            markRead: true,
+            ...(mentionsOnly ? { mentionsOnly } : {}),
+          },
           // This loop retries until the deadline; one request never runs much past its own wait, nor past the hard stop.
           { timeoutMs: Math.min(waitSeconds * 1000 + LONG_POLL_GRACE_MS, this.untilHardStop(deadline)), retry: false, context, signal },
         );
@@ -580,10 +674,12 @@ export class CloudWaitService {
           attempts = 0;
           continue;
         }
+        // The request stored a read position from its `since` on, past what the call passed over on a WebSocket.
+        if (call.passedOver?.epoch === page.epoch) call.passedOver = undefined;
         // The server reports the waiters at the end of each long poll; keep the first one, closest to the start.
         if (waitSeconds > 0) noteWaiting(call, { waitingAgents: page.waitingAgents });
 
-        const { messages, cursor: after } = await this.remainingPages(page, roomName, agentName, deadline, signal);
+        const { messages, cursor: after } = await this.remainingPages(page, roomName, agentName, mentionsOnly, deadline, signal);
         if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
         this.cursors.set(key, after);
         if (messages.length > 0) return toWaitResult(agentName, messages, false, call.waiting);
@@ -613,6 +709,7 @@ export class CloudWaitService {
     first: ApiMessageList,
     roomName: string,
     agentName: string,
+    mentionsOnly: boolean,
     deadline: number,
     signal: AbortSignal,
   ): Promise<{ messages: ApiMessage[]; cursor: ReadCursor }> {
@@ -625,7 +722,7 @@ export class CloudWaitService {
       try {
         page = await this.api.getMessages(
           roomName,
-          { agentName, since: cursor.seq, limit: PAGE_LIMIT, excludeSelf: true, markRead: true },
+          { agentName, since: cursor.seq, limit: PAGE_LIMIT, excludeSelf: true, markRead: true, ...(mentionsOnly ? { mentionsOnly } : {}) },
           { timeoutMs: this.boundedTimeout(HTTP_TIMEOUT_MS, deadline), retry: false, context: { roomName, agentName }, signal },
         );
       } catch (error) {

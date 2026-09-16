@@ -3,8 +3,11 @@
 // get_status and the file-mode behaviours the API does not have on its own.
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CloudApiClient } from '../../src/cloud/index.js';
 import type { ApiMessage } from '../../src/cloud/types.js';
+import { ToolRegistry } from '../../src/server/ToolRegistry.js';
+import { MemoryTransport } from '../helpers/MemoryTransport.js';
 import { createMcpClient, withEnv, type McpTestClient } from './harness/mcp.js';
 import { AgoraProxy } from './harness/proxy.js';
 
@@ -97,6 +100,51 @@ describe('tool outputs in cloud mode', () => {
     expect(page.hasMore).toBe(190 < mentioned.length);
     expect(page.messages.every((m: ToolMessage) => m.mentions.includes('bob'))).toBe(true);
   }, 120000);
+
+  it('wait_for_messages lists mentionsOnly (a boolean, false by default) and returns only the messages that mention agentName', async () => {
+    const server = new Server({ name: 'agent-communication', version: '1.0.0' }, { capabilities: { tools: {} } });
+    const transport = new MemoryTransport();
+    const registry = new ToolRegistry();
+    await server.connect(transport);
+    await registry.registerAll(server);
+    try {
+      expect(registry.mode).toBe('cloud');
+      const response = await transport.simulateRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
+      const tools = (response.result as { tools: Array<{ name: string; inputSchema: any }> }).tools;
+      const wait = tools.find((tool) => tool.name === 'agent_communication_wait_for_messages')!;
+      expect(Object.keys(wait.inputSchema.properties)).toEqual(['agentName', 'roomName', 'timeout', 'mentionsOnly']);
+      expect(wait.inputSchema.properties.mentionsOnly).toEqual({
+        type: 'boolean',
+        description: 'Only return messages that mention agentName; other new messages are marked read without being returned',
+        default: false,
+      });
+      expect(wait.inputSchema.required).toEqual(['agentName', 'roomName']);
+    } finally {
+      await transport.close();
+      await registry.shutdown();
+    }
+
+    await client.call('create_room', { roomName: 'mentions-contract' });
+    for (const agentName of ['alice', 'bob']) await client.call('enter_room', { agentName, roomName: 'mentions-contract' });
+    await client.call('send_message', { agentName: 'bob', roomName: 'mentions-contract', message: 'for anyone' });
+    const sent = await client.call('send_message', { agentName: 'bob', roomName: 'mentions-contract', message: 'hi @alice and @carol' });
+    const result = await client.call('wait_for_messages', { agentName: 'alice', roomName: 'mentions-contract', timeout: 3, mentionsOnly: true });
+    // The file-mode output shape: the messages whose `mentions` name the agent, without seq or clientMessageId.
+    expect(result).toEqual({
+      messages: [
+        {
+          id: sent.messageId,
+          agentName: 'bob',
+          roomName: 'mentions-contract',
+          message: 'hi @alice and @carol',
+          timestamp: sent.timestamp,
+          mentions: ['alice', 'carol'],
+        },
+      ],
+      hasNewMessages: true,
+      timedOut: false,
+    });
+  });
 
   it('send_message takes a message of up to 10000 code points, like agora', async () => {
     await client.call('create_room', { roomName: 'long-message' });
@@ -242,6 +290,13 @@ describe('tool outputs in cloud mode', () => {
     await expect(client.call('wait_for_messages', { agentName: 'alice', roomName: 'validation', timeout: 500 })).rejects.toThrow(
       /Validation failed for field 'timeout'/,
     );
+    // mentionsOnly is parsed by the tool handler, like the arguments of the other tools (invalid params).
+    await expect(
+      client.call('wait_for_messages', { agentName: 'alice', roomName: 'validation', timeout: 1, mentionsOnly: 'yes' }),
+    ).rejects.toMatchObject({
+      code: -32602,
+      message: expect.stringMatching(/Validation error: .*"mentionsOnly".*Expected boolean, received string/s),
+    });
     await expect(client.call('wait_for_messages', { agentName: 'ghost', roomName: 'validation', timeout: 500 })).rejects.toThrow(
       "Agent 'ghost' is not in room 'validation'",
     );

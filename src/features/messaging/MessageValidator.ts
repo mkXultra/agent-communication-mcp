@@ -29,7 +29,8 @@ export const waitForMessagesSchema = z.object({
       `Timeout must be at least ${WAIT_CONSTANTS.MIN_TIMEOUT}ms, or 0 to wait until a message arrives`
     )
     .refine((timeout) => timeout <= WAIT_CONSTANTS.MAX_TIMEOUT, `Timeout cannot exceed ${WAIT_CONSTANTS.MAX_TIMEOUT}ms`)
-    .optional()
+    .optional(),
+  mentionsOnly: z.boolean().optional().default(false)
 });
 
 export class MessageValidator {

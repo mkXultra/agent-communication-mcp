@@ -552,7 +552,105 @@ describe('Wait For Messages E2E Tests', () => {
       expect(answered).toBe(false);
     });
   });
-  
+
+  describe('Wait For Messages Mentions Only', () => {
+    let nextId = 9500;
+
+    async function callTool(name: string, args: Record<string, unknown>, timeoutMs?: number) {
+      const response = await transport.simulateRequest({
+        jsonrpc: '2.0',
+        id: nextId++,
+        method: 'tools/call',
+        params: { name: `agent_communication_${name}`, arguments: args }
+      }, timeoutMs);
+      if (response.error) throw new Error(response.error.message);
+      return JSON.parse(response.result!.content[0].text);
+    }
+
+    async function setupRoom(roomName: string): Promise<void> {
+      await callTool('create_room', { roomName });
+      for (const agentName of ['sender', 'other', 'waiter']) {
+        await callTool('enter_room', { agentName, roomName });
+      }
+    }
+
+    const send = (roomName: string, agentName: string, message: string) => callTool('send_message', { agentName, roomName, message });
+    const texts = (result: { messages: Array<{ message: string }> }) => result.messages.map(m => m.message);
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    it('should wait through messages that do not mention the agent and return on a mention', async () => {
+      const roomName = 'mentions-room';
+      await setupRoom(roomName);
+
+      const startTime = Date.now();
+      const waiting = callTool('wait_for_messages', { agentName: 'waiter', roomName, timeout: 10, mentionsOnly: true });
+      await sleep(500);
+      await send(roomName, 'sender', 'A question for anyone');
+      await send(roomName, 'other', 'Over to you @sender');
+      await sleep(1500);
+      await send(roomName, 'sender', 'Your turn @waiter');
+
+      const result = await waiting;
+      expect(Date.now() - startTime).toBeGreaterThanOrEqual(2000);
+      expect(result).toEqual({
+        messages: [expect.objectContaining({ agentName: 'sender', message: 'Your turn @waiter', mentions: ['waiter'] })],
+        hasNewMessages: true,
+        timedOut: false
+      });
+
+      // The messages it passed over are read: the next wait, without mentionsOnly, does not return them
+      const next = await callTool('wait_for_messages', { agentName: 'waiter', roomName, timeout: 1 });
+      expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+    });
+
+    it('should time out with only messages that do not mention the agent, and not return them again', async () => {
+      const roomName = 'mentions-timeout-room';
+      await setupRoom(roomName);
+
+      const startTime = Date.now();
+      const waiting = callTool('wait_for_messages', { agentName: 'waiter', roomName, timeout: 3, mentionsOnly: true });
+      await sleep(500);
+      await send(roomName, 'sender', 'For anyone');
+      await send(roomName, 'other', 'For @sender');
+
+      const result = await waiting;
+      expect(Date.now() - startTime).toBeGreaterThanOrEqual(3000);
+      expect(result).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+
+      const next = await callTool('wait_for_messages', { agentName: 'waiter', roomName, timeout: 1 });
+      expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+    });
+
+    it('should return only the mentions among messages that are already unread', async () => {
+      const roomName = 'mentions-unread-room';
+      await setupRoom(roomName);
+      await send(roomName, 'sender', 'Before: for anyone');
+      await send(roomName, 'other', '@waiter first');
+      await send(roomName, 'sender', 'After: for anyone');
+
+      const startTime = Date.now();
+      const result = await callTool('wait_for_messages', { agentName: 'waiter', roomName, timeout: 5, mentionsOnly: true });
+      expect(Date.now() - startTime).toBeLessThan(1000);
+      expect(texts(result)).toEqual(['@waiter first']);
+
+      const next = await callTool('wait_for_messages', { agentName: 'waiter', roomName, timeout: 1 });
+      expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
+    });
+
+    it('should return every new message when mentionsOnly is false or left out', async () => {
+      const roomName = 'mentions-default-room';
+      await setupRoom(roomName);
+
+      await send(roomName, 'sender', 'For anyone');
+      const explicit = await callTool('wait_for_messages', { agentName: 'waiter', roomName, timeout: 3, mentionsOnly: false });
+      expect(texts(explicit)).toEqual(['For anyone']);
+
+      await send(roomName, 'other', 'Also for anyone');
+      const leftOut = await callTool('wait_for_messages', { agentName: 'waiter', roomName, timeout: 3 });
+      expect(texts(leftOut)).toEqual(['Also for anyone']);
+    });
+  });
+
   describe('Wait For Messages Error Handling', () => {
     it('should handle room not found error', async () => {
       const response = await transport.simulateRequest({
