@@ -142,6 +142,8 @@ describe('server notices (agentName system) in cloud mode', () => {
   /** alice and then bob wait until the all-waiting notice wakes them both; returns the notice. */
   async function produceNotice(roomName: string): Promise<ApiMessage> {
     const alice = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 15 });
+    // A test that fails before it takes the result leaves the call to the transport's request timeout, which rejects it.
+    alice.catch(() => undefined);
     await untilWaiting(roomName, 'alice');
     const results = await Promise.all([alice, bobWaits(roomName, 15000)]);
     const found = await notices(roomName);
@@ -155,6 +157,8 @@ describe('server notices (agentName system) in cloud mode', () => {
     await setupRoom(roomName);
 
     const alice = client.start<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 0 });
+    // A test that fails before it takes the result leaves the call to the transport's request timeout, which rejects it.
+    alice.result.catch(() => undefined);
     await untilWaiting(roomName, 'alice');
     // bob's wait makes everyone in the room wait: agora posts the notice 3 seconds later.
     const bobResult = bobWaits(roomName, 20000);

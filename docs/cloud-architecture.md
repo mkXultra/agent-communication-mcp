@@ -295,11 +295,7 @@ Room DO 自身が統計と全削除を提供する（→ D2）。
 - **Alarm**: 次の通知の時刻を D12 / D13 / D16 / D17 と同じ Alarm に入れる。**早めるだけ**で、ほかの期限を遅らせない（D16 / D17 の受け取りの後に Alarm を戻すときも、通知の時刻より遅くしない）。期間を始めたロングポールは、待機に入る前に（応答を待たずに並行して）Alarm を合わせる。期間が通知の前に終わっても Alarm は戻さないので、早めた Alarm が 1 回だけ空振りする。Alarm はリクエストヘッダを持たないので、設定は D12 と同じく直近の Worker 由来の値（DO 再起動後は `wrangler.toml` の値）を使う
 - **コスト**: 通知 1 回につき Room DO の Alarm 1 回（その中で D16 の書き戻しと D17 の報告も行う）と、送信 1 件分の行書き込み。全員が待ち続けるルームでも最初の 24 時間に 6 回、その後はおよそ 1 日 1 回。期間を始めるときは `setAlarm` 1 回（Alarm を早めるときだけ）、空振りの Alarm は期間ごとに最大 1 回
 - `ALL_WAITING_NOTICE_ENABLED = "0"` で無効（期間を持たず、残っていた期間は次のきっかけか Alarm で消す）
-- **MCP クライアント**: agent-communication-mcp 0.5.3 は、クラウドモードの WebSocket の経路（既定）でだけ `system` の発言を新着から除く（`RoomSocket.unreadMessages` と `CloudWaitService.mergeUnread`。ファイルモードの待機の通知の名残）。この経路で待つ agent には、サーバーが投稿・配信しても届かない。ロングポールのフォールバック（WebSocket を開けないとき）は除外をサーバーの `excludeSelf` に任せていたので、agora 0.8.0 からは通知を返す（`mentionsOnly` でも）。MCP の対応は別リリースで行う:
-  - クラウドモードの上の 2 か所で `system` を除くのをやめ（自分の発言だけを除く）、WebSocket の経路の `mentionsOnly` でも `system` の発言を通す
-  - `get_messages` の `mentionsOnly`（`CloudMessagingService.getMessages` のクライアント側の絞り込み）でも `system` の発言を通す（ファイルモードはサーバーのお知らせを持たないので変えない）
-  - ファイルモードの除外（`MessageService.getUnreadMessages`）は残す。ファイルモードは待機の開始と時間切れで自分で `system` の発言を書くので、返すと誰かが待つたびに他の待機者を起こしてしまう
-  - クラウドのテストで、WebSocket とロングポールのフォールバックの両方で通知が届くこと（`mentionsOnly` の有無とも）を確かめる。`wait_for_messages` の説明に通知の意味を書く
+- **MCP クライアント**: agent-communication-mcp 0.5.4 以降は、通知をすべての経路（WebSocket・ロングポール・`mentionsOnly`・`get_messages`）で返す（0.5.3 は WebSocket の経路と `get_messages` の `mentionsOnly` で `system` の発言を捨てていた）。ファイルモードは待機の開始と時間切れで自分が書く `system` の発言を今までどおり新着から除く（返すと待つたびに他の待機者を起こす）
 
 ### 3.3 UserIndex DO — ルーム一覧と上限管理
 
@@ -671,7 +667,7 @@ ToolRegistry → Adapters → HTTPクライアント → Cloudflare
 
 ロングポーリングを既定にしない理由は §6 に記す。既読位置はどちらの場合も Room DO の `members.last_read_seq` で管理し、更新は `max(現在値, seq)` として後退させない。seq は、WebSocket の `read` ではクライアントが送る値（その接続で配信済みの最大 seq まで）、HTTP の `markRead` では `nextCursor`（走査した最大 seq。`before` 付きの降順の取得では `before - 1` まで）。
 
-**無期限待機（常駐エージェント向け）**: `wait_for_messages` の `timeout` に `0` を渡すとメッセージが届くまで無期限に待つ。MCP サーバーは `wait_start`（サーバー側の上限 300 秒）を届くまで再発行し、切断されれば再接続する。待機中は LLM のターンが止まっているだけでトークンを消費せず、Room DO も Hibernation で課金されない。再発行のたびに `last_seen_at` が更新されるので D12 のアイドル退室にも当たらない。在室 agent の全員がこうして待つと D3 の警告は誰にも届かないので、agora は全員待機が 15 分続いたら `system` のメッセージで知らせる（D18、§3.2「全員待機の通知」）。MCP はこれを新着として返す必要がある（0.5.3 はクラウドモードの WebSocket の経路でだけ `system` を除き、ロングポールのフォールバックは agora 0.8.0 から通知を返す。§3.2「全員待機の通知」の MCP クライアントの項）。`timeout` の有限値は 1〜300 秒（既定 30 秒）で、内部バリデータもツール定義と同じ 300 秒を上限にする。MCP クライアント側のツール呼び出しタイムアウト（Codex `tool_timeout_sec`、Claude Code `MCP_TOOL_TIMEOUT`）は利用者が延ばす必要がある。
+**無期限待機（常駐エージェント向け）**: `wait_for_messages` の `timeout` に `0` を渡すとメッセージが届くまで無期限に待つ。MCP サーバーは `wait_start`（サーバー側の上限 300 秒）を届くまで再発行し、切断されれば再接続する。待機中は LLM のターンが止まっているだけでトークンを消費せず、Room DO も Hibernation で課金されない。再発行のたびに `last_seen_at` が更新されるので D12 のアイドル退室にも当たらない。在室 agent の全員がこうして待つと D3 の警告は誰にも届かないので、agora は全員待機が 15 分続いたら `system` のメッセージで知らせる（D18、§3.2「全員待機の通知」）。MCP は 0.5.4 以降、この通知をすべての経路（WebSocket・ロングポール・`mentionsOnly`・`get_messages`）で返す（0.5.3 は WebSocket の経路と `get_messages` の `mentionsOnly` で捨てていた。§3.2「全員待機の通知」の MCP クライアントの項）。`timeout` の有限値は 1〜300 秒（既定 30 秒）で、内部バリデータもツール定義と同じ 300 秒を上限にする。MCP クライアント側のツール呼び出しタイムアウト（Codex `tool_timeout_sec`、Claude Code `MCP_TOOL_TIMEOUT`）は利用者が延ばす必要がある。
 
 キープアライブはアプリ層の JSON `ping` ではなく、WebSocket プロトコルの ping/pong または `setWebSocketAutoResponse` を使う。アプリ層の `ping` は DO を起こして課金対象になる。
 
