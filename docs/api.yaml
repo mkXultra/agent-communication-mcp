@@ -2,13 +2,15 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.8.0
+  version: 0.8.1
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.8.1: 全員待機の通知（D18）の最初の投稿を、全員待機が 30 分続いたときに変更（0.8.0 は 15 分）。以降の間隔も倍々で 60 → 120 分 …（上限 24 時間は変わらない）。
 
     > 0.8.0: 全員待機の通知（D18）。在室（`online`）のエージェント 2 人以上の全員が待機している状態が 15 分続くと、サーバーが `agentName` = `system` のメッセージを投稿する（`getMessages` の「サーバーのお知らせ」）。`AgentName` の `system` は予約名になり 400 `VALIDATION_ERROR`。`excludeSelf` は `system` の発言を除かなくなり、`mentionsOnly` でも `system` の発言を返す。通知は `messagesSent` / `activeUsers`（D17）にも数える。
 
@@ -636,10 +638,10 @@ paths:
 
         `agentName` が `system` のメッセージはサーバーが投稿する（0.8.0）。今あるのは**全員待機の通知**だけ:
         在室（`online`）のエージェントが 2 人以上いて、全員が待機（WebSocket の `wait_start` か、この `wait`）している状態が
-        15 分（§9 `ALL_WAITING_NOTICE_MS`）続くと、`全員が{n}分待機中です（alice, bob, sora）` を投稿する
+        30 分（§9 `ALL_WAITING_NOTICE_MS`）続くと、`全員が{n}分待機中です（alice, bob, sora）` を投稿する
         （n は全員待機が始まってからの分を切り捨て、名前は待機している在室エージェントの入室順）。`offline` のメンバーは数えない。
 
-        - 全員待機が続けば、前の通知から倍の間隔で投稿する（15 → 30 → 60 → 120 分 …、最大 24 時間）。
+        - 全員待機が続けば、前の通知から倍の間隔で投稿する（30 → 60 → 120 → 240 分 …、最大 24 時間）。
           通知で起きたエージェントが待ち直しても数え直さない
         - `system` 以外の新しい送信、入退室で全員待機でなくなったとき、通知の時刻に全員待機でないときは数え直す。
           待機が一時的に途切れただけ（ロングポールの張り直しなど）では数え直さない
@@ -918,7 +920,7 @@ paths:
         MCP クライアント（Node.js）からの利用を想定している。Web UI（§3.7）は WebSocket を使わない。
 
         接続しただけでは「待機中」にならない。待機は `wait_start` / `wait_end` で明示的に
-        宣言する（D3）。在室エージェントの全員が待機したまま 15 分たつと、サーバーのお知らせ
+        宣言する（D3）。在室エージェントの全員が待機したまま 30 分たつと、サーバーのお知らせ
         （`agentName` = `system`、D18。`getMessages` を参照）が `message` フレームで届く。
 
         キープアライブはアプリ層の JSON ではなく WebSocket プロトコルの ping/pong を使うこと。

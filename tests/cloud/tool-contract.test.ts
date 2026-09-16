@@ -153,7 +153,7 @@ describe('tool outputs in cloud mode', () => {
   it('get_messages and wait_for_messages say that server notices from agent system are always returned', async () => {
     // The server notices of agora 0.8.0 (D18): tests/cloud/server-notices.test.ts.
     const notices =
-      'Server notices from agentName "system" (e.g. every online member has been waiting for 15+ minutes) are always returned, also with mentionsOnly.';
+      'Server notices from agentName "system" (e.g. every online member has been waiting for 30+ minutes) are always returned, also with mentionsOnly.';
     const descriptions = Object.fromEntries((await listedTools()).map((tool) => [tool.name, tool.description]));
     expect(descriptions.agent_communication_get_messages).toBe(`Get messages from a room. ${notices}`);
     expect(descriptions.agent_communication_wait_for_messages).toBe(
