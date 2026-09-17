@@ -10,6 +10,7 @@
   "files": [
     "dist/**/*",
     "README.md",
+    "README.ja.md",
     "LICENSE"
   ],
   "directories": {
