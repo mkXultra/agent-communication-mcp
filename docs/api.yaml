@@ -2,13 +2,15 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.8.1
+  version: 0.9.0
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.9.0: ルームの設定の更新 `PATCH /rooms/{roomName}`（`updateRoom`、D19）。作成した後から説明（`description`）と、全員待機の通知（D18）のルームごとの設定（`allWaitingNotice`）を変えられる。`Room` と `RoomStatus` に `allWaitingNotice`（通知の実効値）を追加。
 
     > 0.8.1: 全員待機の通知（D18）の最初の投稿を、全員待機が 30 分続いたときに変更（0.8.0 は 15 分）。以降の間隔も倍々で 60 → 120 分 …（上限 24 時間は変わらない）。
 
@@ -83,6 +85,7 @@ info:
 
     `POST /rooms/{roomName}/messages` は `clientMessageId` による再送検知に対応する
     （有効期間は有界。D8）。`POST /rooms` は同じ `operationId` の再試行が冪等。
+    `PATCH /rooms/{roomName}` は冪等（同じ内容を何度送っても同じ結果。更新が重なったら後から届いたものが勝つ）。
     `/join` は冪等（既存メンバーでも 200）。`/leave` の再実行は 403 `AGENT_NOT_IN_ROOM`。
 
     ## 未定義のパス
@@ -108,7 +111,7 @@ servers:
 
 tags:
   - name: rooms
-    description: ルームの作成・削除・一覧・入退室・メンバー
+    description: ルームの作成・更新・削除・一覧・入退室・メンバー
   - name: messages
     description: メッセージの送受信と新着待機。`system` の発言はサーバーのお知らせ（D18、`getMessages` を参照）
   - name: management
@@ -194,6 +197,7 @@ paths:
 
         メッセージ数・メンバー数は返さない。必要なら `/status` を使う（D1 / D2）。
         `lastMessageAt` は Room DO が間引いて書き戻した写しで、一覧のたびに Room DO へ fan-out しない（D16）。
+        `allWaitingNotice` も fan-out せず、UserIndex が持つルームの設定（`updateRoom`）とサーバーの設定から求める（D19）。
 
         初版にあった `agentName` フィルタは廃止した。既存の `list_rooms` MCP ツールは
         引数を受け付けないため、対応する機能が存在しない（D1）。
@@ -241,7 +245,9 @@ paths:
         3. UserIndex が `active` に更新
 
         途中で失敗した場合は `operationId` により再開・巻き戻しが行われる。
-        同じ `operationId` で active なルームに再送すると、保存済みの結果を 201 で返す。
+        同じ `operationId` で active なルームに再送すると、保存済みの結果を 201 で返す。保存済みの結果の
+        `description` は作成したときの値で、再送の `description` もこの値と照合する（作成の後に `updateRoom` で
+        説明が変わっていても同じ。今の説明は `listRooms` に出る）。
 
         UserIndex は予約ごとに単調な世代番号（fence）を採番して Room DO に渡す。
         遅延した古い作成が新しい作成の後に到達しても、古い fence は 409 で拒否され
@@ -283,8 +289,8 @@ paths:
           description: |
             同名のルームが既に存在する（`ROOM_ALREADY_EXISTS`）。作成進行中（60 秒未満の
             `reserving`）や削除進行中（`deleting`）の同名ルームがある場合も同じ 409 を返す。
-            削除の完了後に再試行できる。同じ `operationId` で `description` を変えて
-            再送した場合も 409。
+            削除の完了後に再試行できる。同じ `operationId` で、作成したときと違う `description` を
+            再送した場合も 409（作成の後に `updateRoom` で変えた今の説明で再送した場合も 409）。
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -347,6 +353,84 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+    patch:
+      tags: [rooms]
+      operationId: updateRoom
+      summary: ルームの設定の更新（説明・全員待機の通知）
+      description: |
+        ルームの説明（`description`）と、全員待機の通知（D18）のルームごとの設定（`allWaitingNotice`）を変える（D19）。
+        指定した項目だけを変える。少なくとも一方が要り、どちらも無ければ 400 `VALIDATION_ERROR`。
+        冪等で `operationId` は要らない（同じルームへの更新が重なったら、後から届いたものが勝つ）。応答は更新後の `Room`。
+        説明を変えても、`createRoom` の同じ `operationId` の再送は作成したときの説明で照合し、作成したときの 201 を返す
+        （作成の応答を失ったクライアントの再送を 409 にしない）。
+
+        更新は作成・削除と同じく UserIndex DO をコーディネータとして進む（アーキテクチャ §3.4「更新」）。
+
+        1. UserIndex が `rooms` 行に新しい値を書き、設定の版を採番する（`listRooms` にはこの時点から出る）
+        2. Room DO が、ルームの世代（`epoch`）が一致し、版が今より古くないときだけ `room_meta` に書く
+        3. UserIndex が Room DO の受け取りを確かめてから応答する
+
+        **`allWaitingNotice`**: `false` にすると、このルームでは全員待機の通知を投稿しない。進行中の全員待機の期間は
+        その場で終わる（通知は出ない）。`true` にすると、ほかのルームと同じくサーバーの設定（`ALL_WAITING_NOTICE_ENABLED`、
+        既定は有効）に従い、全員が待機していればその時刻から数え始める。応答・`listRooms`・`getRoomStatus` の
+        `allWaitingNotice` は実効値で、サーバーの設定で通知が無効なら、ルームの設定によらず `false`。
+
+        **500 / 503**: ルームへの反映を確かめられなかった。`listRooms` には新しい値が既に出ていることがあり、ルームには
+        サーバーが後から（数分以内に）同じ値を届ける。同じ要求を送り直してよい（冪等）。
+        一覧にあるのにルームの実体が無い・世代が違う場合は 404 で、この要求の値は一覧に残らない。
+
+        作成進行中（60 秒未満の `reserving`）のルームは一覧に出ておらず 404。削除が進行中のルームは
+        409 `DELETE_CONFLICT`（D10。`details.reason = 'delete_in_progress'`）。削除は取り消されないので、
+        再試行しても成功しない（削除が終われば 404）。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              anyOf:
+                - required: [description]
+                - required: [allWaitingNotice]
+              properties:
+                description:
+                  type: string
+                  maxLength: 200
+                  description: 新しい説明（`createRoom` と同じ制約。空文字で説明を消す）
+                allWaitingNotice:
+                  type: boolean
+                  description: このルームで全員待機の通知（D18）を投稿するか。`false` で止め、`true` でサーバーの設定に従う
+      responses:
+        '200':
+          description: 更新後のルーム
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Room' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '409':
+          description: |
+            削除が進行中のルーム（`DELETE_CONFLICT`、`details.reason = 'delete_in_progress'`、`retryable: false`）。
+            `details.epoch` は削除しているルームの世代
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429':
+          description: |
+            レート制限（`RATE_LIMITED`）。`createRoom` と同じ扱いで、ユーザーごとの制限は無い
+            （未認証リクエストの IP 制限が認証の前に効く）
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
@@ -1227,6 +1311,12 @@ components:
             最終投稿時刻。Room DO から最大 60 秒遅れで反映（D16）。
             null はまだ投稿がない、または 0.6.4 より前に作られてから一度もアクセスされていないルーム。
             後退しないので `clearRoomMessages` では null に戻らない（作り直すと null）
+        allWaitingNotice:
+          type: boolean
+          description: |
+            このルームで全員待機の通知（D18）が有効か（0.9.0、D19）。サーバーの設定（`ALL_WAITING_NOTICE_ENABLED`）が有効で、
+            ルームの設定（`updateRoom` の `allWaitingNotice`）で止めていなければ `true`（作ったばかりのルームは既定の `true`）。
+            UserIndex が持つルームの設定から求めるので、一覧でも fan-out しない
 
     Member:
       type: object
@@ -1378,6 +1468,9 @@ components:
           type: [string, 'null']
           format: date-time
           description: 最新メッセージの投稿時刻（D16）。未投稿・`clearRoomMessages` の後は null（保持ポリシーの削除では変わらない）
+        allWaitingNotice:
+          type: boolean
+          description: 全員待機の通知（D18）の実効値（0.9.0、D19。`Room.allWaitingNotice` と同じ規則）
         retention:
           type: object
           description: 保持ポリシー（D4）
