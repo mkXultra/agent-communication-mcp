@@ -2,13 +2,15 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.9.0
+  version: 0.10.0
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.10.0: ルームのアーカイブと在席の一覧（D20）。`updateRoom` の `archived` でルームをアーカイブする（一覧の表示だけのフラグ。入室・送信・待機・添付・全員待機の通知はそのまま使え、`listRooms` も返す）。`Room` と `RoomStatus` に `archived`。`getStatus` の各ルームに在席一覧 `members`（既定は在室（`online`）のメンバーだけ、`includeOffline=true` で退室済みも。1 ルーム 100 人まで、超えたら `membersTruncated: true`）。
 
     > 0.9.0: ルームの設定の更新 `PATCH /rooms/{roomName}`（`updateRoom`、D19）。作成した後から説明（`description`）と、全員待機の通知（D18）のルームごとの設定（`allWaitingNotice`）を変えられる。`Room` と `RoomStatus` に `allWaitingNotice`（通知の実効値）を追加。
 
@@ -115,7 +117,7 @@ tags:
   - name: messages
     description: メッセージの送受信と新着待機。`system` の発言はサーバーのお知らせ（D18、`getMessages` を参照）
   - name: management
-    description: ステータス取得とメッセージクリア（D2）
+    description: ステータス取得（在席の一覧を含む。D2 / D20）とメッセージクリア（D2）
   - name: tokens
     description: トークンのセルフサービス発行（D7）
   - name: admin
@@ -198,6 +200,7 @@ paths:
         メッセージ数・メンバー数は返さない。必要なら `/status` を使う（D1 / D2）。
         `lastMessageAt` は Room DO が間引いて書き戻した写しで、一覧のたびに Room DO へ fan-out しない（D16）。
         `allWaitingNotice` も fan-out せず、UserIndex が持つルームの設定（`updateRoom`）とサーバーの設定から求める（D19）。
+        アーカイブしたルーム（`archived: true`、D20）も返す（隠すかどうかはクライアントが決める）。
 
         初版にあった `agentName` フィルタは廃止した。既存の `list_rooms` MCP ツールは
         引数を受け付けないため、対応する機能が存在しない（D1）。
@@ -359,10 +362,11 @@ paths:
     patch:
       tags: [rooms]
       operationId: updateRoom
-      summary: ルームの設定の更新（説明・全員待機の通知）
+      summary: ルームの設定の更新（説明・全員待機の通知・アーカイブ）
       description: |
         ルームの説明（`description`）と、全員待機の通知（D18）のルームごとの設定（`allWaitingNotice`）を変える（D19）。
-        指定した項目だけを変える。少なくとも一方が要り、どちらも無ければ 400 `VALIDATION_ERROR`。
+        0.10.0 からアーカイブ（`archived`、D20）も変えられる。
+        指定した項目だけを変える。少なくとも 1 つが要り、どれも無ければ 400 `VALIDATION_ERROR`。
         冪等で `operationId` は要らない（同じルームへの更新が重なったら、後から届いたものが勝つ）。応答は更新後の `Room`。
         説明を変えても、`createRoom` の同じ `operationId` の再送は作成したときの説明で照合し、作成したときの 201 を返す
         （作成の応答を失ったクライアントの再送を 409 にしない）。
@@ -377,6 +381,11 @@ paths:
         その場で終わる（通知は出ない）。`true` にすると、ほかのルームと同じくサーバーの設定（`ALL_WAITING_NOTICE_ENABLED`、
         既定は有効）に従い、全員が待機していればその時刻から数え始める。応答・`listRooms`・`getRoomStatus` の
         `allWaitingNotice` は実効値で、サーバーの設定で通知が無効なら、ルームの設定によらず `false`。
+
+        **`archived`**（D20）: `true` でアーカイブ、`false` で戻す。一覧の表示だけのフラグで、ルームの動きは変えない
+        （入室・送信・取得・待機・WebSocket・添付・全員待機の通知はそのまま使え、進行中の全員待機の期間も終わらない）。
+        `listRooms` はアーカイブしたルームも `archived: true` で返す（隠すかどうかはクライアントが決める）。
+        作成（`createRoom`）の冪等の照合には関係しない。削除して同じ名前で作り直したルームはアーカイブされていない。
 
         **500 / 503**: ルームへの反映を確かめられなかった。`listRooms` には新しい値が既に出ていることがあり、ルームには
         サーバーが後から（数分以内に）同じ値を届ける。同じ要求を送り直してよい（冪等）。
@@ -396,6 +405,7 @@ paths:
               anyOf:
                 - required: [description]
                 - required: [allWaitingNotice]
+                - required: [archived]
               properties:
                 description:
                   type: string
@@ -404,6 +414,9 @@ paths:
                 allWaitingNotice:
                   type: boolean
                   description: このルームで全員待機の通知（D18）を投稿するか。`false` で止め、`true` でサーバーの設定に従う
+                archived:
+                  type: boolean
+                  description: アーカイブするか（0.10.0、D20）。`true` でアーカイブ、`false` で戻す。一覧の表示だけのフラグ
       responses:
         '200':
           description: 更新後のルーム
@@ -1052,7 +1065,9 @@ paths:
       tags: [management]
       operationId: getRoomStatus
       summary: ルーム単位のステータス
-      description: Room DO 内の SQLite クエリだけで完結する（D2）。
+      description: |
+        Room DO 内の SQLite クエリだけで完結する（D2）。在席の一覧（`members`）は返さない（`listMembers` か `getStatus` を使う）。
+        `archived`（D20）は Room DO が受け取った値で、`updateRoom` が 500 / 503 で終わった直後は `listRooms` より古いことがある。
       parameters:
         - $ref: '#/components/parameters/RoomName'
       responses:
@@ -1072,7 +1087,7 @@ paths:
     get:
       tags: [management]
       operationId: getStatus
-      summary: ユーザー全体のステータス
+      summary: ユーザー全体のステータス（在席の一覧を含む）
       description: |
         UserIndex のルーム一覧をもとに各 Room DO へ fan-out して集計する（D2）。
         ルーム数に比例して DO 呼び出しが発生するため、頻繁なポーリングには向かない。
@@ -1080,6 +1095,18 @@ paths:
         一部の Room DO が応答しなかった場合も 200 を返し、`partial` と `failedRooms` で示す。
         対象ルーム上限（§9）を超えた分は集計せず `skippedRooms` に列挙する（この場合も
         `partial: true`）。集計値は成功したルームのみの合計になる。
+
+        **在席の一覧**（0.10.0、D20）: 各ルーム（`rooms` の要素）に `members`（`PresenceMember`）と `membersTruncated` が付く。
+        同じ fan-out で返すので、Room DO への要求は増えない。既定は在室（`status: online`）のメンバーだけを join の順に、
+        `includeOffline=true` なら続けて退室済み（`offline`）のメンバーを最終活動の新しい順に返す。1 ルーム 100 人（固定）まで
+        で、超えた分は返さず `membersTruncated: true`（退室済みから先に落ちる）。`waiting` は `listMembers` と同じく期限内の
+        待機があるか。アーカイブしたルーム（`archived: true`）も含む。各ルームの `archived` は `listRooms` と同じ値
+        （UserIndex の値。`getRoomStatus` の `archived` は Room DO が受け取った値）。
+      parameters:
+        - name: includeOffline
+          in: query
+          schema: { type: boolean, default: false }
+          description: 在席の一覧に退室済み（`offline`）のメンバーも含める（D20）
       responses:
         '200':
           description: 全体のステータス
@@ -1127,6 +1154,8 @@ paths:
                   rooms:
                     type: array
                     items: { $ref: '#/components/schemas/RoomStatus' }
+                    description: 集計できたルーム（名前順）。0.10.0 から各要素に `members` と `membersTruncated` が付く（D20）
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -1317,6 +1346,12 @@ components:
             このルームで全員待機の通知（D18）が有効か（0.9.0、D19）。サーバーの設定（`ALL_WAITING_NOTICE_ENABLED`）が有効で、
             ルームの設定（`updateRoom` の `allWaitingNotice`）で止めていなければ `true`（作ったばかりのルームは既定の `true`）。
             UserIndex が持つルームの設定から求めるので、一覧でも fan-out しない
+        archived:
+          type: boolean
+          default: false
+          description: |
+            アーカイブ済みか（0.10.0、D20。`updateRoom` の `archived`）。一覧の表示だけのフラグで、ルームの動き（入室・送信・待機・
+            添付・全員待機の通知）には効かない。作ったばかりのルームは `false`
 
     Member:
       type: object
@@ -1339,6 +1374,24 @@ components:
         joinedAt: { type: string, format: date-time }
         lastSeenAt: { type: string, format: date-time }
         lastReadSeq: { type: integer }
+
+    PresenceMember:
+      type: object
+      description: '`getStatus` の在席の一覧の 1 人（0.10.0、D20）。`Member` の一部'
+      required: [agentName, status, waiting, lastSeenAt]
+      properties:
+        agentName: { type: string }
+        status:
+          type: string
+          enum: [online, offline]
+          description: 在室しているか（`Member.status` と同じ）
+        waiting:
+          type: boolean
+          description: 期限内の待機（`wait_start`・ロングポール）があるか（`Member.waiting` と同じ。D3）
+        lastSeenAt:
+          type: string
+          format: date-time
+          description: 最終活動（`Member.lastSeenAt` と同じ。D12）
 
     Message:
       type: object
@@ -1471,6 +1524,22 @@ components:
         allWaitingNotice:
           type: boolean
           description: 全員待機の通知（D18）の実効値（0.9.0、D19。`Room.allWaitingNotice` と同じ規則）
+        archived:
+          type: boolean
+          default: false
+          description: |
+            アーカイブ済みか（0.10.0、D20）。`getStatus` では `Room.archived`（一覧）と同じ値。`getRoomStatus` では Room DO が
+            受け取った値で、`updateRoom` が 500 / 503 で終わった直後は一覧より古いことがある
+        members:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/PresenceMember' }
+          description: |
+            在席の一覧（0.10.0、D20。`getStatus` だけが返す）。在室（`online`）のメンバーを join の順に、`includeOffline=true` なら
+            続けて退室済みのメンバーを最終活動の新しい順に。1 ルーム 100 人まで
+        membersTruncated:
+          type: boolean
+          description: '`members` を 100 人で切ったか（0.10.0、D20。`getStatus` だけが返す）'
         retention:
           type: object
           description: 保持ポリシー（D4）
