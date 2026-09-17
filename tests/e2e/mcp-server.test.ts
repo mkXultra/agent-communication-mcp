@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, ChildProcess } from 'child_process';
+import http from 'http';
+import type { AddressInfo } from 'net';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { promises as fs } from 'fs';
@@ -14,6 +16,8 @@ const skipInUnitTests = process.env.VITEST_POOL_ID && !process.env.E2E_TESTS;
 describe.skipIf(skipInUnitTests)('E2E: MCP Server', () => {
   let serverProcess: ChildProcess;
   let messageId = 1;
+  /** Everything the server wrote to stdout, the MCP channel. */
+  let stdout = '';
 
   beforeAll(async () => {
     // Clean and create test data directory
@@ -34,6 +38,9 @@ describe.skipIf(skipInUnitTests)('E2E: MCP Server', () => {
         ...process.env,
         AGENT_COMM_DATA_DIR: testDataDir
       }
+    });
+    serverProcess.stdout?.on('data', (data) => {
+      stdout += data.toString();
     });
 
     // Wait for server to start
@@ -270,5 +277,85 @@ describe.skipIf(skipInUnitTests)('E2E: MCP Server', () => {
         })
       ).rejects.toThrow(/validation|must contain only/i);
     });
+  });
+
+  describe('stdout', () => {
+    it('carries nothing but JSON-RPC messages', () => {
+      const lines = stdout.split('\n').filter((line) => line.trim() !== '');
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) {
+        expect(JSON.parse(line)).toMatchObject({ jsonrpc: '2.0' });
+      }
+    });
+  });
+});
+
+// The built bin with arguments (src/cli): it prints and exits instead of starting the server.
+describe.skipIf(skipInUnitTests)('E2E: bin command line', () => {
+  const packageJsonPath = path.join(__dirname, '../../package.json');
+
+  function runBin(args: string[], env: Record<string, string | undefined> = {}) {
+    const child = spawn('node', [serverPath, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, AGENT_COMM_DATA_DIR: testDataDir, ...env },
+    });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (data) => (out += data.toString()));
+    child.stderr.on('data', (data) => (err += data.toString()));
+    return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL');
+        reject(new Error(`node dist/index.js ${args.join(' ')} did not exit`));
+      }, 10000);
+      child.once('error', reject);
+      child.once('close', (code) => {
+        clearTimeout(timeout);
+        resolve({ code, stdout: out, stderr: err });
+      });
+    });
+  }
+
+  it('--version prints the package version and exits 0', async () => {
+    const { version } = JSON.parse(await fs.readFile(packageJsonPath, 'utf8'));
+    for (const flag of ['--version', '-v']) {
+      expect(await runBin([flag])).toEqual({ code: 0, stdout: `${version}\n`, stderr: '' });
+    }
+  });
+
+  it('--help and token --help print the usage and exit 0', async () => {
+    const help = await runBin(['--help']);
+    expect(help).toMatchObject({ code: 0, stderr: '' });
+    expect(help.stdout).toMatch(/^Usage: agent-communication-mcp \[command\]\n/);
+
+    const tokenHelp = await runBin(['token', '--help']);
+    expect(tokenHelp).toMatchObject({ code: 0, stderr: '' });
+    expect(tokenHelp.stdout).toMatch(/^Usage: agent-communication-mcp token \[--label <text>\] \[--api-url <url>\] \[--json\]\n/);
+  });
+
+  it('an unknown command prints the usage on stderr and exits 2', async () => {
+    const result = await runBin(['serve']);
+    expect(result).toMatchObject({ code: 2, stdout: '' });
+    expect(result.stderr).toMatch(/^error: unknown command: serve\n\nUsage: agent-communication-mcp \[command\]\n/);
+  });
+
+  it('token --json prints only the API response as returned, with apiUrl added', async () => {
+    const issued = { token: 'agora_e2e', tokenId: 'tk_e2e', userId: 'u_e2e', name: 'e2e', notYetKnown: [1] };
+    const api = http.createServer((request, response) => {
+      request.resume();
+      request.on('end', () => {
+        response.writeHead(201, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(issued));
+      });
+    });
+    await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', resolve));
+    const apiUrl = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
+    try {
+      const result = await runBin(['token', '--json', '--label', 'e2e'], { AGENT_COMM_API_URL: apiUrl });
+      expect(result).toEqual({ code: 0, stdout: `${JSON.stringify({ ...issued, apiUrl }, null, 2)}\n`, stderr: '' });
+    } finally {
+      api.closeAllConnections();
+      await new Promise((resolve) => api.close(resolve));
+    }
   });
 });

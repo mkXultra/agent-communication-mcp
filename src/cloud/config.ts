@@ -20,26 +20,32 @@ export interface CloudConfig {
 }
 
 /**
+ * `apiUrl` as the base URL the API paths are appended to: without query, fragment or trailing slash.
+ * Throws when it is not an http(s) URL; `source` names the setting it came from in that error.
+ */
+export function normalizeApiUrl(apiUrl: string, source: string = API_URL_ENV): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(apiUrl);
+  } catch {
+    throw new AppError(`${source} is not a valid URL: ${apiUrl}`, 'INVALID_CONFIGURATION', 500);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new AppError(`${source} must use http or https: ${apiUrl}`, 'INVALID_CONFIGURATION', 500);
+  }
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString().replace(/\/+$/, '');
+}
+
+/**
  * Returns the cloud configuration, or `null` when the server should run in file mode (no AGENT_COMM_TOKEN).
  * Throws when AGENT_COMM_API_URL is set together with a token but is not an http(s) URL.
  */
 export function resolveCloudConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig | null {
   const token = env[TOKEN_ENV]?.trim();
   if (!token) return null;
-  const apiUrl = env[API_URL_ENV]?.trim() || DEFAULT_API_URL;
-
-  let parsed: URL;
-  try {
-    parsed = new URL(apiUrl);
-  } catch {
-    throw new AppError(`${API_URL_ENV} is not a valid URL: ${apiUrl}`, 'INVALID_CONFIGURATION', 500);
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new AppError(`${API_URL_ENV} must use http or https: ${apiUrl}`, 'INVALID_CONFIGURATION', 500);
-  }
-  parsed.search = '';
-  parsed.hash = '';
-  return { apiUrl: parsed.toString().replace(/\/+$/, ''), token };
+  return { apiUrl: normalizeApiUrl(env[API_URL_ENV]?.trim() || DEFAULT_API_URL), token };
 }
 
 export function getOperatingMode(env: NodeJS.ProcessEnv = process.env): OperatingMode {

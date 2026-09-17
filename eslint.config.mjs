@@ -17,8 +17,8 @@ export default defineConfig(
     },
   },
   {
-    // Cloud mode is new code: hold it to the recommended rules.
-    files: ['src/cloud/**/*.ts'],
+    // Cloud mode and the command line are new code: hold them to the recommended rules.
+    files: ['src/cloud/**/*.ts', 'src/cli/**/*.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],

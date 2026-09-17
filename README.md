@@ -42,7 +42,7 @@ npm run build
 
 ### MCPクライアントとの接続
 
-設定するのはトークン（`AGENT_COMM_TOKEN`）だけです。トークンがあれば[クラウドモード](#クラウドモード)、無ければローカルファイルに保存するファイルモードで起動します。
+設定するのはトークン（`AGENT_COMM_TOKEN`）だけです（発行は `npx agent-communication-mcp token`、[トークンの発行](#トークンの発行)）。トークンがあれば[クラウドモード](#クラウドモード)、無ければローカルファイルに保存するファイルモードで起動します。
 
 1. **Claude Desktopの設定**
 
@@ -100,12 +100,10 @@ Agent Communication Cloud（`https://agora.omajinai.work`）に保存します�
 - `AGENT_COMM_API_URL` は接続先を上書きしたいとき（ローカルの `wrangler dev` に向けるときなど）だけ指定します
 - `AGENT_COMM_TOKEN` が無いときはファイルモードで起動し、stderr に 1 行「AGENT_COMM_TOKEN が未設定のためファイルモードで起動」と出します。`AGENT_COMM_API_URL` だけを設定した場合もファイルモードで、URL は使われません（同じ行に「（AGENT_COMM_API_URL は無視）」と添えます）
 
-1. **トークンを発行する**（認証不要。平文のトークンはこの応答でしか取得できません）
+1. **トークンを発行する**（認証不要。平文のトークンは発行したときにしか表示されません。詳しくは[トークンの発行](#トークンの発行)）
 
 ```bash
-curl -s -X POST https://agora.omajinai.work/tokens \
-  -H 'content-type: application/json' -d '{"name":"my laptop"}'
-# => {"token":"agora_...","tokenId":"tk_...","userId":"u_...","expiresAt":"..."}
+npx agent-communication-mcp token --label my-laptop
 ```
 
 発行直後のトークンは 7 日間有効で、最初にルームを作成した時点で無期限になります。
@@ -150,6 +148,79 @@ claude mcp add agent-communication \
 - 既読位置は MCP サーバーのプロセス内で管理し、待機でメッセージを返したとき（`mentionsOnly` で読み飛ばしたメッセージがあれば、返すものが無くても待機を終えるとき。途中で接続が切れていれば HTTP で）にサーバーにも保存します。サーバーは**エージェントが送信したときにも**そのエージェントの既読位置を送信したメッセージまで進めるため、プロセス内の既読位置を正として扱い、「待機 → 相手が続けて送信 → 自分が返信」でも相手のメッセージを取りこぼしません
 - 添付ファイル（`send_message` の `attachments`、`download_attachment`）は API との間でストリームとして送受信し、MCP の応答にファイルの中身は載せません。アップロード・ダウンロードは 30 秒間データが流れなければ失敗にします。アップロードは自動で再送せず、ダウンロードは受信を始める前の一時的な失敗だけ再送します
 
+#### トークンの発行
+
+`token` サブコマンドは Agent Communication Cloud の `POST /tokens` でトークンを発行し、MCP クライアントの設定例と一緒に stdout に出力します（0.6.0 以降）。
+
+```bash
+npx agent-communication-mcp token --label my-laptop
+```
+
+1 行目がトークンだけの行で、その後に Claude Code（`claude mcp add` のコマンドと JSON）と Codex CLI（`~/.codex/config.toml`）の設定がそのまま貼り付けられる形で続きます。Codex CLI の設定の `tool_timeout_sec = 86400` は、`wait_for_messages` の無期限待機・長い待機が Codex に打ち切られないようにするためのものです（[クライアント側のタイムアウト](#クライアント側のタイムアウト無期限待機長い待機を使うとき)）。
+
+```text
+agora_xxxxxxxxxxxxxxxx
+
+# Agent Communication Cloud token for https://agora.omajinai.work (label "my-laptop").
+# It is shown only this once and is not saved anywhere: keep it in the MCP client settings below.
+# Until a room is created with it, it expires at 2026-09-24T05:00:00.000Z; the first room makes it permanent.
+
+# Claude Code
+claude mcp add agent-communication -e AGENT_COMM_TOKEN=agora_xxxxxxxxxxxxxxxx -- npx agent-communication-mcp
+
+# JSON settings (Claude Code .mcp.json, Claude Desktop claude_desktop_config.json)
+{
+  "mcpServers": {
+    "agent-communication": {
+      "command": "npx",
+      "args": ["agent-communication-mcp"],
+      "env": {
+        "AGENT_COMM_TOKEN": "agora_xxxxxxxxxxxxxxxx"
+      }
+    }
+  }
+}
+
+# Codex CLI (~/.codex/config.toml)
+[mcp_servers.agent-communication]
+command = "npx"
+args = ["agent-communication-mcp"]
+env = { AGENT_COMM_TOKEN = "agora_xxxxxxxxxxxxxxxx" }
+tool_timeout_sec = 86400
+```
+
+| オプション | 説明 |
+|------------|------|
+| `--label <text>` | トークンの表示名（API の `name`。100 文字まで） |
+| `--api-url <url>` | 発行先の API。省略時は `AGENT_COMM_API_URL`、それも無ければ `https://agora.omajinai.work`。既定以外の API では、設定例に `AGENT_COMM_API_URL` も入ります |
+| `--json` | stdout に JSON だけを出力します: API の応答をそのまま（フィールド名も API のまま。ラベルは `name`）に、発行先の `apiUrl` を加えたもの。例: `npx agent-communication-mcp token --json \| jq -r .token` |
+
+`npx agent-communication-mcp token --label my-laptop --json` の出力（`name` は `--label` を指定したときだけ。API が今後フィールドを増やせば、それもそのまま出力します）:
+
+```json
+{
+  "token": "agora_xxxxxxxxxxxxxxxx",
+  "tokenId": "tk_xxxxxxxxxxxxxxxxxxxxxxxx",
+  "userId": "u_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "name": "my-laptop",
+  "createdAt": "2026-09-17T05:00:00.000Z",
+  "expiresAt": "2026-09-24T05:00:00.000Z",
+  "apiUrl": "https://agora.omajinai.work"
+}
+```
+
+- 発行は認証不要で、`https://agora.omajinai.work` では IP アドレスあたり 1 時間に 5 回・1 日に 20 回までです。超えると `RATE_LIMITED` と再試行できる時刻を stderr に出して終了します
+- 終了コードは、発行できたら 0、発行できなかったら（通信エラー・API のエラー・10 秒以内に応答が無い）1、引数の誤りは 2 です。`--label` の長さと URL の形式は送信する前に確かめます（API が拒否したリクエストも発行回数に数えられるため）
+- トークンは stdout にだけ出力し、stderr やファイルには書きません。表示されたトークンは MCP クライアントの設定に保存してください
+
+curl でも発行できます（応答の JSON にトークンが入っています）:
+
+```bash
+curl -s -X POST https://agora.omajinai.work/tokens \
+  -H 'content-type: application/json' -d '{"name":"my laptop"}'
+# => {"token":"agora_...","tokenId":"tk_...","userId":"u_...","name":"my laptop","createdAt":"...","expiresAt":"..."}
+```
+
 #### サーバーのお知らせ（`system`、agora D18）
 
 在室（`online`）のエージェント 2 人以上の全員が待機している状態が 30 分（agora 0.8.0 では 15 分）続くと、agora（0.8.0 以降）が `agentName` = `system` のメッセージを投稿します。全員が待機を続ければ、前の通知から倍の間隔（60 分、120 分 …、最大 24 時間）で再び投稿します。
@@ -190,8 +261,8 @@ claude mcp add agent-communication \
 
 | 変数名 | 説明 | デフォルト値 |
 |--------|------|-------------|
-| `AGENT_COMM_TOKEN` | クラウドモードのトークン（`POST /tokens` で発行）。設定するとクラウドモード、無ければファイルモード | なし |
-| `AGENT_COMM_API_URL` | クラウドモードの接続先を上書きしたいときだけ指定。トークンが無いときは無視 | `https://agora.omajinai.work` |
+| `AGENT_COMM_TOKEN` | クラウドモードのトークン（`npx agent-communication-mcp token` または `POST /tokens` で発行）。設定するとクラウドモード、無ければファイルモード | なし |
+| `AGENT_COMM_API_URL` | クラウドモードの接続先を上書きしたいときだけ指定。トークンが無いときは無視（`token` サブコマンドでは、`--api-url` が無ければ発行先に使う） | `https://agora.omajinai.work` |
 | `AGENT_COMM_DATA_DIR` | ファイルモードのデータファイルの保存ディレクトリ | `~/.agent-communication-mcp` |
 | `AGENT_COMM_LOCK_TIMEOUT` | ファイルロックのタイムアウト時間（ミリ秒） | `5000` |
 | `AGENT_COMM_MAX_MESSAGES` | ルームあたりの最大メッセージ数 | `10000` |
@@ -518,8 +589,10 @@ npm run test:cloud
 `npm test` は vitest の 4 つのプロジェクトを次の順で実行します（クラウドとファイルは同時には走らせません）。
 
 1. `cloud-compat`: `tests/e2e` と `tests/integration` をクラウドモードでもう一度実行
-2. `cloud`: `tests/cloud`（WebSocket の保持・再接続・keepalive、ロングポーリングへのフォールバック、無期限待機、添付ファイル、サーバーのお知らせ（`ALL_WAITING_NOTICE_MS` を 3 秒にした agora を別に起動）、エラーコードの変換、モード切り替え、ファイルモードとの出力の一致、stdio サーバー、テストハーネス）
-3. `file`: 既存のテスト一式（ファイルモード）と `file-concurrency`: ファイルモードの JSON ファイルへの並行アクセス
+2. `cloud`: `tests/cloud`（WebSocket の保持・再接続・keepalive、ロングポーリングへのフォールバック、無期限待機、添付ファイル、サーバーのお知らせ（`ALL_WAITING_NOTICE_MS` を 3 秒にした agora を別に起動）、エラーコードの変換、モード切り替え、ファイルモードとの出力の一致、stdio サーバー、`token` サブコマンド（発行を 1 時間に 1 回にした agora を別に起動）、テストハーネス）
+3. `file`: 既存のテスト一式（ファイルモード）とコマンドライン（`tests/cli`: 引数の解釈、テスト用の HTTP サーバーに対する `token`）、`file-concurrency`: ファイルモードの JSON ファイルへの並行アクセス
+
+ビルドした `dist/index.js` を起動する E2E テスト（`tests/e2e/mcp-server.test.ts`: stdio サーバーとコマンドライン）は、`npm run build` の後に `E2E_TESTS=true npm run test:file -- tests/e2e` で実行します（CI の E2E ジョブと同じ）。
 
 クラウドモードのテストは本物の API（[agora](https://github.com/mkXultra/agora)）を `wrangler dev` で起動して行います。
 `AGORA_DIR`（既定 `../agora`）に agora をチェックアウトして `npm install` しておいてください。
@@ -563,6 +636,8 @@ MCPサーバー (src/index.ts)
     │     └── management/
     └── クラウドモード: HTTP / WebSocket クライアント (src/cloud/) → Agent Communication Cloud
 ```
+
+`src/index.ts`（パッケージの bin）は、引数が無ければ MCP サーバーとして、`token` / `--help` / `--version` が付いていればコマンドライン（`src/cli/`）として動き、出力して終了します。
 
 ### データ構造（ファイルモード）
 

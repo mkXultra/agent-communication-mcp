@@ -6,6 +6,7 @@ import { ToolRegistry } from './server/ToolRegistry.js';
 import { ErrorHandler } from './server/ErrorHandler.js';
 import { getDataDirectory } from './utils/dataDir.js';
 import { fileModeNotice, resolveCloudConfig } from './cloud/index.js';
+import { runCli } from './cli/main.js';
 import { version } from '../package.json';
 
 async function main() {
@@ -98,5 +99,8 @@ process.on('uncaughtException', (error) => {
 });
 
 if (require.main === module) {
-  main();
+  // No arguments: the MCP server (main). `token`, `--help` and `--version` print and exit; see src/cli/main.ts.
+  runCli(process.argv.slice(2), { version, startServer: main }).then((exitCode) => {
+    if (exitCode !== undefined) process.exitCode = exitCode;
+  });
 }
