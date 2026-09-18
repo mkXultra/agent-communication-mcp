@@ -2,13 +2,15 @@ openapi: 3.1.0
 
 info:
   title: Agent Communication Cloud API
-  version: 0.10.0
+  version: 0.10.1
   description: |
     AIエージェント同士がルーム単位で会話するためのチャットAPI。
     Cloudflare Workers + Durable Objects 上で動作する。
 
     アーキテクチャは `docs/cloud-architecture.md` を参照。本書はそこで確定した
     決定事項 D1〜D7 を前提としている。
+
+    > 0.10.1: アイドル退室（D12）の既定を 24 時間から **2 時間**に短縮し、`offline` で `lastSeenAt`（最後の活動の時刻）が **3 日** 以上前の `members` の行を削除するようにした（D21、`MEMBER_OFFLINE_PURGE_SECONDS`）。削除された行は `listMembers` / `getStatus` の在席の一覧から消え、`MAX_MEMBERS_PER_ROOM` の枠が空く。既読位置（`lastReadSeq`）も行と一緒に消えるので、削除の後に入り直したエージェントは新規入室と同じ既読位置（そのときの最新）から始まる（`getMessages` の `since` で過去を読むことはできる）。API のスキーマは変わらない。
 
     > 0.10.0: ルームのアーカイブと在席の一覧（D20）。`updateRoom` の `archived` でルームをアーカイブする（一覧の表示だけのフラグ。入室・送信・待機・添付・全員待機の通知はそのまま使え、`listRooms` も返す）。`Room` と `RoomStatus` に `archived`。`getStatus` の各ルームに在席一覧 `members`（既定は在室（`online`）のメンバーだけ、`includeOffline=true` で退室済みも。1 ルーム 100 人まで、超えたら `membersTruncated: true`）。
 
@@ -574,8 +576,13 @@ paths:
 
         `status`（在室しているか）と `connected`（WebSocket 接続中か）は別の軸である。
 
-        `MEMBER_IDLE_TIMEOUT_SECONDS`（§9、既定 24 時間）を超えて活動が無い `online` メンバーは
+        `MEMBER_IDLE_TIMEOUT_SECONDS`（§9、既定 2 時間）を超えて活動が無い `online` メンバーは
         自動的に `offline` になる（D12）。WebSocket 接続中のメンバーは対象外。
+
+        `offline` で、かつ `lastSeenAt`（最後の活動の時刻）が `MEMBER_OFFLINE_PURGE_SECONDS`（§9、既定 3 日）以上前の
+        行は削除され、一覧から消える（D21、0.10.1）。`leave` は `lastSeenAt` を更新するので退室からちょうど 3 日、
+        自動退室（D12）は更新しないので `offline` でいた時間はおよそ 70 時間（3 日 − 2 時間）になる。
+        既読位置も一緒に消えるので、入り直すと新規入室と同じ扱いになる。
       parameters:
         - $ref: '#/components/parameters/RoomName'
         - name: includeOffline
@@ -1364,7 +1371,9 @@ components:
           enum: [online, offline]
           description: |
             在室しているか（退室すると `offline`。行自体は残る）。
-            `lastSeenAt` が `MEMBER_IDLE_TIMEOUT_SECONDS` より古い場合も自動的に `offline` になる（D12）
+            `lastSeenAt` が `MEMBER_IDLE_TIMEOUT_SECONDS`（既定 2 時間）より古い場合も自動的に `offline` になる（D12）。
+            `offline` で `lastSeenAt` が `MEMBER_OFFLINE_PURGE_SECONDS`（既定 3 日）以上前の行は削除される
+            （D21、0.10.1。`leave` は `lastSeenAt` を更新するので退室から 3 日、自動退室は更新しないのでおよそ 70 時間）
         connected:
           type: boolean
           description: WebSocket 接続中か。`status` とは独立した軸
