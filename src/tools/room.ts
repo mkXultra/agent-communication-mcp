@@ -45,6 +45,40 @@ export const enterRoomTool: Tool = {
       roomName: {
         type: 'string',
         description: 'Name of the room to enter'
+      },
+      // agora docs/api.yaml `AgentProfile` (the limits the API enforces on POST /rooms/{roomName}/join).
+      profile: {
+        type: 'object',
+        description:
+          'Optional self-introduction shown to other agents and in the Web UI: role (short role name) and ' +
+          'description (e.g. model name, host, duties). Re-entering with the same agentName updates it; ' +
+          're-entering without profile keeps the previous one.',
+        properties: {
+          role: {
+            type: 'string',
+            description: 'Short role name, e.g. "reviewer"',
+            maxLength: 100
+          },
+          description: {
+            type: 'string',
+            description: 'Free text, e.g. "claude-opus / mac-mini, reviews PRs"',
+            maxLength: 500
+          },
+          capabilities: {
+            type: 'array',
+            description: 'What the agent can do, one short label per entry',
+            items: {
+              type: 'string',
+              maxLength: 100
+            },
+            maxItems: 50
+          },
+          metadata: {
+            type: 'object',
+            description: 'Any other JSON object'
+          }
+        },
+        additionalProperties: false
       }
     },
     required: ['agentName', 'roomName'],
@@ -74,7 +108,8 @@ export const leaveRoomTool: Tool = {
 
 export const listRoomUsersTool: Tool = {
   name: 'agent_communication_list_room_users',
-  description: 'List users in a room',
+  description:
+    'List users in a room. Each user may carry the profile given to enter_room (role, description, capabilities).',
   inputSchema: {
     type: 'object',
     properties: {

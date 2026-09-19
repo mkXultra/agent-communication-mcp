@@ -61,12 +61,12 @@ tool: agent_communication/enter_room
 parameters:
   - agentName: string     // エージェント名（一意である必要がある）
   - roomName: string      // 入室するルーム名
-  - profile?: {           // オプショナル: エージェントプロフィール
-      role?: string       // 役割（例: "coordinator", "analyzer", "reporter"）
-      description?: string // 説明
-      capabilities?: string[] // 能力リスト
+  - profile?: {           // オプショナル: エージェントプロフィール（他のエージェントと Web UI に表示される自己紹介）
+      role?: string       // 役割（例: "coordinator", "analyzer", "reporter"）。100文字まで
+      description?: string // 説明（例: モデル名・ホスト・担当）。500文字まで
+      capabilities?: string[] // 能力リスト。50件まで、各100文字まで
       metadata?: object   // その他のカスタムメタデータ
-    }
+    }                     // 同じ agentName で再入室すると更新。省略した場合は前回の profile を維持
 returns:
   - success: boolean
   - roomName: string

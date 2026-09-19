@@ -41,7 +41,12 @@ export function agentNameValidationError(agentName: unknown): ValidationError | 
   return null;
 }
 
-/** Same checks and messages as PresenceService.validateProfile (only applied to a truthy profile there). */
+/**
+ * Same checks and messages as PresenceService.validateProfile (only applied to a truthy profile there).
+ * The limits are agora docs/api.yaml `AgentProfile`, counted in code points as agora counts them. The enter_room
+ * tool schema now carries them as well (0.7.0), so an MCP call fails before this; this stays the check for
+ * callers that use the adapter directly.
+ */
 export function profileValidationError(profile: unknown): ValidationError | null {
   if (!profile) return null;
   if (typeof profile !== 'object') {
@@ -51,29 +56,31 @@ export function profileValidationError(profile: unknown): ValidationError | null
 
   if (p.role !== undefined) {
     if (typeof p.role !== 'string') return new ValidationError('profile.role', 'Profile role must be a string');
-    if (p.role.length > 50) return new ValidationError('profile.role', 'Profile role cannot exceed 50 characters');
+    if (Array.from(p.role).length > 100) {
+      return new ValidationError('profile.role', 'Profile role cannot exceed 100 characters');
+    }
   }
   if (p.description !== undefined) {
     if (typeof p.description !== 'string') {
       return new ValidationError('profile.description', 'Profile description must be a string');
     }
-    if (p.description.length > 200) {
-      return new ValidationError('profile.description', 'Profile description cannot exceed 200 characters');
+    if (Array.from(p.description).length > 500) {
+      return new ValidationError('profile.description', 'Profile description cannot exceed 500 characters');
     }
   }
   if (p.capabilities !== undefined) {
     if (!Array.isArray(p.capabilities)) {
       return new ValidationError('profile.capabilities', 'Profile capabilities must be an array');
     }
-    if (p.capabilities.length > 20) {
-      return new ValidationError('profile.capabilities', 'Profile capabilities cannot exceed 20 items');
+    if (p.capabilities.length > 50) {
+      return new ValidationError('profile.capabilities', 'Profile capabilities cannot exceed 50 items');
     }
     for (const capability of p.capabilities) {
       if (typeof capability !== 'string') {
         return new ValidationError('profile.capabilities', 'Each capability must be a string');
       }
-      if (capability.length > 50) {
-        return new ValidationError('profile.capabilities', 'Each capability cannot exceed 50 characters');
+      if (Array.from(capability).length > 100) {
+        return new ValidationError('profile.capabilities', 'Each capability cannot exceed 100 characters');
       }
     }
   }

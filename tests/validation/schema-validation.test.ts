@@ -86,6 +86,76 @@ describe('Schema Validation Tests', () => {
       expect(result.success).toBe(true);
     });
 
+    // enter_room の profile の上限は agora docs/api.yaml の `AgentProfile` に合わせる（0.7.0）。
+    describe('enter_room profile limits (agora AgentProfile)', () => {
+      const parse = (profile: unknown) =>
+        enterRoomInputSchema.safeParse({ agentName: 'alice', roomName: 'test-room', profile });
+
+      it('accepts a profile at the limits', () => {
+        const result = parse({
+          role: 'r'.repeat(100),
+          description: 'd'.repeat(500),
+          capabilities: Array.from({ length: 50 }, () => 'c'.repeat(100)),
+          metadata: { nested: { team: 'frontend' } },
+        });
+        expect(result.success).toBe(true);
+      });
+
+      it.each([
+        ['role over 100 characters', { role: 'r'.repeat(101) }, 'Profile role cannot exceed 100 characters'],
+        [
+          'description over 500 characters',
+          { description: 'd'.repeat(501) },
+          'Profile description cannot exceed 500 characters',
+        ],
+        [
+          'over 50 capabilities',
+          { capabilities: Array.from({ length: 51 }, () => 'c') },
+          'Profile capabilities cannot exceed 50 items',
+        ],
+        [
+          'a capability over 100 characters',
+          { capabilities: ['c'.repeat(101)] },
+          'Each capability cannot exceed 100 characters',
+        ],
+      ])('rejects %s', (_label, profile, message) => {
+        const result = parse(profile);
+        expect(result.success).toBe(false);
+        expect(result.error!.issues.map((issue) => issue.message)).toContain(message);
+      });
+
+      // agora counts code points (`codePointLength`), so an emoji is one character, not the two UTF-16 units it takes.
+      it('counts the limits in code points, not UTF-16 code units', () => {
+        const emoji = String.fromCodePoint(0x1f600);
+        // 60 emoji are 60 code points but 120 UTF-16 code units: agora accepts this role, so we must too.
+        expect(parse({ role: emoji.repeat(60) }).success).toBe(true);
+        expect(parse({ description: emoji.repeat(300) }).success).toBe(true);
+        expect(parse({ capabilities: [emoji.repeat(60)] }).success).toBe(true);
+
+        const tooBig = parse({ role: emoji.repeat(101) });
+        expect(tooBig.success).toBe(false);
+        expect(tooBig.error!.issues.map((issue) => issue.message)).toContain('Profile role cannot exceed 100 characters');
+        expect(parse({ description: emoji.repeat(501) }).success).toBe(false);
+        expect(parse({ capabilities: [emoji.repeat(101)] }).success).toBe(false);
+      });
+
+      it('rejects an unknown key (additionalProperties: false on the tool schema)', () => {
+        const result = parse({ role: 'reviewer', nickname: 'al' });
+        expect(result.success).toBe(false);
+        expect(result.error!.issues[0]).toMatchObject({
+          code: 'unrecognized_keys',
+          keys: ['nickname'],
+          path: ['profile'],
+        });
+      });
+
+      it('keeps the profile in the parsed output so the handler can forward it', () => {
+        const profile = { role: 'reviewer', description: 'claude-opus / mac-mini, reviews PRs' };
+        const result = enterRoomInputSchema.parse({ agentName: 'alice', roomName: 'test-room', profile });
+        expect(result).toEqual({ agentName: 'alice', roomName: 'test-room', profile });
+      });
+    });
+
     it('should validate list_room_users input schema', () => {
       const validInput = {
         roomName: 'test-room',

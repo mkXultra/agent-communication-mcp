@@ -137,7 +137,6 @@ export * from './types/rooms.types';
 
 // MCPツール
 export { roomTools } from './tools/room.tools';
-export { presenceTools } from './tools/presence.tools';
 
 // デフォルトエクスポート（メインAPI）
 export default RoomsAPI;

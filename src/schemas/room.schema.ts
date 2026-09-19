@@ -1,6 +1,7 @@
 // Agent Communication MCP Server - ルーム管理ツールのZodスキーマ定義
 
 import { z } from 'zod';
+import { maxCodePoints } from './message.schema';
 
 // 共通のバリデーションルール
 const roomNameSchema = z
@@ -14,12 +15,23 @@ const agentNameSchema = z
   .min(1, 'Agent name cannot be empty')
   .max(50, 'Agent name cannot exceed 50 characters');
 
+// agora docs/api.yaml `AgentProfile`: role <= 100, description <= 500, capabilities <= 50 entries of <= 100
+// characters, metadata a JSON object. `.strict()` matches the `additionalProperties: false` the enter_room tool
+// declares, so an unknown key is reported instead of being dropped silently.
+// The lengths are code points, as agora counts them (`codePointLength` in its assertProfile), so an emoji counts
+// as one character in both; z.string().max() would count it as the two UTF-16 code units it takes.
 const agentProfileSchema = z.object({
-  role: z.string().optional(),
-  description: z.string().optional(),
-  capabilities: z.array(z.string()).optional(),
+  role: z.string().superRefine(maxCodePoints(100, 'Profile role cannot exceed 100 characters')).optional(),
+  description: z
+    .string()
+    .superRefine(maxCodePoints(500, 'Profile description cannot exceed 500 characters'))
+    .optional(),
+  capabilities: z
+    .array(z.string().superRefine(maxCodePoints(100, 'Each capability cannot exceed 100 characters')))
+    .max(50, 'Profile capabilities cannot exceed 50 items')
+    .optional(),
   metadata: z.record(z.any()).optional(),
-}).optional();
+}).strict().optional();
 
 // create_room ツール
 export const createRoomInputSchema = z.object({

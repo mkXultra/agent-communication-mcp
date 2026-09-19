@@ -295,9 +295,12 @@ describe('tool outputs in cloud mode', () => {
     await expect(client.call('enter_room', { agentName: 'bad name', roomName: 'no-such-room' })).rejects.toThrow(
       "Room 'no-such-room' not found",
     );
+    // The profile limits are in the tool schema itself (agora `AgentProfile`), so an oversized role is refused
+    // by the zod schema of the handler, before the room check and before any request
+    // (tests/cloud/enter-room-profile.test.ts).
     await expect(
-      client.call('enter_room', { agentName: 'alice', roomName: 'validation', profile: { role: 'r'.repeat(51) } }),
-    ).rejects.toThrow("Validation failed for field 'profile.role': Profile role cannot exceed 50 characters");
+      client.call('enter_room', { agentName: 'alice', roomName: 'validation', profile: { role: 'r'.repeat(101) } }),
+    ).rejects.toThrow(/Validation error: .*Profile role cannot exceed 100 characters/s);
     await expect(client.call('send_message', { agentName: 'bad name', roomName: 'validation', message: 'x' })).rejects.toThrow(
       "Agent 'bad name' is not in room 'validation'",
     );

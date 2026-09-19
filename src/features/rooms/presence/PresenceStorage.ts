@@ -70,7 +70,9 @@ export class PresenceStorage implements IPresenceStorage {
           status: 'online',
           messageCount: existingUser?.messageCount || 0,
           joinedAt: existingUser?.joinedAt || new Date().toISOString(),
-          profile
+          // 再入室で profile を省いたときは前回の profile を残す（agora の
+          // `profile = COALESCE(excluded.profile, members.profile)` と同じ。docs/api.yaml joinRoom）
+          profile: profile ?? existingUser?.profile
         };
         
         presenceData.users[agentName] = userData;

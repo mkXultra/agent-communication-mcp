@@ -127,6 +127,54 @@ describe('PresenceService', () => {
         await expect(presenceService.enterRoom(agentName, invalidRoomName)).rejects.toThrow(ValidationError);
       }
     });
+
+    // 上限は agora docs/api.yaml の `AgentProfile`（enter_room ツールのスキーマと同じ）
+    it('should accept a profile at the limits and reject one over them', async () => {
+      await expect(
+        presenceService.enterRoom('limit-agent', 'test-room', {
+          role: 'r'.repeat(100),
+          description: 'd'.repeat(500),
+          capabilities: Array.from({ length: 50 }, () => 'c'.repeat(100))
+        })
+      ).resolves.toMatchObject({ success: true });
+
+      const tooBig: Array<[AgentProfile, string]> = [
+        [{ role: 'r'.repeat(101) }, 'Profile role cannot exceed 100 characters'],
+        [{ description: 'd'.repeat(501) }, 'Profile description cannot exceed 500 characters'],
+        [{ capabilities: Array.from({ length: 51 }, () => 'c') }, 'Profile capabilities cannot exceed 50 items'],
+        [{ capabilities: ['c'.repeat(101)] }, 'Each capability cannot exceed 100 characters']
+      ];
+      for (const [profile, message] of tooBig) {
+        await expect(presenceService.enterRoom('limit-agent', 'test-room', profile)).rejects.toThrow(message);
+      }
+    });
+
+    // agora が `codePointLength` で数えるのに合わせ、サロゲートペアは 1 文字として数える
+    it('should count profile limits in code points', async () => {
+      const emoji = String.fromCodePoint(0x1f600);
+
+      await expect(
+        presenceService.enterRoom('emoji-agent', 'test-room', {
+          role: emoji.repeat(60),
+          description: emoji.repeat(300),
+          capabilities: [emoji.repeat(100)]
+        })
+      ).resolves.toMatchObject({ success: true });
+
+      await expect(
+        presenceService.enterRoom('emoji-agent', 'test-room', { role: emoji.repeat(101) })
+      ).rejects.toThrow('Profile role cannot exceed 100 characters');
+    });
+
+    it('should keep the stored profile when re-entering without one', async () => {
+      const profile: AgentProfile = { role: 'reviewer', description: 'claude-opus / mac-mini, reviews PRs' };
+      await presenceService.enterRoom('keeper', 'test-room', profile);
+
+      await presenceService.enterRoom('keeper', 'test-room');
+
+      const users = await presenceService.listRoomUsers('test-room');
+      expect(users.users.find(u => u.name === 'keeper')?.profile).toEqual(profile);
+    });
   });
 
   describe('leaveRoom', () => {
