@@ -41,6 +41,8 @@ export class CloudRoomsService {
           userCount: 0,
           // §5.2 (D16): the last post time the API copied into the room list; left out while the API returns null.
           ...(room.lastMessageAt ? { lastMessageAt: room.lastMessageAt } : {}),
+          // D22: the API returns the room's ephemeral flag; a server older than 0.11.0 omits it, meaning false.
+          ephemeral: room.ephemeral ?? false,
         }),
       )
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -48,8 +50,12 @@ export class CloudRoomsService {
     return { rooms, total: rooms.length };
   }
 
-  /** create_room: POST /rooms (409 -> RoomAlreadyExistsError). Does not enter the room. */
-  async createRoom(params: { roomName: string; description?: string }): Promise<{ success: boolean; roomName: string }> {
+  /** create_room: POST /rooms (409 -> RoomAlreadyExistsError). Does not enter the room. Cloud mode forwards `ephemeral` (D22). */
+  async createRoom(params: {
+    roomName: string;
+    description?: string;
+    ephemeral?: boolean;
+  }): Promise<{ success: boolean; roomName: string; ephemeral: boolean }> {
     const invalid = roomNameValidationError(params.roomName) ?? descriptionValidationError(params.description);
     if (invalid) {
       // File mode reports an existing room before it validates the input.
@@ -58,8 +64,9 @@ export class CloudRoomsService {
       }
       throw invalid;
     }
-    const result = await this.api.createRoom(params.roomName, params.description);
-    return { success: result.success, roomName: result.roomName };
+    const result = await this.api.createRoom(params.roomName, params.description, { ephemeral: params.ephemeral });
+    // D22: a server older than 0.11.0 does not return the flag; a missing value means false.
+    return { success: result.success, roomName: result.roomName, ephemeral: result.ephemeral ?? false };
   }
 
   /** enter_room: POST /rooms/{roomName}/join (404 -> RoomNotFoundError). Re-entering succeeds. One request. */

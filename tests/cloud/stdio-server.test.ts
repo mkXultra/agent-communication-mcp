@@ -148,6 +148,7 @@ describe('stdio MCP server in cloud mode', () => {
     expect(await alice.tool('create_room', { roomName: 'stdio-room', description: 'over stdio' })).toEqual({
       success: true,
       roomName: 'stdio-room',
+      ephemeral: false,
     });
     expect(await alice.tool('enter_room', { agentName: 'alice', roomName: 'stdio-room' })).toEqual({ success: true });
     expect(await bob.tool('enter_room', { agentName: 'bob', roomName: 'stdio-room' })).toEqual({ success: true });
@@ -356,7 +357,7 @@ describe('stdio MCP server: the mode chosen at startup', () => {
 
   it('starts in cloud mode at AGENT_COMM_API_URL when it is set together with the token', async () => {
     const server = await start({ AGENT_COMM_TOKEN: token, AGENT_COMM_API_URL: agoraUrl, AGENT_COMM_DATA_DIR: dataDir });
-    expect(await server.tool('create_room', { roomName: 'url-and-token-room' })).toEqual({ success: true, roomName: 'url-and-token-room' });
+    expect(await server.tool('create_room', { roomName: 'url-and-token-room' })).toEqual({ success: true, roomName: 'url-and-token-room', ephemeral: false });
     expect((await api.listRooms()).map((room) => room.name)).toContain('url-and-token-room');
 
     expect(modeLines(server)).toEqual([`Cloud mode: ${agoraUrl}`]);

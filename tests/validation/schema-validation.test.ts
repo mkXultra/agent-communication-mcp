@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
   createRoomInputSchema,
   createRoomOutputSchema,
+  listRoomsOutputSchema,
   sendMessageInputSchema,
   sendMessageOutputSchema,
   getMessagesInputSchema,
@@ -57,6 +58,43 @@ describe('Schema Validation Tests', () => {
 
       const result = createRoomOutputSchema.safeParse(validOutput);
       expect(result.success).toBe(true);
+    });
+
+    // create_room の ephemeral（agora docs/api.yaml 0.11.0, D22）。
+    describe('create_room ephemeral', () => {
+      it('accepts an optional boolean and keeps it in the parsed output', () => {
+        expect(createRoomInputSchema.parse({ roomName: 'test-room' })).toEqual({ roomName: 'test-room' });
+        expect(createRoomInputSchema.parse({ roomName: 'test-room', ephemeral: true })).toEqual({
+          roomName: 'test-room',
+          ephemeral: true,
+        });
+        expect(createRoomInputSchema.parse({ roomName: 'test-room', ephemeral: false })).toEqual({
+          roomName: 'test-room',
+          ephemeral: false,
+        });
+      });
+
+      it.each([['true', 'true'], ['1', 1], ['null', null], ['an object', {}]])('rejects ephemeral %s', (_label, ephemeral) => {
+        const result = createRoomInputSchema.safeParse({ roomName: 'test-room', ephemeral });
+        expect(result.success).toBe(false);
+        expect(result.error!.issues[0]).toMatchObject({ path: ['ephemeral'], message: expect.stringMatching(/boolean/i) });
+      });
+
+      it('carries the server value in the create_room and list_rooms outputs (optional when the server omits it)', () => {
+        expect(
+          createRoomOutputSchema.safeParse({
+            success: true,
+            roomName: 'scratch',
+            createdAt: '2023-01-01T00:00:00Z',
+            ephemeral: true,
+          }).success,
+        ).toBe(true);
+
+        const room = { name: 'scratch', createdAt: '2023-01-01T00:00:00Z', messageCount: 0, userCount: 0 };
+        expect(listRoomsOutputSchema.safeParse({ rooms: [room], total: 1 }).success).toBe(true);
+        expect(listRoomsOutputSchema.safeParse({ rooms: [{ ...room, ephemeral: false }], total: 1 }).success).toBe(true);
+        expect(listRoomsOutputSchema.safeParse({ rooms: [{ ...room, ephemeral: 'yes' }], total: 1 }).success).toBe(false);
+      });
     });
 
     it('should validate enter_room input schema', () => {

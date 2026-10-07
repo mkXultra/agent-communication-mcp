@@ -7,12 +7,14 @@ export interface MCPRoomTools {
     input: {
       roomName: string;
       description?: string;
+      ephemeral?: boolean;
     };
     output: {
       success: boolean;
       roomName: string;
       description?: string;
       createdAt: string;
+      ephemeral?: boolean;
     };
   };
   
@@ -28,6 +30,7 @@ export interface MCPRoomTools {
         messageCount: number;
         userCount: number;
         lastMessageAt?: string; // クラウドモードのみ（API が null を返すルームでは省略）
+        ephemeral?: boolean; // クラウドモードのみ（API が省略した場合は false）
       }>;
       total: number;
     };

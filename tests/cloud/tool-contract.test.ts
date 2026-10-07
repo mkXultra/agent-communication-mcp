@@ -150,6 +150,49 @@ describe('tool outputs in cloud mode', () => {
     });
   });
 
+  it('advertises ephemeral on create_room in cloud mode (D22), with the original inputs unchanged', async () => {
+    const create = (await listedTools()).find((tool) => tool.name === 'agent_communication_create_room')!;
+    expect(create.description).toBe(
+      'Create a new room. With ephemeral: true (cloud mode only) the server deletes the room automatically once every ' +
+        'member has been offline for its grace period (30 minutes by default); the flag cannot be changed later.',
+    );
+    expect(Object.keys(create.inputSchema.properties)).toEqual(['roomName', 'description', 'ephemeral']);
+    expect(create.inputSchema.required).toEqual(['roomName']);
+    expect(create.inputSchema.additionalProperties).toBe(false);
+    expect(create.inputSchema.properties.ephemeral).toEqual({
+      type: 'boolean',
+      description:
+        'Create an ephemeral room (cloud mode only): the server deletes it automatically once every member has ' +
+        'been offline for its grace period (30 minutes by default). The flag cannot be changed later',
+      default: false,
+    });
+  });
+
+  it('create_room forwards ephemeral: true to the real agora and maps the D22 flag back', async () => {
+    const ephemeral = await client.call('create_room', { roomName: 'ephemeral-live', ephemeral: true });
+    const explicitFalse = await client.call('create_room', { roomName: 'plain-live', ephemeral: false });
+    const omitted = await client.call('create_room', { roomName: 'omitted-live' });
+
+    expect(ephemeral).toEqual({ success: true, roomName: 'ephemeral-live', ephemeral: true });
+    expect(explicitFalse).toEqual({ success: true, roomName: 'plain-live', ephemeral: false });
+    expect(omitted).toEqual({ success: true, roomName: 'omitted-live', ephemeral: false });
+
+    // The real server (agora 0.11.0, D22) echoes the flag in GET /rooms; a room created without it is not ephemeral.
+    const rawFlags = Object.fromEntries((await api.listRooms()).map((room) => [room.name, room.ephemeral]));
+    expect(rawFlags).toEqual({ 'ephemeral-live': true, 'plain-live': false, 'omitted-live': false });
+
+    const list = await client.call('list_rooms');
+    expect(list.rooms.map((room: { name: string; ephemeral: boolean }) => [room.name, room.ephemeral])).toEqual([
+      ['ephemeral-live', true],
+      ['omitted-live', false],
+      ['plain-live', false],
+    ]);
+
+    // No field elsewhere (owner decision 2): the room status entries carry no ephemeral.
+    const status = await client.call('get_status');
+    for (const room of status.rooms) expect(room).not.toHaveProperty('ephemeral');
+  });
+
   it('get_messages and wait_for_messages say that server notices from agent system are always returned', async () => {
     // The server notices of agora 0.8.0 (D18): tests/cloud/server-notices.test.ts.
     const notices =
@@ -216,7 +259,7 @@ describe('tool outputs in cloud mode', () => {
     expect(result.total).toBe(2);
     expect(result.rooms.map((room: { name: string }) => room.name)).toEqual(['alpha', 'zeta']);
     // A room without messages leaves lastMessageAt out (the API returns null).
-    expect(result.rooms[0]).toEqual({ name: 'alpha', createdAt: expect.any(String), messageCount: 0, userCount: 0 });
+    expect(result.rooms[0]).toEqual({ name: 'alpha', createdAt: expect.any(String), messageCount: 0, userCount: 0, ephemeral: false });
     expect(result.rooms[1]).toEqual({
       name: 'zeta',
       description: 'last',
@@ -224,6 +267,7 @@ describe('tool outputs in cloud mode', () => {
       messageCount: 0,
       userCount: 0,
       lastMessageAt: sent.timestamp,
+      ephemeral: false,
     });
     expect(Number.isNaN(Date.parse(result.rooms[1].createdAt))).toBe(false);
   });
@@ -360,7 +404,7 @@ describe('send_message is safe to resend', () => {
 
   it('creates the room once when the response to POST /rooms is lost', async () => {
     proxy.dropResponseOnce((request) => request.method === 'POST' && request.path === '/rooms');
-    expect(await client.call('create_room', { roomName: 'created-once' })).toEqual({ success: true, roomName: 'created-once' });
+    expect(await client.call('create_room', { roomName: 'created-once' })).toEqual({ success: true, roomName: 'created-once', ephemeral: false });
     expect((await api.listRooms()).map((room) => room.name)).toEqual(['created-once']);
   });
 });

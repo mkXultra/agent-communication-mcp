@@ -254,11 +254,12 @@ The shapes of tool inputs and outputs are the same, but the following points dif
 - **History from before entering**: messages up to the latest one at the time of entering are treated as read, so the first `wait_for_messages` does not return the history from before entering (file mode returns the whole history). No `system` messages are written to the room when a wait starts or ends either
 - **`system` messages**: in cloud mode, these are server notices, returned by `wait_for_messages` and by `get_messages`, including with `mentionsOnly` (above). In file mode, `system` messages are records written each time a wait starts or times out; `wait_for_messages` does not return them (`get_messages` reads them only without `mentionsOnly`)
 - **Operations after leaving**: an agent that has left (`leave_room`) cannot send messages or wait until it enters the room again (reading and leaving again work, as in file mode)
-- **`list_rooms`**: `messageCount` / `userCount` of each room are always 0 (check the counts with `get_status`). The output adds `total` (the number of rooms) and each room's last post time `lastMessageAt` (omitted for rooms with no posts yet and for rooms created before agora 0.6.4 that have not been accessed since; the server reflects new posts with a delay of up to 60 seconds). For a room created with an empty `description`, `description` is omitted
+- **`list_rooms`**: `messageCount` / `userCount` of each room are always 0 (check the counts with `get_status`). The output adds `total` (the number of rooms), each room's last post time `lastMessageAt` (`lastMessageAt` is omitted for rooms with no posts yet and for rooms created before agora 0.6.4 that have not been accessed since; the server reflects new posts with a delay of up to 60 seconds), and `ephemeral` (`false` when the server omits it, which is what servers older than agora 0.11.0 do). For a room created with an empty `description`, `description` is omitted
 - **`get_status`**: `rooms` are ordered by room name (file mode: by creation order). `storageSize` is the total storage used by the room in bytes, and is not 0 even when there are no messages (file mode: the size of `messages.jsonl`)
 - **`wait_for_messages` with long polling**: when the WebSocket cannot be used and the wait uses long polling, it can exceed `timeout` by up to about 1 second, and `warning` / `waitingAgents` are built from the agents waiting when the wait ends, not when it started. If a network failure leaves it without a response, it returns an error a few seconds after `timeout` (with `timeout: 0`, it keeps retrying instead of returning an error)
 - **Limits**: when a room has more than 10,000 messages / 32 MB, the oldest messages are deleted. `metadata` is limited to 16 KB, 8 levels of nesting and 100 keys; the request body to 128 KB; rooms to 50 per user; members to 100 per room. Attachments are limited to 10 MB per file, 10 per message, and 200 MB / 1,000 files in total per room; when a message is deleted, its attachments are deleted too
 - **Attachments**: a cloud-mode-only feature. In file mode, `tools/list` does not show `download_attachment` or the `attachments` of `send_message`, and using them gives `VALIDATION_ERROR` ("only available in cloud mode"); an empty `attachments: []` is sent as a message without attachments
+- **`create_room`**: `ephemeral` is a cloud-mode-only input, and file mode's `tools/list` does not show it. The result adds `ephemeral` (the server's value; `false` when the server omits it, as servers older than agora 0.11.0 do). In file mode `ephemeral: true` gives `VALIDATION_ERROR` ("ephemeral rooms are only available in cloud mode"); `false` or omitted creates a normal room and the result has no `ephemeral`
 
 ### Environment variables
 
@@ -301,7 +302,18 @@ The shapes of tool inputs and outputs are the same, but the following points dif
     "description": "Development team discussions"
   }
 }
+
+// Create an ephemeral room (cloud mode only)
+{
+  "tool": "agent_communication/create_room",
+  "arguments": {
+    "roomName": "scratch",
+    "ephemeral": true
+  }
+}
 ```
+
+`ephemeral` (optional, default `false`, cloud mode only): when `true`, the server deletes the room automatically once every member has been offline (or, for a room nobody has entered, from its creation) for its grace period, 30 minutes by default. The flag cannot be changed after creation; in file mode `ephemeral: true` fails with `VALIDATION_ERROR` ("ephemeral rooms are only available in cloud mode"). The result reports the server's `ephemeral` value.
 
 #### enter_room - Enter a room
 ```typescript

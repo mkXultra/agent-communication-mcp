@@ -4,7 +4,7 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { RoomService } from '../room/RoomService';
 import { createRoomInputSchema, listRoomsInputSchema } from '../../../schemas/room.schema';
-import { toMCPError } from '../../../errors';
+import { toMCPError, ValidationError } from '../../../errors';
 
 const roomService = new RoomService();
 
@@ -53,7 +53,12 @@ export async function handleCreateRoom(args: any): Promise<any> {
   try {
     // 入力バリデーション
     const validatedInput = createRoomInputSchema.parse(args);
-    
+
+    // Ephemeral rooms are an agora cloud feature (D22); this file-mode handler has no counterpart for them.
+    if (validatedInput.ephemeral === true) {
+      throw new ValidationError('ephemeral', 'ephemeral rooms are only available in cloud mode');
+    }
+
     // サービス実行
     const result = await roomService.createRoom(
       validatedInput.roomName,

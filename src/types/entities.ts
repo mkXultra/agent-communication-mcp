@@ -9,6 +9,8 @@ export interface Room {
   userCount: number;
   // 最終投稿時刻（クラウドモードのみ。API が null を返すルームでは省略）
   lastMessageAt?: string;
+  // 一定時間だれもオンラインでなければサーバーが自動削除するルーム（クラウドモードのみ。API が省略した場合は false）
+  ephemeral?: boolean;
 }
 
 export interface Message {

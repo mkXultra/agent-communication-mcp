@@ -32,6 +32,29 @@ export const createRoomTool: Tool = {
   }
 };
 
+// Cloud mode adds the agora docs/api.yaml 0.11.0 (D22) input: the server deletes an ephemeral room once every member
+// has been offline for its grace period. Like send_message's attachments, file mode hides it from tools/list; the
+// shared zod schema and RoomsAdapter still reject `ephemeral: true` at runtime.
+export const cloudCreateRoomTool: Tool = {
+  ...createRoomTool,
+  description:
+    'Create a new room. With ephemeral: true (cloud mode only) the server deletes the room automatically once every ' +
+    "member has been offline for its grace period (30 minutes by default); the flag cannot be changed later.",
+  inputSchema: {
+    ...createRoomTool.inputSchema,
+    properties: {
+      ...createRoomTool.inputSchema.properties,
+      ephemeral: {
+        type: 'boolean',
+        description:
+          'Create an ephemeral room (cloud mode only): the server deletes it automatically once every member has ' +
+          'been offline for its grace period (30 minutes by default). The flag cannot be changed later',
+        default: false
+      }
+    }
+  }
+};
+
 export const enterRoomTool: Tool = {
   name: 'agent_communication_enter_room',
   description: 'Enter a room',

@@ -1,5 +1,5 @@
 import { LockService } from '../services/LockService.js';
-import { RoomNotFoundError, RoomAlreadyExistsError, AgentNotInRoomError } from '../errors/index.js';
+import { RoomNotFoundError, RoomAlreadyExistsError, AgentNotInRoomError, ValidationError } from '../errors/index.js';
 import { Room } from '../types/index.js';
 import type { IRoomsAPI } from '../features/rooms/index.js';
 import { getDataDirectory } from '../utils/dataDir.js';
@@ -53,11 +53,20 @@ export class RoomsAdapter {
     return { rooms };
   }
   
-  async createRoom(params: { roomName: string; description?: string }): Promise<{ success: boolean; roomName: string }> {
+  async createRoom(params: {
+    roomName: string;
+    description?: string;
+    ephemeral?: boolean;
+  }): Promise<{ success: boolean; roomName: string; ephemeral?: boolean }> {
     if (this.cloud) {
       return this.cloud.rooms.createRoom(params);
     }
-    
+
+    // Ephemeral rooms are deleted by the agora server (docs/api.yaml 0.11.0, D22): there is no file-mode counterpart.
+    if (params.ephemeral === true) {
+      throw new ValidationError('ephemeral', 'ephemeral rooms are only available in cloud mode');
+    }
+
     if (!this.api) {
       await this.initialize();
     }

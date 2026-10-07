@@ -320,9 +320,12 @@ async cleanupOfflineUsers(roomName: string, thresholdHours?: number): Promise<nu
 ```json
 {
   "roomName": "dev-team",
-  "description": "Development team discussions"
+  "description": "Development team discussions",
+  "ephemeral": false
 }
 ```
+
+- `ephemeral`（省略可、デフォルト `false`）: クラウドモードのみ。`true` にすると、全メンバーがオフラインになってサーバーの猶予期間（デフォルト 30 分）が過ぎた時点でサーバーが自動削除するルームになります。作成後に変更できません。ファイルモードで `true` を指定すると `ValidationError`（"ephemeral rooms are only available in cloud mode"）になります
 
 ### 2. agent_communication/list_rooms
 

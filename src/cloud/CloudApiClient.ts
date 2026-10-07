@@ -184,10 +184,22 @@ export class CloudApiClient {
     return rooms;
   }
 
-  /** POST /rooms. The `operationId` makes a resend after an ambiguous failure idempotent. */
-  createRoom(roomName: string, description?: string, operationId: string = randomUUID()): Promise<ApiCreateRoomResult> {
+  /**
+   * POST /rooms. The `operationId` makes a resend after an ambiguous failure idempotent. `ephemeral` is sent only
+   * when it is true: the API defaults it to false, and an older server must not see the field (api 0.11.0, D22).
+   */
+  createRoom(
+    roomName: string,
+    description?: string,
+    options: { ephemeral?: boolean; operationId?: string } = {},
+  ): Promise<ApiCreateRoomResult> {
     return this.request<ApiCreateRoomResult>('POST', '/rooms', {
-      body: { roomName, ...(description !== undefined ? { description } : {}), operationId },
+      body: {
+        roomName,
+        ...(description !== undefined ? { description } : {}),
+        ...(options.ephemeral === true ? { ephemeral: true } : {}),
+        operationId: options.operationId ?? randomUUID(),
+      },
       context: { roomName },
       retry: true,
     });

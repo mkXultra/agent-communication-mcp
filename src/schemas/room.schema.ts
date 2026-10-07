@@ -34,9 +34,12 @@ const agentProfileSchema = z.object({
 }).strict().optional();
 
 // create_room ツール
+// `ephemeral` (agora docs/api.yaml 0.11.0, D22): cloud mode only. `true` creates a room the server deletes
+// automatically after every member has been offline for its grace period. File mode rejects `true` (the adapter).
 export const createRoomInputSchema = z.object({
   roomName: roomNameSchema,
   description: z.string().max(200, 'Description cannot exceed 200 characters').optional(),
+  ephemeral: z.boolean().optional(),
 });
 
 export const createRoomOutputSchema = z.object({
@@ -44,6 +47,8 @@ export const createRoomOutputSchema = z.object({
   roomName: z.string(),
   description: z.string().optional(),
   createdAt: z.string(),
+  // クラウドモードのみ。API が省略した場合は false を入れる（ファイルモードでは省略）
+  ephemeral: z.boolean().optional(),
 });
 
 // list_rooms ツール
@@ -59,6 +64,7 @@ export const listRoomsOutputSchema = z.object({
     messageCount: z.number(),
     userCount: z.number(),
     lastMessageAt: z.string().optional(), // クラウドモードのみ
+    ephemeral: z.boolean().optional(), // クラウドモードのみ（API が省略した場合は false）
   })),
   total: z.number(),
 });

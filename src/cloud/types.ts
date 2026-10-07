@@ -18,6 +18,11 @@ export interface ApiRoom {
    * or was created before api 0.6.4 and has not been accessed since.
    */
   lastMessageAt?: string | null;
+  /**
+   * Whether the room is deleted automatically after every member has been offline for the server's grace period
+   * (api 0.11.0, D22). Servers older than 0.11.0 do not return it: treat a missing value as false.
+   */
+  ephemeral?: boolean;
 }
 
 export interface ApiRoomList {
@@ -32,6 +37,8 @@ export interface ApiCreateRoomResult {
   description?: string;
   createdAt: string;
   epoch: string;
+  /** Whether the created room is ephemeral (api 0.11.0, D22); missing on older servers, meaning false. */
+  ephemeral?: boolean;
 }
 
 export interface ApiAgentProfile {
