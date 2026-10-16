@@ -271,6 +271,22 @@ export class CloudWaitService {
     await Promise.all(sockets.map((socket) => socket.closeAndWait(1000, 'shutdown', CLOSE_GRACE_MS)));
   }
 
+  /**
+   * Closes only the held connections for these room x agent pairs; every other connection stays open. A shutting-down
+   * MCP server instance uses this so it does not drop the connections another same-token instance owns.
+   */
+  async closeOwned(owned: Array<{ roomName: string; agentName: string }>): Promise<void> {
+    const closing: Array<Promise<void>> = [];
+    for (const { roomName, agentName } of owned) {
+      const key = socketKey(roomName, agentName);
+      const socket = this.sockets.get(key);
+      if (!socket) continue;
+      this.sockets.delete(key);
+      closing.push(socket.closeAndWait(1000, 'shutdown', CLOSE_GRACE_MS));
+    }
+    await Promise.all(closing);
+  }
+
   /* ---------------------------------------------------------------------
    * The two kinds of wait
    * ------------------------------------------------------------------ */
@@ -278,7 +294,7 @@ export class CloudWaitService {
   private async waitWithTimeLimit(call: WaitCall): Promise<WaitForMessagesResult> {
     const { key, roomName, agentName, deadline, signal } = call;
     for (let reconnects = 0; ; reconnects++) {
-      const socket = await this.acquireSocket(key, roomName, agentName, deadline);
+      const socket = await this.acquireSocket(key, roomName, agentName, deadline, signal);
       if (!socket) return this.waitWithLongPoll(call, deadline);
       try {
         return await this.waitOnSocket(call, socket);
@@ -319,7 +335,7 @@ export class CloudWaitService {
       if (signal.aborted) throw WaitCancelledError.fromSignal(signal);
       let socket: RoomSocket | null = null;
       try {
-        socket = await this.acquireSocket(key, roomName, agentName, call.deadline);
+        socket = await this.acquireSocket(key, roomName, agentName, call.deadline, signal);
         if (socket) return await this.waitOnSocket(call, socket);
         const result = await this.waitWithLongPoll(call, Math.max(this.webSocketRetryAt, Date.now() + MIN_LONG_POLL_ROUND_MS));
         if (result.hasNewMessages) return result;
@@ -353,7 +369,13 @@ export class CloudWaitService {
    * WebSocket
    * ------------------------------------------------------------------ */
 
-  private async acquireSocket(key: string, roomName: string, agentName: string, deadline: number): Promise<RoomSocket | null> {
+  private async acquireSocket(
+    key: string,
+    roomName: string,
+    agentName: string,
+    deadline: number,
+    signal: AbortSignal,
+  ): Promise<RoomSocket | null> {
     const existing = this.sockets.get(key);
     const held = this.cursors.get(key);
     // A connection to an earlier room of this name (the cursor was taken in a newer one) is of no use.
@@ -364,6 +386,12 @@ export class CloudWaitService {
     try {
       let cursor = this.cursors.get(key);
       let socket = await this.openSocket(roomName, agentName, cursor?.seq, deadline);
+      // The wait may have been cancelled (a switch/leave/shutdown, or the MCP client) while the handshake was in
+      // flight. A socket that arrives after that must not be installed and left open for a wait that is already over.
+      if (signal.aborted) {
+        socket.terminate();
+        throw WaitCancelledError.fromSignal(signal);
+      }
       if (cursor && socket.epoch !== cursor.epoch) {
         // The cursor belongs to an earlier room of this name: start from the member's read position in this one
         // (connecting does not move it).
@@ -371,6 +399,10 @@ export class CloudWaitService {
         this.cursors.delete(key);
         cursor = undefined;
         socket = await this.openSocket(roomName, agentName, undefined, deadline);
+        if (signal.aborted) {
+          socket.terminate();
+          throw WaitCancelledError.fromSignal(signal);
+        }
       }
       this.cursors.set(key, { seq: cursor?.seq ?? socket.initialLastReadSeq, epoch: socket.epoch });
       this.sockets.set(key, socket);

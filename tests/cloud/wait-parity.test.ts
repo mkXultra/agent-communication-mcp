@@ -7,7 +7,7 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 import { CloudApiClient } from '../../src/cloud/index.js';
-import { createMcpClient, waitUntil, withEnv, type McpTestClient } from './harness/mcp.js';
+import { createMcpClient, enterAgents, waitUntil, withEnv, type McpTestClient } from './harness/mcp.js';
 
 const apiUrl = process.env.AGENT_COMM_API_URL!;
 const token = process.env.AGENT_COMM_TOKEN!;
@@ -91,13 +91,13 @@ describe('wait_for_messages: the same results in file mode and cloud mode', () =
     const { file, cloud } = await inBothModes(async ({ client, untilWaiting }) => {
       const roomName = 'parity-deadlock';
       await client.call('create_room', { roomName });
-      for (const agentName of ['alice', 'bob', 'carol']) await client.call('enter_room', { agentName, roomName });
+      const agents = await enterAgents(client, roomName, ['alice', 'bob', 'carol']);
 
-      const alice = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 15 });
+      const alice = client.call<WaitResult>('wait_for_messages', { roomName, timeout: 15 });
       await untilWaiting(roomName, 'alice');
-      const bob = client.call<WaitResult>('wait_for_messages', { agentName: 'bob', roomName, timeout: 15 });
+      const bob = agents.of('bob').call<WaitResult>('wait_for_messages', { roomName, timeout: 15 });
       await untilWaiting(roomName, 'bob');
-      await client.call('send_message', { agentName: 'carol', roomName, message: 'wake up @alice @bob' });
+      await agents.of('carol').call('send_message', { roomName, message: 'wake up @alice @bob' });
       return { alice: withoutIds(await alice), bob: withoutIds(await bob) };
     });
 
@@ -112,17 +112,17 @@ describe('wait_for_messages: the same results in file mode and cloud mode', () =
     const { file, cloud } = await inBothModes(async ({ client, untilWaiting }) => {
       const roomName = 'parity-mentions';
       await client.call('create_room', { roomName });
-      for (const agentName of ['alice', 'bob', 'carol']) await client.call('enter_room', { agentName, roomName });
+      const agents = await enterAgents(client, roomName, ['alice', 'bob', 'carol']);
 
-      const alice = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 15, mentionsOnly: true });
+      const alice = client.call<WaitResult>('wait_for_messages', { roomName, timeout: 15, mentionsOnly: true });
       await untilWaiting(roomName, 'alice');
-      await client.call('send_message', { agentName: 'carol', roomName, message: 'question for anyone' });
-      await client.call('send_message', { agentName: 'carol', roomName, message: 'and one for @bob' });
+      await agents.of('carol').call('send_message', { roomName, message: 'question for anyone' });
+      await agents.of('carol').call('send_message', { roomName, message: 'and one for @bob' });
       // bob gets carol's messages at once; alice passes over them and is still waiting.
-      const bob = await client.call<WaitResult>('wait_for_messages', { agentName: 'bob', roomName, timeout: 5 });
-      await client.call('send_message', { agentName: 'bob', roomName, message: 'answered, @alice' });
+      const bob = await agents.of('bob').call<WaitResult>('wait_for_messages', { roomName, timeout: 5 });
+      await agents.of('bob').call('send_message', { roomName, message: 'answered, @alice' });
       const first = await alice;
-      const second = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 1 });
+      const second = await client.call<WaitResult>('wait_for_messages', { roomName, timeout: 1 });
       return { bob: withoutIds(bob), alice: [first, second].map(withoutIds) };
     });
 
@@ -140,15 +140,14 @@ describe('wait_for_messages: the same results in file mode and cloud mode', () =
     const { file, cloud } = await inBothModes(async ({ client }) => {
       const roomName = 'parity-reply';
       await client.call('create_room', { roomName });
-      await client.call('enter_room', { agentName: 'alice', roomName });
-      await client.call('enter_room', { agentName: 'bob', roomName });
-      await client.call('send_message', { agentName: 'bob', roomName, message: 'question 1' });
-      await client.call('send_message', { agentName: 'alice', roomName, message: 'answer 0' });
-      const first = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 3 });
-      await client.call('send_message', { agentName: 'bob', roomName, message: 'question 2' });
-      await client.call('send_message', { agentName: 'alice', roomName, message: 'answer 1' });
-      const second = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 3 });
-      const third = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 1 });
+      const agents = await enterAgents(client, roomName, ['alice', 'bob']);
+      await agents.of('bob').call('send_message', { roomName, message: 'question 1' });
+      await agents.of('alice').call('send_message', { roomName, message: 'answer 0' });
+      const first = await client.call<WaitResult>('wait_for_messages', { roomName, timeout: 3 });
+      await agents.of('bob').call('send_message', { roomName, message: 'question 2' });
+      await agents.of('alice').call('send_message', { roomName, message: 'answer 1' });
+      const second = await client.call<WaitResult>('wait_for_messages', { roomName, timeout: 3 });
+      const third = await client.call<WaitResult>('wait_for_messages', { roomName, timeout: 1 });
       return [first, second, third].map(withoutIds);
     });
 

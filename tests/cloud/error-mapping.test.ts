@@ -195,9 +195,16 @@ describe('errors returned by agora', () => {
     const message = "Room 'missing-room' not found";
     await expectToolError(client.call('enter_room', { agentName: 'alice', roomName: 'missing-room' }), { message });
     await expectToolError(client.call('list_room_users', { roomName: 'missing-room' }), { message });
-    await expectToolError(client.call('send_message', { agentName: 'alice', roomName: 'missing-room', message: 'x' }), { message });
+    // send_message to a room this connection has not entered is refused by the identity layer (ROOM_IDENTITY_REQUIRED)
+    // before the room is looked up; the adapter path above already covers ROOM_NOT_FOUND.
+    await expectToolError(client.call('send_message', { roomName: 'missing-room', message: 'x' }), {
+      message: /has not entered room 'missing-room'/,
+    });
     await expectToolError(client.call('get_messages', { agentName: 'alice', roomName: 'missing-room' }), { message });
-    await expectToolError(client.call('wait_for_messages', { agentName: 'alice', roomName: 'missing-room', timeout: 1 }), { message });
+    // The identity layer has no local entry for these rooms (the adapter path above covers ROOM_NOT_FOUND).
+    await expectToolError(client.call('wait_for_messages', { roomName: 'missing-room', timeout: 1 }), {
+      message: /has not entered room 'missing-room'/,
+    });
     await expectToolError(client.call('clear_room_messages', { roomName: 'missing-room', confirm: true }), { message });
   });
 
@@ -221,8 +228,8 @@ describe('errors returned by agora', () => {
     await expectAppError(backend.messaging.getMessages({ agentName: 'outsider', roomName: 'errors' }), notInRoom);
     await expectAppError(backend.messaging.waitForMessages({ agentName: 'outsider', roomName: 'errors', timeout: 1000 }), notInRoom);
     await expectAppError(backend.rooms.leaveRoom({ agentName: 'outsider', roomName: 'errors' }), notInRoom);
-    await expectToolError(client.call('wait_for_messages', { agentName: 'outsider', roomName: 'errors', timeout: 1 }), {
-      message: notInRoom.message,
+    await expectToolError(client.call('wait_for_messages', { roomName: 'errors', timeout: 1 }), {
+      message: /has not entered room 'errors'/,
     });
 
     await expectAppError(backend.management.clearRoomMessages({ roomName: 'errors', confirm: false }), {
@@ -248,7 +255,7 @@ describe('errors returned by agora', () => {
       type: InvalidMessageFormatError,
       message: /^Invalid message format: /,
     });
-    await expectToolError(client.call('send_message', { agentName: 'alice', roomName: 'limits', message: 'x', metadata: deep }), {
+    await expectToolError(client.call('send_message', { roomName: 'limits', message: 'x', metadata: deep }), {
       message: /^Invalid message format: /,
     });
 
@@ -280,9 +287,11 @@ describe('errors returned by agora', () => {
 
   it('MEMBER_CAPACITY_EXCEEDED keeps its code on AppError', async () => {
     await client.call('create_room', { roomName: 'crowded' });
+    // Fill the room through the API: the acting name of one MCP connection is per room, so 100 names need 100
+    // connections (or here, direct joins). The MCP tool is then the one that reports the capacity error.
     for (let i = 0; i < 100; i += 20) {
       await Promise.all(
-        Array.from({ length: 20 }, (_, j) => client.call('enter_room', { agentName: `agent-${i + j}`, roomName: 'crowded' })),
+        Array.from({ length: 20 }, (_, j) => backend.rooms.enterRoom({ agentName: `agent-${i + j}`, roomName: 'crowded' })),
       );
     }
     const error = await expectAppError(backend.rooms.enterRoom({ agentName: 'one-too-many', roomName: 'crowded' }), {

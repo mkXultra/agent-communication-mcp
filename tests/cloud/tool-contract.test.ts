@@ -68,8 +68,9 @@ describe('tool outputs in cloud mode', () => {
 
   it('get_messages reproduces offset / limit (newest first) across more than one API page', async () => {
     await client.call('create_room', { roomName: 'paging' });
-    await client.call('enter_room', { agentName: 'alice', roomName: 'paging' });
-    await client.call('enter_room', { agentName: 'bob', roomName: 'paging' });
+    // Members only: the sends below are direct API calls (independent MCP connections would also do).
+    await api.joinRoom('paging', 'alice');
+    await api.joinRoom('paging', 'bob');
     const total = 1210;
     for (let i = 0; i < total; i += 55) {
       await Promise.all(
@@ -118,21 +119,24 @@ describe('tool outputs in cloud mode', () => {
     expect(page.messages.every((m: ToolMessage) => m.mentions.includes('bob'))).toBe(true);
   }, 120000);
 
-  it('wait_for_messages lists mentionsOnly (a boolean, false by default) and returns only the messages that mention agentName', async () => {
+  it('wait_for_messages lists mentionsOnly (a boolean, false by default) and returns only the messages that mention the acting name', async () => {
     const wait = (await listedTools()).find((tool) => tool.name === 'agent_communication_wait_for_messages')!;
-    expect(Object.keys(wait.inputSchema.properties)).toEqual(['agentName', 'roomName', 'timeout', 'mentionsOnly']);
+    expect(Object.keys(wait.inputSchema.properties)).toEqual(['roomName', 'timeout', 'mentionsOnly']);
     expect(wait.inputSchema.properties.mentionsOnly).toEqual({
       type: 'boolean',
-      description: 'Only return messages that mention agentName; other new messages are marked read without being returned',
+      description: 'Only return messages that mention the acting agent name; other new messages are marked read without being returned',
       default: false,
     });
-    expect(wait.inputSchema.required).toEqual(['agentName', 'roomName']);
+    expect(wait.inputSchema.required).toEqual(['roomName']);
 
     await client.call('create_room', { roomName: 'mentions-contract' });
-    for (const agentName of ['alice', 'bob']) await client.call('enter_room', { agentName, roomName: 'mentions-contract' });
-    await client.call('send_message', { agentName: 'bob', roomName: 'mentions-contract', message: 'for anyone' });
-    const sent = await client.call('send_message', { agentName: 'bob', roomName: 'mentions-contract', message: 'hi @alice and @carol' });
-    const result = await client.call('wait_for_messages', { agentName: 'alice', roomName: 'mentions-contract', timeout: 3, mentionsOnly: true });
+    // alice enters on her own connection (the acting name is per connection and room), bob on the test's client.
+    const alice = await client.spawn();
+    await alice.call('enter_room', { agentName: 'alice', roomName: 'mentions-contract' });
+    await client.call('enter_room', { agentName: 'bob', roomName: 'mentions-contract' });
+    await client.call('send_message', { roomName: 'mentions-contract', message: 'for anyone' });
+    const sent = await client.call('send_message', { roomName: 'mentions-contract', message: 'hi @alice and @carol' });
+    const result = await alice.call('wait_for_messages', { roomName: 'mentions-contract', timeout: 3, mentionsOnly: true });
     // The file-mode output shape: the messages whose `mentions` name the agent, without seq or clientMessageId.
     expect(result).toEqual({
       messages: [
@@ -200,8 +204,9 @@ describe('tool outputs in cloud mode', () => {
     const descriptions = Object.fromEntries((await listedTools()).map((tool) => [tool.name, tool.description]));
     expect(descriptions.agent_communication_get_messages).toBe(`Get messages from a room. ${notices}`);
     expect(descriptions.agent_communication_wait_for_messages).toBe(
-      'Wait for new messages in a room using long-polling. This tool will block until new messages are available or the timeout is reached. ' +
-        `Returns immediately if new messages are already available since the last check. ${notices}`,
+      'Wait for new messages in a room as the agent that entered it on this MCP connection (agent_communication_enter_room). ' +
+        'This tool will block until new messages are available or the timeout is reached. Returns immediately if new messages are already available since the last check. ' +
+        notices,
     );
   });
 
@@ -211,12 +216,12 @@ describe('tool outputs in cloud mode', () => {
     const emoji = String.fromCodePoint(0x1f600);
     // 10000 code points are 20000 UTF-16 code units
     const longest = emoji.repeat(10000);
-    expect(await client.call('send_message', { agentName: 'alice', roomName: 'long-message', message: longest })).toMatchObject({ success: true });
+    expect(await client.call('send_message', { roomName: 'long-message', message: longest })).toMatchObject({ success: true });
     const result = await client.call('get_messages', { agentName: 'alice', roomName: 'long-message' });
     expect(result.messages.map((m: ToolMessage) => m.message)).toEqual([longest]);
 
     await expect(
-      client.call('send_message', { agentName: 'alice', roomName: 'long-message', message: emoji.repeat(10001) }),
+      client.call('send_message', { roomName: 'long-message', message: emoji.repeat(10001) }),
     ).rejects.toThrow('Message cannot exceed 10000 characters');
     expect((await api.getMessages('long-message', {})).messages).toHaveLength(1);
   });
@@ -224,7 +229,7 @@ describe('tool outputs in cloud mode', () => {
   it('get_messages returns the file-mode message shape', async () => {
     await client.call('create_room', { roomName: 'shape' });
     await client.call('enter_room', { agentName: 'alice', roomName: 'shape' });
-    const sent = await client.call('send_message', { agentName: 'alice', roomName: 'shape', message: 'hi @bob and @carol' });
+    const sent = await client.call('send_message', { roomName: 'shape', message: 'hi @bob and @carol' });
     expect(Object.keys(sent)).toEqual(['success', 'messageId', 'timestamp', 'roomName', 'mentions']);
     expect(sent).toMatchObject({ success: true, roomName: 'shape', mentions: ['bob', 'carol'] });
 
@@ -275,11 +280,7 @@ describe('tool outputs in cloud mode', () => {
   it('list_room_users maps members to name / status / messageCount / profile, offline members included', async () => {
     await client.call('create_room', { roomName: 'people' });
     await client.call('enter_room', { agentName: 'zoe', roomName: 'people' });
-    await client.call('enter_room', {
-      agentName: 'adam',
-      roomName: 'people',
-      profile: { role: 'reviewer', capabilities: ['review'] },
-    });
+    await api.joinRoom('people', 'adam', { role: 'reviewer', capabilities: ['review'] });
     await client.call('leave_room', { agentName: 'zoe', roomName: 'people' });
 
     const result = await client.call('list_room_users', { roomName: 'people' });
@@ -297,13 +298,14 @@ describe('tool outputs in cloud mode', () => {
     await client.call('create_room', { roomName: 'status-a' });
     await client.call('create_room', { roomName: 'status-b' });
     await client.call('create_room', { roomName: 'status-empty' });
+    // One MCP connection acts as one name per room (alice here in status-a); the other members/sends are direct.
     await client.call('enter_room', { agentName: 'alice', roomName: 'status-a' });
-    await client.call('enter_room', { agentName: 'bob', roomName: 'status-a' });
-    await client.call('enter_room', { agentName: 'alice', roomName: 'status-b' });
-    await client.call('enter_room', { agentName: 'carol', roomName: 'status-b' });
-    await client.call('send_message', { agentName: 'alice', roomName: 'status-a', message: 'one' });
-    await client.call('send_message', { agentName: 'carol', roomName: 'status-b', message: 'two' });
-    await client.call('send_message', { agentName: 'carol', roomName: 'status-b', message: 'three' });
+    await api.joinRoom('status-a', 'bob');
+    await api.joinRoom('status-b', 'alice');
+    await api.joinRoom('status-b', 'carol');
+    await client.call('send_message', { roomName: 'status-a', message: 'one' });
+    await api.sendMessage('status-b', { agentName: 'carol', message: 'two' });
+    await api.sendMessage('status-b', { agentName: 'carol', message: 'three' });
 
     const status = await client.call('get_status', { roomName: 'status-a' });
     expect(Object.keys(status)).toEqual(['rooms', 'totalRooms', 'totalOnlineUsers', 'totalMessages']);
@@ -319,7 +321,7 @@ describe('tool outputs in cloud mode', () => {
   it('keeps the file-mode leave / read behaviour for members that already left', async () => {
     await client.call('create_room', { roomName: 'left' });
     await client.call('enter_room', { agentName: 'alice', roomName: 'left' });
-    await client.call('send_message', { agentName: 'alice', roomName: 'left', message: 'before leaving' });
+    await client.call('send_message', { roomName: 'left', message: 'before leaving' });
     expect(await client.call('leave_room', { agentName: 'alice', roomName: 'left' })).toEqual({ success: true });
     // PresenceService.leaveRoom only needs the member row, so leaving again succeeds.
     expect(await client.call('leave_room', { agentName: 'alice', roomName: 'left' })).toEqual({ success: true });
@@ -346,22 +348,24 @@ describe('tool outputs in cloud mode', () => {
       client.call('enter_room', { agentName: 'alice', roomName: 'validation', profile: { role: 'r'.repeat(101) } }),
     ).rejects.toThrow(/Validation error: .*Profile role cannot exceed 100 characters/s);
     await expect(client.call('send_message', { agentName: 'bad name', roomName: 'validation', message: 'x' })).rejects.toThrow(
-      "Agent 'bad name' is not in room 'validation'",
+      "'agentName' is not an input of agent_communication_send_message",
     );
     await client.call('enter_room', { agentName: 'alice', roomName: 'validation' });
+    expect(await client.call('send_message', { roomName: 'validation', message: 'now it can' })).toMatchObject({ success: true });
     // wait_for_messages has no tool schema: the timeout is checked like MessageValidator does (1 s .. 300 s, or 0).
-    await expect(client.call('wait_for_messages', { agentName: 'alice', roomName: 'validation', timeout: 500 })).rejects.toThrow(
+    await expect(client.call('wait_for_messages', { roomName: 'validation', timeout: 500 })).rejects.toThrow(
       /Validation failed for field 'timeout'/,
     );
     // mentionsOnly is parsed by the tool handler, like the arguments of the other tools (invalid params).
     await expect(
-      client.call('wait_for_messages', { agentName: 'alice', roomName: 'validation', timeout: 1, mentionsOnly: 'yes' }),
+      client.call('wait_for_messages', { roomName: 'validation', timeout: 1, mentionsOnly: 'yes' }),
     ).rejects.toMatchObject({
       code: -32602,
       message: expect.stringMatching(/Validation error: .*"mentionsOnly".*Expected boolean, received string/s),
     });
+    // agentName is no longer an input: supplying one is refused before any room or name is resolved.
     await expect(client.call('wait_for_messages', { agentName: 'ghost', roomName: 'validation', timeout: 500 })).rejects.toThrow(
-      "Agent 'ghost' is not in room 'validation'",
+      "'agentName' is not an input of agent_communication_wait_for_messages",
     );
   });
 });
@@ -393,7 +397,7 @@ describe('send_message is safe to resend', () => {
 
     proxy.requests.length = 0;
     proxy.dropResponseOnce((request) => request.method === 'POST' && request.path === '/rooms/resend/messages');
-    const sent = await client.call('send_message', { agentName: 'alice', roomName: 'resend', message: 'exactly once' });
+    const sent = await client.call('send_message', { roomName: 'resend', message: 'exactly once' });
 
     expect(proxy.countRequests('POST', '/rooms/resend/messages')).toBe(2);
     const stored = await api.getMessages('resend', { since: 0 });

@@ -60,9 +60,10 @@ describe('the read cursor of wait_for_messages', () => {
   it('does not send when the read position cannot be read first, so the unread message stays unread', async () => {
     const roomName = 'cursor-unreadable';
     await client.call('create_room', { roomName });
-    await client.call('enter_room', { agentName: 'alice', roomName });
+    // The acting name of one MCP instance is per room: bob joins through it, alice is a member through the API.
+    await api.joinRoom(roomName, 'alice');
     await client.call('enter_room', { agentName: 'bob', roomName });
-    await client.call('send_message', { agentName: 'bob', roomName, message: 'still unread' });
+    await client.call('send_message', { roomName, message: 'still unread' });
 
     const other = anotherProcess();
     proxy.headersFor = (r) =>
@@ -88,7 +89,7 @@ describe('the read cursor of wait_for_messages', () => {
 
     expect(await requestsOf(() => alice.rooms.enterRoom({ agentName: 'alice', roomName }))).toEqual([`POST /rooms/${roomName}/join`]);
     await client.call('enter_room', { agentName: 'bob', roomName });
-    await client.call('send_message', { agentName: 'bob', roomName, message: 'before alice spoke' });
+    await client.call('send_message', { roomName, message: 'before alice spoke' });
     expect(await requestsOf(() => alice.messaging.sendMessage({ agentName: 'alice', roomName, message: 'alice speaks' }))).toEqual([
       `POST /rooms/${roomName}/messages`,
     ]);
@@ -105,9 +106,9 @@ describe('the read cursor of wait_for_messages', () => {
   it('takes the read position and its epoch with one GET /members before the first send of a process that did not enter', async () => {
     const roomName = 'cursor-requests-members';
     await client.call('create_room', { roomName });
-    await client.call('enter_room', { agentName: 'alice', roomName });
+    await api.joinRoom(roomName, 'alice');
     await client.call('enter_room', { agentName: 'bob', roomName });
-    await client.call('send_message', { agentName: 'bob', roomName, message: 'before alice spoke' });
+    await client.call('send_message', { roomName, message: 'before alice spoke' });
 
     const other = anotherProcess();
     expect(await requestsOf(() => other.messaging.sendMessage({ agentName: 'alice', roomName, message: 'alice speaks' }))).toEqual([
@@ -174,7 +175,7 @@ describe('the read cursor of wait_for_messages', () => {
   async function enterThenRoomRecreated(roomName: string): Promise<CloudBackend> {
     await client.call('create_room', { roomName });
     await client.call('enter_room', { agentName: 'bob', roomName });
-    for (let i = 1; i <= 5; i++) await client.call('send_message', { agentName: 'bob', roomName, message: `old ${i}` });
+    for (let i = 1; i <= 5; i++) await client.call('send_message', { roomName, message: `old ${i}` });
     const first = anotherProcess();
     await first.rooms.enterRoom({ agentName: 'alice', roomName });
     expect(await readPosition(roomName, 'alice')).toBe(5);

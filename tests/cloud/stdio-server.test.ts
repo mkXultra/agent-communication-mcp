@@ -153,13 +153,13 @@ describe('stdio MCP server in cloud mode', () => {
     expect(await alice.tool('enter_room', { agentName: 'alice', roomName: 'stdio-room' })).toEqual({ success: true });
     expect(await bob.tool('enter_room', { agentName: 'bob', roomName: 'stdio-room' })).toEqual({ success: true });
 
-    const waiting = alice.tool('wait_for_messages', { agentName: 'alice', roomName: 'stdio-room', timeout: 15 });
+    const waiting = alice.tool('wait_for_messages', { roomName: 'stdio-room', timeout: 15 });
     await waitUntil(
       async () => (await api.listMembers('stdio-room')).members.find((m) => m.agentName === 'alice')?.waiting === true,
       10000,
       'alice waiting in the other process',
     );
-    const sent = await bob.tool('send_message', { agentName: 'bob', roomName: 'stdio-room', message: 'hello from another process @alice' });
+    const sent = await bob.tool('send_message', { roomName: 'stdio-room', message: 'hello from another process @alice' });
     const released = await waiting;
     expect(released.hasNewMessages).toBe(true);
     expect(released.timedOut).toBe(false);
@@ -210,7 +210,7 @@ describe('stdio MCP server in cloud mode', () => {
     const server = await start();
     await server.tool('create_room', { roomName: 'sigterm-room' });
     await server.tool('enter_room', { agentName: 'alice', roomName: 'sigterm-room' });
-    await server.tool('wait_for_messages', { agentName: 'alice', roomName: 'sigterm-room', timeout: 1 });
+    await server.tool('wait_for_messages', { roomName: 'sigterm-room', timeout: 1 });
     expect((await api.listMembers('sigterm-room')).members[0]!.connected).toBe(true);
 
     server.process.kill('SIGTERM');
@@ -224,15 +224,15 @@ describe('stdio MCP server in cloud mode', () => {
     await bySignal.tool('create_room', { roomName: 'no-limit-exit' });
     await bySignal.tool('enter_room', { agentName: 'alice', roomName: 'no-limit-exit' });
     await byStdin.tool('enter_room', { agentName: 'bob', roomName: 'no-limit-exit' });
-    const waitWithoutLimit = (server: StdioServer, agentName: string) =>
+    const waitWithoutLimit = (server: StdioServer) =>
       server
         .request('tools/call', {
           name: 'agent_communication_wait_for_messages',
-          arguments: { agentName, roomName: 'no-limit-exit', timeout: 0 },
+          arguments: { roomName: 'no-limit-exit', timeout: 0 },
         })
         .catch(() => undefined);
-    void waitWithoutLimit(bySignal, 'alice');
-    void waitWithoutLimit(byStdin, 'bob');
+    void waitWithoutLimit(bySignal);
+    void waitWithoutLimit(byStdin);
     const members = async () => (await api.listMembers('no-limit-exit')).members;
     await waitUntil(async () => (await members()).every((member) => member.waiting && member.connected), 10000, 'both waiting');
 
@@ -325,7 +325,7 @@ describe('stdio MCP server: the mode chosen at startup', () => {
       await server.tool('create_room', { roomName });
       await server.tool('enter_room', { agentName: 'alice', roomName });
       void server
-        .request('tools/call', { name: 'agent_communication_wait_for_messages', arguments: { agentName: 'alice', roomName, timeout: 0 } })
+        .request('tools/call', { name: 'agent_communication_wait_for_messages', arguments: { roomName, timeout: 0 } })
         .catch(() => undefined);
       const waitingFile = path.join(dataDir, 'rooms', roomName, 'waiting_agents.json');
       const waitingAgents = async () => JSON.parse(await fs.readFile(waitingFile, 'utf8').catch(() => '[]')) as Array<{ agentName: string; timeout: number }>;

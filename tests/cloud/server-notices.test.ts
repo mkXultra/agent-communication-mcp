@@ -13,7 +13,7 @@ import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { CloudApiClient, CloudBackend } from '../../src/cloud/index.js';
 import type { ApiMessage } from '../../src/cloud/types.js';
 import { deleteAllRooms, issueToken, startAgora, type AgoraInstance } from './harness/agora.js';
-import { createMcpClient, sleep, waitUntil, withEnv, type McpTestClient, type PendingToolCall } from './harness/mcp.js';
+import { createMcpClient, enterAgents, sleep, waitUntil, withEnv, type McpTestClient, type PendingToolCall } from './harness/mcp.js';
 import { AgoraProxy } from './harness/proxy.js';
 
 const NOTICE_AFTER_MS = 3000;
@@ -76,6 +76,7 @@ describe('server notices (agentName system) in cloud mode', () => {
   let api: CloudApiClient;
   let client: McpTestClient;
   let bob: CloudBackend;
+  let agents: Awaited<ReturnType<typeof enterAgents>>;
   const controllers: AbortController[] = [];
 
   beforeAll(async () => {
@@ -105,8 +106,8 @@ describe('server notices (agentName system) in cloud mode', () => {
 
   async function setupRoom(roomName: string): Promise<void> {
     await client.call('create_room', { roomName });
-    await client.call('enter_room', { agentName: 'alice', roomName });
-    await client.call('enter_room', { agentName: 'bob', roomName });
+    // One connection per acting name; alice uses the test's client, bob a connection spawned from it.
+    agents = await enterAgents(client, roomName, ['alice', 'bob']);
     proxy.reset();
   }
 
@@ -141,7 +142,7 @@ describe('server notices (agentName system) in cloud mode', () => {
 
   /** alice and then bob wait until the all-waiting notice wakes them both; returns the notice. */
   async function produceNotice(roomName: string): Promise<ApiMessage> {
-    const alice = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 15 });
+    const alice = client.call<WaitResult>('wait_for_messages', { roomName, timeout: 15 });
     // A test that fails before it takes the result leaves the call to the transport's request timeout, which rejects it.
     alice.catch(() => undefined);
     await untilWaiting(roomName, 'alice');
@@ -156,7 +157,7 @@ describe('server notices (agentName system) in cloud mode', () => {
     const roomName = 'notice';
     await setupRoom(roomName);
 
-    const alice = client.start<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 0 });
+    const alice = client.start<WaitResult>('wait_for_messages', { roomName, timeout: 0 });
     // A test that fails before it takes the result leaves the call to the transport's request timeout, which rejects it.
     alice.result.catch(() => undefined);
     await untilWaiting(roomName, 'alice');
@@ -188,7 +189,7 @@ describe('server notices (agentName system) in cloud mode', () => {
     expect((await member(roomName, 'bob')).lastReadSeq).toBe(notice!.seq);
 
     // Returned again neither by this process (client cursor) nor by another one (server read position).
-    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 1 });
+    const next = await client.call<WaitResult>('wait_for_messages', { roomName, timeout: 1 });
     expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
     const other = new CloudBackend({ apiUrl: agora.url, token });
     try {
@@ -207,7 +208,7 @@ describe('server notices (agentName system) in cloud mode', () => {
     const settle = (): void => {
       settled = true;
     };
-    const alice = client.start<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 0, mentionsOnly: true });
+    const alice = client.start<WaitResult>('wait_for_messages', { roomName, timeout: 0, mentionsOnly: true });
     alice.result.then(settle, settle);
     await untilWaiting(roomName, 'alice');
     const bobResult = bobWaits(roomName, 20000);
@@ -239,7 +240,7 @@ describe('server notices (agentName system) in cloud mode', () => {
 
     // The next wait returns what comes after the notice, and neither the notice nor the message passed over.
     await bob.messaging.sendMessage({ agentName: 'bob', roomName, message: 'after the notice' });
-    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 3 });
+    const next = await client.call<WaitResult>('wait_for_messages', { roomName, timeout: 3 });
     expect(next.messages.map((message) => message.message)).toEqual(['after the notice']);
   });
 
@@ -287,14 +288,14 @@ describe('server notices (agentName system) in cloud mode', () => {
   it('get_messages with mentionsOnly returns the notice with the messages that mention the agent', async () => {
     const roomName = 'notice-get-messages';
     await setupRoom(roomName);
-    await client.call('send_message', { agentName: 'bob', roomName, message: 'before, for @alice' });
-    await client.call('send_message', { agentName: 'bob', roomName, message: 'before, for anyone' });
+    await agents.of('bob').call('send_message', { roomName, message: 'before, for @alice' });
+    await agents.of('bob').call('send_message', { roomName, message: 'before, for anyone' });
     // alice reads them, so that her next wait waits for the notice.
-    const read = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 1 });
+    const read = await client.call<WaitResult>('wait_for_messages', { roomName, timeout: 1 });
     expect(read.messages).toHaveLength(2);
     const notice = await produceNotice(roomName);
-    await client.call('send_message', { agentName: 'bob', roomName, message: 'after, for @alice' });
-    await client.call('send_message', { agentName: 'alice', roomName, message: 'after, for @bob' });
+    await agents.of('bob').call('send_message', { roomName, message: 'after, for @alice' });
+    await agents.of('alice').call('send_message', { roomName, message: 'after, for @bob' });
 
     const forAlice = await client.call('get_messages', { agentName: 'alice', roomName, mentionsOnly: true });
     expect(forAlice).toEqual({
@@ -326,17 +327,24 @@ describe('server notices (agentName system) in cloud mode', () => {
     await setupRoom(roomName);
     // agora refuses the name with a VALIDATION_ERROR (400), which the tools report as invalid params.
     const refusal = `Validation failed for field 'request': agentName "system" is reserved for server notices`;
-    for (const [tool, args] of [
-      ['enter_room', { agentName: 'system', roomName }],
-      ['send_message', { agentName: 'system', roomName, message: 'not a notice' }],
-      ['wait_for_messages', { agentName: 'system', roomName, timeout: 1 }],
-    ] as const) {
-      await expect(client.call(tool, args)).rejects.toMatchObject({
-        code: ErrorCode.InvalidParams,
-        message: `MCP error ${ErrorCode.InvalidParams}: ${refusal}`,
-      });
-    }
+    // A fresh, unbound connection enters as system: the room's normal connection is already entered as alice.
+    const fresh = await client.spawn();
+    await expect(fresh.call('enter_room', { agentName: 'system', roomName })).rejects.toMatchObject({
+      code: ErrorCode.InvalidParams,
+      message: `MCP error ${ErrorCode.InvalidParams}: ${refusal}`,
+    });
+    // wait_for_messages takes no agentName either: supplying one is refused before any name is resolved.
+    await expect(client.call('wait_for_messages', { agentName: 'system', roomName, timeout: 1 })).rejects.toMatchObject({
+      code: ErrorCode.InvalidParams,
+      message: expect.stringMatching(/'agentName' is not an input of agent_communication_wait_for_messages/),
+    });
     await expect(bob.rooms.enterRoom({ agentName: 'system', roomName })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      statusCode: 400,
+      message: refusal,
+    });
+    // send_message takes no agentName, so the reserved name is checked at the adapter it calls.
+    await expect(bob.messaging.sendMessage({ agentName: 'system', roomName, message: 'not a notice' })).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
       message: refusal,

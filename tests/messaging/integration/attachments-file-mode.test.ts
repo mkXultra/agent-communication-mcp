@@ -59,7 +59,7 @@ describe('attachments in file mode', () => {
     expect(tools).toHaveLength(10);
     expect(tools.map((tool) => tool.name)).not.toContain('agent_communication_download_attachment');
     const send = tools.find((tool) => tool.name === 'agent_communication_send_message')!;
-    expect(Object.keys(send.inputSchema.properties)).toEqual(['agentName', 'roomName', 'message']);
+    expect(Object.keys(send.inputSchema.properties)).toEqual(['roomName', 'message']);
   });
 
   it('describes get_messages and wait_for_messages without the server notices of cloud mode', async () => {
@@ -70,7 +70,7 @@ describe('attachments in file mode', () => {
     );
     expect(descriptions.agent_communication_get_messages).toBe('Get messages from a room');
     expect(descriptions.agent_communication_wait_for_messages).toBe(
-      'Wait for new messages in a room using long-polling. This tool will block until new messages are available or the timeout is reached. Returns immediately if new messages are already available since the last check.'
+      'Wait for new messages in a room as the agent that entered it on this MCP connection (agent_communication_enter_room). This tool will block until new messages are available or the timeout is reached. Returns immediately if new messages are already available since the last check.'
     );
   });
 
@@ -78,7 +78,7 @@ describe('attachments in file mode', () => {
     const file = path.join(dataDir, 'report.txt');
     await fs.writeFile(file, 'report');
 
-    const { error } = await call('send_message', { agentName: 'alice', roomName: 'files', message: 'see file', attachments: [file] });
+    const { error } = await call('send_message', { roomName: 'files', message: 'see file', attachments: [file] });
     expect(error.code).toBe(ErrorCode.InvalidParams);
     expect(error.message).toBe(`MCP error ${ErrorCode.InvalidParams}: Validation failed for field 'attachments': ${CLOUD_ONLY}`);
 
@@ -91,7 +91,7 @@ describe('attachments in file mode', () => {
   });
 
   it('sends a message with an empty attachment list as a message without attachments', async () => {
-    const sent = await call('send_message', { agentName: 'alice', roomName: 'files', message: 'no files', attachments: [] });
+    const sent = await call('send_message', { roomName: 'files', message: 'no files', attachments: [] });
     expect(sent).toMatchObject({ success: true, roomName: 'files' });
     const { messages } = await call('get_messages', { roomName: 'files' });
     expect(messages).toHaveLength(1);

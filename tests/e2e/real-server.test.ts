@@ -69,6 +69,35 @@ describe('Real MCP Server E2E Tests', () => {
     // Ensure clean directory structure
     await fs.mkdir(path.join(testDataDir, 'rooms'), { recursive: true });
   });
+
+  /**
+   * A second MCP server instance over its own MemoryTransport, the way an independent client connects. The acting
+   * agent name is per instance and room, so each agent in a room needs its own connection.
+   */
+  async function makeClient() {
+    const server = new Server({ name: 'agent-communication', version: '1.0.0' }, { capabilities: { tools: {} } });
+    const otherTransport = new MemoryTransport();
+    const registry = new ToolRegistry(testDataDir);
+    await server.connect(otherTransport);
+    await registry.registerAll(server);
+    let id = 1000;
+    return {
+      async call(name: string, args: Record<string, unknown>): Promise<any> {
+        const response = await otherTransport.simulateRequest({
+          jsonrpc: '2.0',
+          id: id++,
+          method: 'tools/call',
+          params: { name: `agent_communication_${name}`, arguments: args },
+        });
+        if (response.error) throw new Error(response.error.message);
+        return JSON.parse(response.result!.content[0].text);
+      },
+      async close(): Promise<void> {
+        await otherTransport.close();
+        await registry.shutdown();
+      },
+    };
+  }
   
   describe('Real Server Tool Discovery', () => {
     it('should list all 10 tools correctly', async () => {
@@ -193,7 +222,6 @@ describe('Real MCP Server E2E Tests', () => {
         params: {
           name: 'agent_communication_send_message',
           arguments: {
-            agentName: 'real-agent-1',
             roomName: 'real-test-room',
             message: 'Hello from real implementation!'
           }
@@ -273,7 +301,6 @@ describe('Real MCP Server E2E Tests', () => {
         params: {
           name: 'agent_communication_send_message',
           arguments: {
-            agentName: 'persistent-agent',
             roomName: 'persistent-room',
             message: 'Persistent message'
           }
@@ -342,7 +369,7 @@ describe('Real MCP Server E2E Tests', () => {
       expect(response.error!.message).toContain('non-existent-room');
     });
     
-    it('should handle agent not in room errors', async () => {
+    it('should require enter_room on this connection before send_message', async () => {
       // Create room
       await transport.simulateRequest({
         jsonrpc: '2.0',
@@ -353,8 +380,10 @@ describe('Real MCP Server E2E Tests', () => {
           arguments: { roomName: 'restricted-room' }
         }
       });
-      
-      // Try to send message without joining
+
+      // No enter_room on this connection: the acting name is instance-local, so send_message points at enter_room
+      // instead of acting as a name the caller only supplied (`AGENT_NOT_IN_ROOM` is reached through the adapter,
+      // where a member row is missing).
       const response = await transport.simulateRequest({
         jsonrpc: '2.0',
         id: 2,
@@ -362,7 +391,6 @@ describe('Real MCP Server E2E Tests', () => {
         params: {
           name: 'agent_communication_send_message',
           arguments: {
-            agentName: 'unauthorized-agent',
             roomName: 'restricted-room',
             message: 'Should fail'
           }
@@ -371,8 +399,8 @@ describe('Real MCP Server E2E Tests', () => {
       
       expect(response.error).toBeDefined();
       expect(response.error!.code).toBe(-32602);
-      expect(response.error!.code).toBe(-32602);
-      expect(response.error!.message).toContain('not in room');
+      expect(response.error!.message).toContain("has not entered room 'restricted-room'");
+      expect(response.error!.message).toContain('agent_communication_enter_room');
     });
     
     it('should handle duplicate room creation', async () => {
@@ -418,84 +446,51 @@ describe('Real MCP Server E2E Tests', () => {
         }
       });
       
-      // Multiple agents join concurrently
-      const joinPromises = [];
-      for (let i = 1; i <= 5; i++) {
-        joinPromises.push(
-          transport.simulateRequest({
-            jsonrpc: '2.0',
-            id: i + 10,
-            method: 'tools/call',
-            params: {
-              name: 'agent_communication_enter_room',
-              arguments: {
-                agentName: `concurrent-agent-${i}`,
-                roomName: 'concurrent-room'
-              }
-            }
-          })
+      // Each agent needs its own MCP instance: the acting name is per instance and room.
+      const clients = await Promise.all(Array.from({ length: 5 }, () => makeClient()));
+      try {
+        const joinResults = await Promise.all(
+          clients.map((other, i) => other.call('enter_room', { agentName: `concurrent-agent-${i + 1}`, roomName: 'concurrent-room' }))
         );
-      }
-      
-      const joinResults = await Promise.all(joinPromises);
-      joinResults.forEach(result => {
-        expect(result.error).toBeUndefined();
-      });
-      
-      // Send messages concurrently
-      const messagePromises = [];
-      for (let i = 1; i <= 3; i++) {
-        messagePromises.push(
-          transport.simulateRequest({
-            jsonrpc: '2.0',
-            id: i + 20,
-            method: 'tools/call',
-            params: {
-              name: 'agent_communication_send_message',
-              arguments: {
-                agentName: `concurrent-agent-${i}`,
-                roomName: 'concurrent-room',
-                message: `Concurrent message ${i}`
-              }
-            }
-          })
+        joinResults.forEach((result) => expect(result.success).toBe(true));
+
+        // Send messages concurrently, one instance each.
+        await Promise.all(
+          clients.slice(0, 3).map((other, i) => other.call('send_message', { roomName: 'concurrent-room', message: `Concurrent message ${i + 1}` }))
         );
-      }
-      
-      const messageResults = await Promise.all(messagePromises);
-      messageResults.forEach(result => {
-        expect(result.error).toBeUndefined();
-      });
-      
-      // Verify final state
-      const usersResponse = await transport.simulateRequest({
-        jsonrpc: '2.0',
-        id: 30,
-        method: 'tools/call',
-        params: {
-          name: 'agent_communication_list_room_users',
-          arguments: { roomName: 'concurrent-room' }
-        }
-      });
-      
-      const usersResult = JSON.parse(usersResponse.result!.content[0].text);
-      expect(usersResult.users).toHaveLength(5);
-      
-      const messagesResponse = await transport.simulateRequest({
-        jsonrpc: '2.0',
-        id: 31,
-        method: 'tools/call',
-        params: {
-          name: 'agent_communication_get_messages',
-          arguments: {
-            agentName: 'concurrent-agent-1',
-            roomName: 'concurrent-room'
+
+        // Verify final state
+        const usersResponse = await transport.simulateRequest({
+          jsonrpc: '2.0',
+          id: 30,
+          method: 'tools/call',
+          params: {
+            name: 'agent_communication_list_room_users',
+            arguments: { roomName: 'concurrent-room' }
           }
-        }
-      });
-      
-      const messagesResult = JSON.parse(messagesResponse.result!.content[0].text);
-      expect(messagesResult.messages).toHaveLength(3);
+        });
+
+        const usersResult = JSON.parse(usersResponse.result!.content[0].text);
+        expect(usersResult.users).toHaveLength(5);
+
+        const messagesResponse = await transport.simulateRequest({
+          jsonrpc: '2.0',
+          id: 31,
+          method: 'tools/call',
+          params: {
+            name: 'agent_communication_get_messages',
+            arguments: {
+              agentName: 'concurrent-agent-1',
+              roomName: 'concurrent-room'
+            }
+          }
+        });
+
+        const messagesResult = JSON.parse(messagesResponse.result!.content[0].text);
+        expect(messagesResult.messages).toHaveLength(3);
+      } finally {
+        await Promise.all(clients.map((other) => other.close()));
+      }
     });
   });
   
@@ -540,7 +535,6 @@ describe('Real MCP Server E2E Tests', () => {
         params: {
           name: 'agent_communication_send_message',
           arguments: {
-            agentName: 'stats-agent-1',
             roomName: 'stats-room-1',
             message: 'Stats test message'
           }
@@ -597,7 +591,6 @@ describe('Real MCP Server E2E Tests', () => {
           params: {
             name: 'agent_communication_send_message',
             arguments: {
-              agentName: 'clear-agent',
               roomName: 'clear-test-room',
               message: `Message ${i}`
             }

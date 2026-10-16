@@ -57,6 +57,11 @@ export const sendMessageInputSchema = z.object({
   attachments: z.array(z.string()).optional(),
 });
 
+// The public send_message inputs (MCP): agentName is no longer one of them. The acting name is the one
+// enter_room selected for the room on this MCP connection; the MCP-facing layer rejects a caller that still
+// supplies agentName and injects the selected name before the adapter sees the internal shape above.
+export const publicSendMessageInputSchema = sendMessageInputSchema.omit({ agentName: true });
+
 export const sendMessageOutputSchema = z.object({
   success: z.boolean(),
   messageId: z.string(),
@@ -104,6 +109,16 @@ export const waitForMessagesInputSchema = z.object({
   mentionsOnly: z.boolean().optional().default(false),
 });
 
+// The public wait_for_messages inputs (MCP): agentName is no longer one of them, for the same reason as send_message
+// above. `timeout` stays in seconds here, like the tool's inputSchema; the schema deliberately does not bound it,
+// because the adapter validates it after converting to milliseconds and callers rely on that error. The MCP-facing
+// layer rejects a caller that still supplies agentName and injects the selected name before the internal shape above.
+export const publicWaitForMessagesInputSchema = z.object({
+  roomName: roomNameSchema,
+  timeout: z.number().optional(),
+  mentionsOnly: z.boolean().optional(),
+});
+
 export const waitForMessagesOutputSchema = z.object({
   messages: z.array(z.object({
     id: z.string(),
@@ -146,6 +161,7 @@ export type SendMessageOutput = z.infer<typeof sendMessageOutputSchema>;
 export type GetMessagesInput = z.infer<typeof getMessagesInputSchema>;
 export type GetMessagesOutput = z.infer<typeof getMessagesOutputSchema>;
 export type WaitForMessagesInput = z.infer<typeof waitForMessagesInputSchema>;
+export type PublicWaitForMessagesInput = z.infer<typeof publicWaitForMessagesInputSchema>;
 export type WaitForMessagesOutput = z.infer<typeof waitForMessagesOutputSchema>;
 export type DownloadAttachmentInput = z.infer<typeof downloadAttachmentInputSchema>;
 export type DownloadAttachmentOutput = z.infer<typeof downloadAttachmentOutputSchema>;

@@ -185,9 +185,8 @@ class ExampleRoomService implements IRoomService {
 
 // MCPツール型の使用例
 function demonstrateMCPTypes() {
-  // send_message ツールの使用例
+  // send_message ツールの使用例（送信元は enter_room が選んだ名前。agentName は取らない）
   const sendMessageInput: MCPTools['send_message']['input'] = {
-    agentName: 'alice',
     roomName: 'general',
     message: 'Hello world!',
     metadata: { priority: 'high' },

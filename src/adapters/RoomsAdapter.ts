@@ -127,6 +127,16 @@ export class RoomsAdapter {
     const result = await this.api!.leaveRoom(params.agentName, params.roomName);
     return { success: result.success };
   }
+
+  /**
+   * Cloud mode only: close the WebSocket this instance may still hold for a room x name. When a failed leave has
+   * already taken effect on the server, the local binding is cleared before CloudRoomsService reaches its own
+   * disconnect, so the identity layer releases the instance-local transport resource here instead of leaving it for
+   * the shared backend. File mode has no such connection.
+   */
+  releaseSocket(roomName: string, agentName: string): void {
+    this.cloud?.waits.disconnect(roomName, agentName);
+  }
   
   async listRoomUsers(params: { roomName: string }): Promise<{ roomName: string; users: any[]; onlineCount: number }> {
     if (this.cloud) {

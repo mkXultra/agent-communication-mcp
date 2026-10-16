@@ -116,7 +116,7 @@ describe('operating mode selection', () => {
 
       await client.call('create_room', { roomName: 'cloud-only-room' });
       await client.call('enter_room', { agentName: 'alice', roomName: 'cloud-only-room' });
-      await client.call('send_message', { agentName: 'alice', roomName: 'cloud-only-room', message: 'hi' });
+      await client.call('send_message', { roomName: 'cloud-only-room', message: 'hi' });
 
       expect(await cloudRoomNames()).toEqual(['cloud-only-room']);
       expect(await fs.readdir(dataDir)).toEqual([]);

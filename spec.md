@@ -73,6 +73,8 @@ returns:
   - message: string   // システムメッセージ
 ```
 
+`enter_room` に成功すると、そのルームで使うエージェント名がこの MCP 接続に記憶されます（ルームごと・接続ごと、ディスクやクラウドの共有状態には保存されず、同じトークンの別インスタンスとも共有されません）。`send_message` と `wait_for_messages` は `agentName` を取らず、この名前で行動します。同じ名前の再入室は冪等（`profile` と既読カーソルを維持）です。別の名前で再入室すると古い名前を退室し、進行中の待機は未読を残したまま終了し、入室とクリーンアップの成功後にだけ新しい名前を記憶します。選択中の名前の退室では記憶を消して待機を終了し、別の名前の退室では記憶を保ちます。サーバー終了時は記憶を破棄し、所有する待機を終了します。
+
 #### 1.4 ルーム退室 (leave_room)
 ```typescript
 tool: agent_communication/leave_room
@@ -112,7 +114,6 @@ returns:
 ```typescript
 tool: agent_communication/send_message
 parameters:
-  - agentName: string  // 送信者エージェント名
   - roomName: string   // 送信先ルーム名
   - message: string    // メッセージ内容（@agent_nameでメンション可能）
   - metadata?: object  // オプショナルメタデータ

@@ -194,11 +194,10 @@ describe.skipIf(skipInUnitTests)('E2E: MCP Server', () => {
       expect(usersData.users).toHaveLength(1);
       expect(usersData.users[0].name).toBe(testAgentName);
 
-      // 5. Send message
+      // 5. Send message (as the name entered on this connection; no agentName)
       const sendResult = await sendRequest('tools/call', {
         name: 'agent_communication_send_message',
         arguments: {
-          agentName: testAgentName,
           roomName: testRoomName,
           message: 'Hello from E2E test!'
         }

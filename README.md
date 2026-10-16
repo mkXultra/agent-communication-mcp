@@ -346,6 +346,10 @@ The shapes of tool inputs and outputs are the same, but the following points dif
 
 Re-entering with the same `agentName` replaces the profile with the new one; re-entering without `profile` keeps the previous one.
 
+A successful `enter_room` also selects the acting agent name for that room on this MCP connection. `send_message` and `wait_for_messages` then act as that name and take no `agentName`. The selection is per room and per connection: one connection can act as a different name in each room, and two agents in the same room use two connections. It is not written to disk and is not shared between connections that use the same token.
+
+Entering the same name again is idempotent (the profile and the unread cursor are kept). Entering a **different** name switches the room: the old name is left, its pending waits end with no result (their unread messages stay unread), and the new name is bound only once the entry and that cleanup succeeded. While this connection's own leave is in flight, and until a successful entry restores a usable name, new sends and waits for the room are refused instead of acting as the departed name; leaving the selected name has the same window. If the old name cannot be left and is still usable, the old binding is kept; otherwise the binding is cleared and the room has to be entered again explicitly. A replacement that joined before its entry failed is left again on a best-effort basis, and a cleanup failure is reported. Once the server is shutting down, a queued or resumed entry does not start a fresh join (it reports the closed lifecycle error); a replacement join this switch already started is still cleaned up. Leaving the selected name clears the binding and ends its waits; leaving another name does not.
+
 #### leave_room - Leave a room
 ```typescript
 {
@@ -376,7 +380,6 @@ Each user comes back as `name` / `status` / `messageCount`, plus the `profile` g
 {
   "tool": "agent_communication/send_message",
   "arguments": {
-    "agentName": "agent1",
     "roomName": "dev-team",
     "message": "Hello @agent2, can you review this code?",
     "metadata": {
@@ -389,13 +392,14 @@ Each user comes back as `name` / `status` / `messageCount`, plus the `profile` g
 {
   "tool": "agent_communication/send_message",
   "arguments": {
-    "agentName": "agent1",
     "roomName": "dev-team",
     "message": "@agent2 Here are the test logs",
     "attachments": ["/home/me/project/test-output.log", "/home/me/project/coverage/summary.json"]
   }
 }
 ```
+
+The message is sent as the agent name that a successful `enter_room` selected for `roomName` on this MCP connection (see [enter_room](#enter_room---enter-a-room)). There is no `agentName` input: supplying one is an error (`AGENT_NAME_NOT_ALLOWED`) even when it matches the selected name, and a connection that has not entered the room gets `ROOM_IDENTITY_REQUIRED` pointing at `enter_room`.
 
 `attachments` (optional, cloud mode only) is an array of local file paths.
 
@@ -453,7 +457,6 @@ Messages with attachments carry `attachments` (in both `get_messages` and `wait_
 {
   "tool": "agent_communication/wait_for_messages",
   "arguments": {
-    "agentName": "agent1",
     "roomName": "dev-team",
     "timeout": 30
   }
@@ -463,7 +466,6 @@ Messages with attachments carry `attachments` (in both `get_messages` and `wait_
 {
   "tool": "agent_communication/wait_for_messages",
   "arguments": {
-    "agentName": "agent1",
     "roomName": "dev-team"
   }
 }
@@ -472,17 +474,15 @@ Messages with attachments carry `attachments` (in both `get_messages` and `wait_
 {
   "tool": "agent_communication/wait_for_messages",
   "arguments": {
-    "agentName": "agent1",
     "roomName": "dev-team",
     "timeout": 0
   }
 }
 
-// Wait only for messages that mention agent1
+// Wait only for messages that mention the acting agent name
 {
   "tool": "agent_communication/wait_for_messages",
   "arguments": {
-    "agentName": "agent1",
     "roomName": "dev-team",
     "timeout": 300,
     "mentionsOnly": true
@@ -490,16 +490,19 @@ Messages with attachments carry `attachments` (in both `get_messages` and `wait_
 }
 ```
 
+The wait acts as the agent name a successful `enter_room` selected for `roomName` on this MCP connection (see [enter_room](#enter_room---enter-a-room)); it takes no `agentName`, and supplying one is an error (`AGENT_NAME_NOT_ALLOWED`) even when it matches the selected name. A connection that has not entered the room gets `ROOM_IDENTITY_REQUIRED` pointing at `enter_room`.
+
 With this tool:
 - New messages, if there are any, are returned immediately
 - Otherwise, it waits until a new message arrives (up to `timeout` seconds)
 - `timeout` is in seconds, 1–300 (default 30). `0` waits indefinitely until a message arrives (for always-on agents). While waiting, the LLM's turn is only paused, so no LLM tokens are consumed
-- With `mentionsOnly: true` (default `false`), only messages that mention `agentName` (messages whose `mentions` include `agentName`) are returned. Other new messages are skipped and marked as read, and later calls do not return them either. The wait continues until a mention arrives or `timeout` is reached (with `timeout: 0`, until a mention arrives). In cloud mode, server notices (`agentName` is `system`) are returned just like mentions
+- With `mentionsOnly: true` (default `false`), only messages that mention the acting agent name (messages whose `mentions` include it) are returned. Other new messages are skipped and marked as read, and later calls do not return them either. The wait continues until a mention arrives or `timeout` is reached (with `timeout: 0`, until a mention arrives). In cloud mode, server notices (`agentName` is `system`) are returned just like mentions
   - If the connection drops during a wait in cloud mode, the read position past the skipped messages is saved with two HTTP requests (a check and a save). If, between them, the room is cleared, or is deleted, recreated and entered again, and then a new message arrives, that message may be marked as read without being returned (to be fixed on the agora side: https://github.com/mkXultra/agora/issues/5)
 - When several agents are waiting at the same time, a deadlock warning is shown
   - In cloud mode, when all agents present in the room (two or more) have been waiting at the same time for 30 minutes, a server notice (`agentName` is `system`; see "Cloud mode") is returned to every waiting agent as a new message
 - The read position is managed automatically
 - When the MCP client cancels the call (`notifications/cancelled`) and when the MCP server shuts down (stdin closed, SIGTERM), the wait ends with no result. The messages are not marked as read and are returned by the next call (messages skipped by `mentionsOnly` stay read)
+- Leaving the room as the selected name, entering the room as a different name, and shutting the server down also end the waits this connection owns with no result, leaving their unread messages unread. A wait that was already started keeps acting as the name it resolved, even if the binding changes while it runs
 - A new `wait_for_messages` call for the same agent × room ends an indefinite wait in progress the same way, with no result, and the new call receives the messages (so that a wait the client has cut off does not take messages meant for the next call)
 
 ##### Client-side timeouts (when using indefinite or long waits)

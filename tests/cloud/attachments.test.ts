@@ -27,7 +27,7 @@ import type { ApiRoomStatus } from '../../src/cloud/types.js';
 import { ToolRegistry } from '../../src/server/ToolRegistry.js';
 import { MemoryTransport } from '../helpers/MemoryTransport.js';
 import { deleteAllRooms, issueToken } from './harness/agora.js';
-import { createMcpClient, McpCallError, sleep, waitUntil, withEnv, type McpTestClient } from './harness/mcp.js';
+import { createMcpClient, enterAgents, McpCallError, sleep, waitUntil, withEnv, type McpTestClient } from './harness/mcp.js';
 import { AgoraProxy } from './harness/proxy.js';
 
 const agoraUrl = process.env.AGENT_COMM_API_URL!;
@@ -87,9 +87,9 @@ async function appError(promise: Promise<unknown>): Promise<AppError> {
   return error as AppError;
 }
 
-async function setupRoom(client: McpTestClient, roomName: string, agents: string[]): Promise<void> {
+async function setupRoom(client: McpTestClient, roomName: string, agents: string[]) {
   await client.call('create_room', { roomName });
-  for (const agentName of agents) await client.call('enter_room', { agentName, roomName });
+  return enterAgents(client, roomName, agents);
 }
 
 async function attachmentsOf(client: McpTestClient, roomName: string): Promise<ToolAttachment[]> {
@@ -164,7 +164,7 @@ describe('file attachments in cloud mode', () => {
       expect(download.inputSchema.required).toEqual(['roomName', 'attachmentId', 'savePath']);
       const send = tools.find((tool) => tool.name === 'agent_communication_send_message')!;
       expect(send.inputSchema.properties.attachments).toMatchObject({ type: 'array', items: { type: 'string' }, maxItems: 10 });
-      expect(send.inputSchema.required).toEqual(['agentName', 'roomName', 'message']);
+      expect(send.inputSchema.required).toEqual(['roomName', 'message']);
     } finally {
       await transport.close();
       await registry.shutdown();
@@ -179,7 +179,6 @@ describe('file attachments in cloud mode', () => {
     const textPath = await localFile('日本語のレポート.txt', text);
 
     const sent = await client.call('send_message', {
-      agentName: 'alice',
       roomName: 'files',
       message: 'results for @bob',
       attachments: [binaryPath, textPath],
@@ -258,7 +257,7 @@ describe('file attachments in cloud mode', () => {
 
   it('leaves attachments out of messages that have none', async () => {
     await setupRoom(client, 'plain', ['alice']);
-    await client.call('send_message', { agentName: 'alice', roomName: 'plain', message: 'no files', attachments: [] });
+    await client.call('send_message', { roomName: 'plain', message: 'no files', attachments: [] });
     const { messages } = await client.call<{ messages: ToolMessage[] }>('get_messages', { roomName: 'plain' });
     expect(Object.keys(messages[0]!)).toEqual(['id', 'agentName', 'roomName', 'message', 'timestamp', 'mentions']);
     expect(proxy.countRequests('POST', '/rooms/plain/attachments')).toBe(0);
@@ -267,13 +266,13 @@ describe('file attachments in cloud mode', () => {
   it('accepts 10 files and a file of exactly 10 MB', async () => {
     await setupRoom(client, 'limits', ['alice']);
     const exact = await sparseFile('exactly-10mb.bin', TEN_MB);
-    await client.call('send_message', { agentName: 'alice', roomName: 'limits', message: 'big', attachments: [exact] });
+    await client.call('send_message', { roomName: 'limits', message: 'big', attachments: [exact] });
     expect(await attachmentsOf(client, 'limits')).toEqual([
       { id: expect.stringMatching(UUID), name: 'exactly-10mb.bin', size: TEN_MB, contentType: 'application/octet-stream' },
     ]);
 
     const ten = await Promise.all(Array.from({ length: 10 }, (_, i) => localFile(`part-${i}.json`, JSON.stringify({ part: i }))));
-    await client.call('send_message', { agentName: 'alice', roomName: 'limits', message: 'many', attachments: ten });
+    await client.call('send_message', { roomName: 'limits', message: 'many', attachments: ten });
     expect((await attachmentsOf(client, 'limits')).map((attachment) => [attachment.name, attachment.contentType])).toEqual(
       ten.map((_, i) => [`part-${i}.json`, 'application/json']),
     );
@@ -289,7 +288,7 @@ describe('file attachments in cloud mode', () => {
     proxy.reset();
 
     const send = (attachments: string[]) =>
-      client.call('send_message', { agentName: 'alice', roomName: 'precheck', message: 'x', attachments });
+      client.call('send_message', { roomName: 'precheck', message: 'x', attachments });
     const invalid = ErrorCode.InvalidParams;
     expect(await toolError(send([ok, missing]))).toEqual({ code: invalid, message: `File not found: ${missing}` });
     expect(await toolError(send([ok, tooLarge]))).toEqual({
@@ -328,7 +327,7 @@ describe('file attachments in cloud mode', () => {
   it('never overwrites an existing file', async () => {
     await setupRoom(client, 'keep', ['alice']);
     const source = await localFile('notes.txt', 'from the room');
-    await client.call('send_message', { agentName: 'alice', roomName: 'keep', message: 'notes', attachments: [source] });
+    await client.call('send_message', { roomName: 'keep', message: 'notes', attachments: [source] });
     const [notes] = await attachmentsOf(client, 'keep');
 
     const directory = await saveDirectory('existing');
@@ -378,16 +377,16 @@ describe('file attachments in cloud mode', () => {
   });
 
   it('delivers attachments to wait_for_messages over the WebSocket', async () => {
-    await setupRoom(client, 'ws-files', ['alice', 'bob']);
+    const agents = await setupRoom(client, 'ws-files', ['alice', 'bob']);
     const report = await localFile('report.json', '{"ok":true}');
 
-    const waiting = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'ws-files', timeout: 15 });
+    const waiting = client.call<WaitResult>('wait_for_messages', { roomName: 'ws-files', timeout: 15 });
     await waitUntil(
       async () => (await api.listMembers('ws-files')).members.find((m) => m.agentName === 'alice')?.waiting === true,
       10000,
       'alice waiting',
     );
-    await client.call('send_message', { agentName: 'bob', roomName: 'ws-files', message: 'done @alice', attachments: [report] });
+    await agents.of('bob').call('send_message', { roomName: 'ws-files', message: 'done @alice', attachments: [report] });
     const result = await waiting;
     expect(result).toMatchObject({ hasNewMessages: true, timedOut: false });
     expect(result.messages).toHaveLength(1);
@@ -414,14 +413,14 @@ describe('file attachments in cloud mode', () => {
 
   it('delivers attachments to wait_for_messages over long polling when the WebSocket is refused', async () => {
     proxy.webSocketPolicy = 'reject';
-    await setupRoom(client, 'lp-files', ['alice', 'bob']);
+    const agents = await setupRoom(client, 'lp-files', ['alice', 'bob']);
     const image = await localFile('chart.png', randomBytes(2048));
 
     const sending = sleep(500).then(() =>
-      client.call('send_message', { agentName: 'bob', roomName: 'lp-files', message: 'chart @alice', attachments: [image] }),
+      agents.of('bob').call('send_message', { roomName: 'lp-files', message: 'chart @alice', attachments: [image] }),
     );
     sending.catch(() => undefined);
-    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'lp-files', timeout: 10 });
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'lp-files', timeout: 10 });
     // The send is answered after the message reached the waiting call; closing the client before that answer would leave
     // the request pending until MemoryTransport rejects it (an unhandled rejection in a later test file).
     await sending;
@@ -463,11 +462,9 @@ describe('file attachments in cloud mode', () => {
     expect(refused).toBeInstanceOf(AttachmentNotFoundError);
     expect(refused).toMatchObject({ code: 'ATTACHMENT_NOT_FOUND', statusCode: 400, message: `Attachment '${unknownId}' not found` });
 
-    // Only members upload: the send fails with the error of the upload, and nothing is sent.
+    // Only members upload: the adapter reports it (send_message takes no agentName, so this goes through the adapter,
+    // where an outsider is a name that was never added to the room).
     const file = await localFile('outsider.txt', 'not mine to share');
-    expect(
-      await toolError(client.call('send_message', { agentName: 'outsider', roomName: 'lookup', message: 'x', attachments: [file] })),
-    ).toEqual({ code: ErrorCode.InvalidParams, message: "Agent 'outsider' is not in room 'lookup'" });
     expect(
       await appError(backend().messaging.sendMessage({ agentName: 'outsider', roomName: 'lookup', message: 'x', attachments: [file] })),
     ).toBeInstanceOf(AgentNotInRoomError);
@@ -481,7 +478,7 @@ describe('file attachments in cloud mode', () => {
     // agora answers the first upload; the proxy holds that answer back while the call is cancelled.
     proxy.delayResponses((request) => request.method === 'POST' && request.path.startsWith('/rooms/cancel/attachments'), 1500);
 
-    const pending = client.start('send_message', { agentName: 'alice', roomName: 'cancel', message: 'x', attachments: [first, second] });
+    const pending = client.start('send_message', { roomName: 'cancel', message: 'x', attachments: [first, second] });
     let answered = false;
     pending.result.then(
       () => (answered = true),
@@ -503,7 +500,7 @@ describe('file attachments in cloud mode', () => {
   it('gives up on a download or an upload that receives nothing for the request timeout', async () => {
     await setupRoom(client, 'stalled', ['alice']);
     const file = await localFile('stalled.txt', 'waiting');
-    await client.call('send_message', { agentName: 'alice', roomName: 'stalled', message: 'x', attachments: [file] });
+    await client.call('send_message', { roomName: 'stalled', message: 'x', attachments: [file] });
     const [attachment] = await attachmentsOf(client, 'stalled');
     const directory = await saveDirectory('stalled');
 
@@ -585,7 +582,7 @@ describe('attachment failures reported by agora (FAULT_INJECTION=1)', () => {
     proxy.extraHeaders = { 'x-agora-test-vars': JSON.stringify({ MAX_ATTACHMENTS_PER_ROOM: '1' }) };
 
     const toolCall = await toolError(
-      client.call('send_message', { agentName: 'alice', roomName: 'capacity', message: 'x', attachments: [first, second] }),
+      client.call('send_message', { roomName: 'capacity', message: 'x', attachments: [first, second] }),
     );
     const error = await appError(
       backend().messaging.sendMessage({ agentName: 'alice', roomName: 'capacity', message: 'x', attachments: [first] }),
@@ -609,7 +606,7 @@ describe('attachment failures reported by agora (FAULT_INJECTION=1)', () => {
     proxy.extraHeaders = { 'x-agora-test-vars': JSON.stringify({ MAX_ATTACHMENT_BYTES: '1000' }) };
 
     expect(
-      await toolError(client.call('send_message', { agentName: 'alice', roomName: 'too-large', message: 'x', attachments: [file] })),
+      await toolError(client.call('send_message', { roomName: 'too-large', message: 'x', attachments: [file] })),
     ).toEqual({ code: ErrorCode.InvalidParams, message: `Attachment '${file}' exceeds maximum size of 1000 bytes` });
     const error = await appError(
       backend().messaging.sendMessage({ agentName: 'alice', roomName: 'too-large', message: 'x', attachments: [file] }),
@@ -643,7 +640,7 @@ describe('attachment failures reported by agora (FAULT_INJECTION=1)', () => {
     await setupRoom(client, 'r2-get', ['alice']);
     const content = randomBytes(300 * 1024);
     const file = await localFile('payload.bin', content);
-    await client.call('send_message', { agentName: 'alice', roomName: 'r2-get', message: 'x', attachments: [file] });
+    await client.call('send_message', { roomName: 'r2-get', message: 'x', attachments: [file] });
     const { messages } = await client.call<{ messages: ToolMessage[] }>('get_messages', { roomName: 'r2-get' });
     const attachmentId = messages[0]!.attachments![0]!.id;
     const directory = path.join(workDir, 'downloads');

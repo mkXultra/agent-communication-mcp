@@ -36,6 +36,14 @@ export class CloudBackend {
   close(): Promise<void> {
     return this.waits.close();
   }
+
+  /**
+   * Closes only the held WebSockets for these room x agent pairs. A shutting-down MCP server instance uses this so the
+   * connections another same-token instance owns (its distinct-name waits and presence) stay open.
+   */
+  closeOwned(owned: Array<{ roomName: string; agentName: string }>): Promise<void> {
+    return this.waits.closeOwned(owned);
+  }
 }
 
 const backends = new Map<string, CloudBackend>();

@@ -89,6 +89,44 @@ export class AttachmentTooLargeError extends AppError {
   }
 }
 
+// MCP server instance-local room identity: enter_room selects the acting agent name for a room.
+// The name lives in this MCP connection only (never on disk, never in cloud room state, never shared between
+// instances using the same token), so an invocation that acts as the agent needs it to have been established here.
+export class RoomIdentityRequiredError extends AppError {
+  constructor(roomName: string) {
+    super(
+      `This MCP connection has not entered room '${roomName}'. Call agent_communication_enter_room with ` +
+        `roomName '${roomName}' and the agentName to act as, then try again.`,
+      'ROOM_IDENTITY_REQUIRED',
+      409
+    );
+  }
+}
+
+// The MCP server instance has begun shutting down: it destroys local bindings and ends owned waits, and a late
+// enter_room must not restore a binding or start owned work after that. Kept a terminal state.
+export class RoomIdentityClosedError extends AppError {
+  constructor() {
+    super(
+      'This MCP connection is shutting down and no longer accepts room identity changes.',
+      'ROOM_IDENTITY_CLOSED',
+      409
+    );
+  }
+}
+
+// A removed public input is rejected instead of being ignored, so an old caller cannot silently choose another name.
+export class AgentNameNotAllowedError extends AppError {
+  constructor(toolName: string) {
+    super(
+      `'agentName' is not an input of agent_communication_${toolName}: the acting agent name is the one that ` +
+        `agent_communication_enter_room selected for this MCP connection. Remove 'agentName' and enter the room first.`,
+      'AGENT_NAME_NOT_ALLOWED',
+      400
+    );
+  }
+}
+
 // wait_for_messages が結果を返さずに終わった（MCP のキャンセル、サーバーの終了、同じエージェント×ルームの新しい待機）
 export class WaitCancelledError extends AppError {
   constructor(reason = 'the request was cancelled') {
@@ -225,6 +263,10 @@ export const ERROR_CODES = {
   MESSAGE_TOO_LONG: 'MESSAGE_TOO_LONG',
   MESSAGE_CAPACITY_EXCEEDED: 'MESSAGE_CAPACITY_EXCEEDED',
   WAIT_CANCELLED: 'WAIT_CANCELLED',
+
+  // MCP instance-local room identity
+  ROOM_IDENTITY_REQUIRED: 'ROOM_IDENTITY_REQUIRED',
+  AGENT_NAME_NOT_ALLOWED: 'AGENT_NAME_NOT_ALLOWED',
   
   // 添付ファイル関連（クラウドモード）
   ATTACHMENT_NOT_FOUND: 'ATTACHMENT_NOT_FOUND',

@@ -33,6 +33,8 @@ export class AgoraProxy {
   /** The same frames with the time (ms since the epoch) the proxy received each. */
   readonly clientFrameLog: Array<{ at: number; frame: Record<string, unknown> }> = [];
   webSocketPolicy: WebSocketPolicy = 'pass';
+  /** Hold the upstream WebSocket connection of a `pass` upgrade this long before connecting (0: immediately). */
+  webSocketDelayMs = 0;
   /** Extra headers added to every forwarded request, WebSocket upgrades included. */
   extraHeaders: Record<string, string> = {};
   /** Extra headers for the requests the function returns them for (added after `extraHeaders`). */
@@ -67,6 +69,7 @@ export class AgoraProxy {
     this.clientFrames.length = 0;
     this.clientFrameLog.length = 0;
     this.webSocketPolicy = 'pass';
+    this.webSocketDelayMs = 0;
     this.extraHeaders = {};
     this.headersFor = () => undefined;
     this.dropNext = undefined;
@@ -195,6 +198,16 @@ export class AgoraProxy {
       return;
     }
 
+    if (this.webSocketDelayMs > 0) {
+      setTimeout(() => this.openTunnel(req, client, head, record), this.webSocketDelayMs);
+      return;
+    }
+    this.openTunnel(req, client, head, record);
+  }
+
+  /** Connects the proxied WebSocket upstream and pipes the two directions (the `pass` policy, possibly delayed). */
+  private openTunnel(req: http.IncomingMessage, client: net.Socket, head: Buffer, record: RecordedRequest): void {
+    if (client.destroyed) return;
     const upstream = net.connect(Number(this.target.port), this.target.hostname);
     const tunnel: Tunnel = { client, upstream, frozen: false };
     this.tunnels.add(tunnel);

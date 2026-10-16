@@ -106,7 +106,6 @@ export interface MCPRoomTools {
 export interface MCPMessageTools {
   send_message: {
     input: {
-      agentName: string;
       roomName: string;
       message: string;
       metadata?: Record<string, any>;

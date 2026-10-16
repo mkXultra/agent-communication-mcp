@@ -15,10 +15,10 @@ describe('wait_for_messages mentionsOnly', () => {
   it('is defined as an optional boolean that defaults to false', () => {
     expect(waitForMessagesTool.inputSchema.properties!.mentionsOnly).toEqual({
       type: 'boolean',
-      description: 'Only return messages that mention agentName; other new messages are marked read without being returned',
+      description: 'Only return messages that mention the acting agent name; other new messages are marked read without being returned',
       default: false
     });
-    expect(waitForMessagesTool.inputSchema.required).toEqual(['agentName', 'roomName']);
+    expect(waitForMessagesTool.inputSchema.required).toEqual(['roomName']);
   });
 
   it('is accepted internally as a boolean and is false when left out, in both schemas', () => {

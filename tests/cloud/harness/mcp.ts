@@ -29,6 +29,8 @@ export interface McpTestClient {
   call<T = any>(name: string, args?: Record<string, unknown>): Promise<T>;
   /** Starts a tool call that can be cancelled. */
   start<T = any>(name: string, args?: Record<string, unknown>): PendingToolCall<T>;
+  /** Another connection with the same environment and data directory (for a second acting name in a room). */
+  spawn(): Promise<McpTestClient>;
   close(): Promise<void>;
 }
 
@@ -39,6 +41,8 @@ let nextId = 1;
  * point (AGENT_COMM_TOKEN -> cloud at AGENT_COMM_API_URL or the default URL, otherwise the given data directory).
  */
 export async function createMcpClient(dataDir?: string): Promise<McpTestClient> {
+  const apiUrl = process.env.AGENT_COMM_API_URL;
+  const token = process.env.AGENT_COMM_TOKEN;
   const server = new Server({ name: 'agent-communication', version: '1.0.0' }, { capabilities: { tools: {} } });
   const transport = new MemoryTransport();
   const registry = new ToolRegistry(dataDir);
@@ -72,13 +76,46 @@ export async function createMcpClient(dataDir?: string): Promise<McpTestClient> 
     };
   };
 
+  const children: McpTestClient[] = [];
   return {
     registry,
     call: (name, args) => start(name, args).result,
     start,
+    async spawn() {
+      const child = await withEnv({ AGENT_COMM_API_URL: apiUrl, AGENT_COMM_TOKEN: token }, () => createMcpClient(dataDir));
+      children.push(child);
+      return child;
+    },
     async close() {
+      await Promise.all(children.splice(0).map((child) => child.close()));
       await transport.close();
       await registry.shutdown();
+    },
+  };
+}
+
+/**
+ * Enters `roomName` as each agent on its own connection (the acting name is per server instance and room, so two
+ * agents in a room need two connections). `host` is entered as the first agent; the others are spawned from it, so
+ * closing the host closes them too. The room must already exist.
+ */
+export async function enterAgents(
+  host: McpTestClient,
+  roomName: string,
+  agents: string[],
+): Promise<{ of(agentName: string): McpTestClient }> {
+  const byAgent = new Map<string, McpTestClient>();
+  for (let i = 0; i < agents.length; i++) {
+    const agentName = agents[i]!;
+    const connection = i === 0 ? host : await host.spawn();
+    await connection.call('enter_room', { agentName, roomName });
+    byAgent.set(agentName, connection);
+  }
+  return {
+    of(agentName: string): McpTestClient {
+      const connection = byAgent.get(agentName);
+      if (!connection) throw new Error(`no connection entered room '${roomName}' as '${agentName}'`);
+      return connection;
     },
   };
 }

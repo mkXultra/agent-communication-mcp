@@ -9,7 +9,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 import { CloudApiClient, CloudBackend } from '../../src/cloud/index.js';
 import { issueToken } from './harness/agora.js';
-import { createMcpClient, McpCallError, withEnv, type McpTestClient } from './harness/mcp.js';
+import { createMcpClient, enterAgents, McpCallError, withEnv, type McpTestClient } from './harness/mcp.js';
 import { AgoraProxy } from './harness/proxy.js';
 
 /** Room for a short `message` frame (about 270 bytes), not for one with a 1000-character message. */
@@ -51,8 +51,8 @@ describe('messages that do not fit a WebSocket frame', () => {
 
   async function setupRoom(roomName: string): Promise<void> {
     await client.call('create_room', { roomName });
-    await client.call('enter_room', { agentName: 'alice', roomName });
-    await client.call('enter_room', { agentName: 'bob', roomName });
+    // alice and bob are members; the messages below are sent straight through the API, so only membership is needed.
+    await enterAgents(client, roomName, ['alice', 'bob']);
   }
 
   async function send(roomName: string, message: string): Promise<number> {
@@ -78,7 +78,7 @@ describe('messages that do not fit a WebSocket frame', () => {
     await send('big-backlog', 'small 3');
     const last = await send('big-backlog', 'small 4');
 
-    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'big-backlog', timeout: 3 });
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'big-backlog', timeout: 3 });
     expect(result.messages.map((m) => m.message)).toEqual(['small 1', BIG('b'), 'small 3', 'small 4']);
     expect(result.timedOut).toBe(false);
     // The frame delivered seq 1; seq 2..4 came over HTTP in one request after backlog_end.upToSeq.
@@ -97,14 +97,14 @@ describe('messages that do not fit a WebSocket frame', () => {
 
   it('keeps a live message that could not be fetched and returns it on the next call', async () => {
     await setupRoom('big-live');
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'big-live', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'big-live', timeout: 1 });
 
     const failFetch = (path: string): boolean => path.startsWith('/rooms/big-live/messages?since=');
     proxy.headersFor = (r) => (r.method === 'GET' && failFetch(r.path) ? { 'x-agora-fault': 'room.internal' } : undefined);
     const seq = await send('big-live', BIG('L'));
 
     const failed = await client
-      .call('wait_for_messages', { agentName: 'alice', roomName: 'big-live', timeout: 3 })
+      .call('wait_for_messages', { roomName: 'big-live', timeout: 3 })
       .then(() => undefined, (e: unknown) => e);
     expect(failed).toBeInstanceOf(McpCallError);
     expect((failed as McpCallError).message).toMatch(/Injected fault/);
@@ -112,7 +112,7 @@ describe('messages that do not fit a WebSocket frame', () => {
 
     // agora works again: the message is still pending, fetched again and returned.
     proxy.headersFor = () => undefined;
-    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'big-live', timeout: 3 });
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'big-live', timeout: 3 });
     expect(result.messages.map((m) => m.message)).toEqual([BIG('L')]);
     expect(fetches('big-live')).toHaveLength(2);
     expect(await aliceReadSeq('big-live')).toBe(seq);
@@ -128,7 +128,7 @@ describe('messages that do not fit a WebSocket frame', () => {
 
   it('keeps every pending message when only one of the fetches fails', async () => {
     await setupRoom('big-partial');
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'big-partial', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'big-partial', timeout: 1 });
 
     const first = await send('big-partial', BIG('1'));
     const second = await send('big-partial', BIG('2'));
@@ -137,13 +137,13 @@ describe('messages that do not fit a WebSocket frame', () => {
       r.method === 'GET' && r.path.startsWith(`/rooms/big-partial/messages?since=${first}&`) ? { 'x-agora-fault': 'room.internal' } : undefined;
 
     const failed = await client
-      .call('wait_for_messages', { agentName: 'alice', roomName: 'big-partial', timeout: 3 })
+      .call('wait_for_messages', { roomName: 'big-partial', timeout: 3 })
       .then(() => undefined, (e: unknown) => e);
     expect(failed).toBeInstanceOf(McpCallError);
     expect(fetches('big-partial')).toEqual([`since=${first - 1}&limit=1`, `since=${first}&limit=1`]);
 
     proxy.headersFor = () => undefined;
-    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'big-partial', timeout: 3 });
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'big-partial', timeout: 3 });
     expect(result.messages.map((m) => m.message)).toEqual([BIG('1'), BIG('2')]);
     expect(await aliceReadSeq('big-partial')).toBe(second);
   });

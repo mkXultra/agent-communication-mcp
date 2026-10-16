@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { getCloudBackend, CloudApiClient, CloudBackend } from '../../src/cloud/index.js';
 import { WaitCancelledError } from '../../src/errors/index.js';
 import { issueToken, startAgora, type AgoraInstance } from './harness/agora.js';
-import { createMcpClient, McpCallError, sleep, waitUntil, withEnv, type McpTestClient } from './harness/mcp.js';
+import { createMcpClient, enterAgents, McpCallError, sleep, waitUntil, withEnv, type McpTestClient } from './harness/mcp.js';
 import { AgoraProxy, type RecordedRequest } from './harness/proxy.js';
 
 const agoraUrl = process.env.AGENT_COMM_API_URL!;
@@ -31,6 +31,7 @@ const FILE_MODE_DEADLOCK_WARNING = 'Potential deadlock detected: 1 other agent(s
 describe('wait_for_messages over WebSocket', () => {
   let proxy: AgoraProxy;
   let client: McpTestClient;
+  let agents: Awaited<ReturnType<typeof enterAgents>>;
   let api: CloudApiClient;
   const env = () => ({ AGENT_COMM_API_URL: proxy.url, AGENT_COMM_TOKEN: token });
   const backend = () => getCloudBackend(env())!;
@@ -53,20 +54,22 @@ describe('wait_for_messages over WebSocket', () => {
     await client.close();
   });
 
-  async function setupRoom(roomName: string, agents: string[]): Promise<void> {
+  async function setupRoom(roomName: string, agents_: string[]): Promise<void> {
     await client.call('create_room', { roomName });
-    for (const agentName of agents) await client.call('enter_room', { agentName, roomName });
+    // One connection per acting name: the test's client for the first agent, spawned ones for the rest.
+    agents = await enterAgents(client, roomName, agents_);
   }
 
   it('keeps one connection per room x agent for the lifetime of the process', async () => {
     await setupRoom('hold-1', ['alice', 'bob']);
+    const hold1 = agents;
     await setupRoom('hold-2', ['alice']);
 
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'hold-1', timeout: 1 });
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'hold-1', timeout: 1 });
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'hold-2', timeout: 1 });
-    await client.call('wait_for_messages', { agentName: 'bob', roomName: 'hold-1', timeout: 1 });
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'hold-2', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'hold-1', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'hold-1', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'hold-2', timeout: 1 });
+    await hold1.of('bob').call('wait_for_messages', { roomName: 'hold-1', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'hold-2', timeout: 1 });
 
     const upgrades = proxy.requests.filter((r) => r.method === 'UPGRADE').map((r) => r.path);
     expect(upgrades).toHaveLength(3);
@@ -94,7 +97,7 @@ describe('wait_for_messages over WebSocket', () => {
     await setupRoom('frames', ['alice', 'bob']);
 
     // Timed-out wait: tool timeout 2 s -> 2000 ms -> wait_start.timeoutSeconds = 2
-    const waiting = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'frames', timeout: 2 });
+    const waiting = client.call<WaitResult>('wait_for_messages', { roomName: 'frames', timeout: 2 });
     await waitUntil(async () => (await membersOf(api, 'frames')).alice!.waiting === true, 5000, 'alice waiting');
     const timedOut = await waiting;
     expect(timedOut).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
@@ -107,8 +110,8 @@ describe('wait_for_messages over WebSocket', () => {
 
     // Wait released by a message: wait_start, wait_end and read up to the returned message.
     proxy.clientFrames.length = 0;
-    setTimeout(() => void client.call('send_message', { agentName: 'bob', roomName: 'frames', message: 'ping @alice' }), 300);
-    const released = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'frames', timeout: 5 });
+    setTimeout(() => void agents.of('bob').call('send_message', { roomName: 'frames', message: 'ping @alice' }), 300);
+    const released = await client.call<WaitResult>('wait_for_messages', { roomName: 'frames', timeout: 5 });
     expect(released.hasNewMessages).toBe(true);
     expect(released.timedOut).toBe(false);
     expect(released.messages.map((m) => m.message)).toEqual(['ping @alice']);
@@ -125,21 +128,21 @@ describe('wait_for_messages over WebSocket', () => {
     await setupRoom('timeouts', ['alice', 'bob']);
     const aliceWaiting = async () => (await membersOf(api, 'timeouts')).alice!.waiting === true;
 
-    const longest = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'timeouts', timeout: 300 });
+    const longest = client.call<WaitResult>('wait_for_messages', { roomName: 'timeouts', timeout: 300 });
     await waitUntil(aliceWaiting, 5000, 'alice waiting (300 s)');
     expect(proxy.clientFrames).toEqual([{ type: 'wait_start', requestId: expect.any(String), timeoutSeconds: 300 }]);
-    await client.call('send_message', { agentName: 'bob', roomName: 'timeouts', message: 'within 300 seconds' });
+    await agents.of('bob').call('send_message', { roomName: 'timeouts', message: 'within 300 seconds' });
     expect((await longest).messages.map((m) => m.message)).toEqual(['within 300 seconds']);
 
     proxy.clientFrames.length = 0;
-    const byDefault = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'timeouts' });
+    const byDefault = client.call<WaitResult>('wait_for_messages', { roomName: 'timeouts' });
     await waitUntil(aliceWaiting, 5000, 'alice waiting (default)');
     expect(proxy.clientFrames).toEqual([{ type: 'wait_start', requestId: expect.any(String), timeoutSeconds: 30 }]);
-    await client.call('send_message', { agentName: 'bob', roomName: 'timeouts', message: 'within 30 seconds' });
+    await agents.of('bob').call('send_message', { roomName: 'timeouts', message: 'within 30 seconds' });
     expect((await byDefault).messages.map((m) => m.message)).toEqual(['within 30 seconds']);
 
     proxy.clientFrames.length = 0;
-    await expect(client.call('wait_for_messages', { agentName: 'alice', roomName: 'timeouts', timeout: 301 })).rejects.toThrow(
+    await expect(client.call('wait_for_messages', { roomName: 'timeouts', timeout: 301 })).rejects.toThrow(
       "Validation failed for field 'timeout': Timeout cannot exceed 300000ms",
     );
     expect(proxy.clientFrames).toEqual([]);
@@ -149,7 +152,7 @@ describe('wait_for_messages over WebSocket', () => {
     await setupRoom('cancelled', ['alice', 'bob']);
     const aliceWaiting = async () => (await membersOf(api, 'cancelled')).alice!.waiting === true;
 
-    const pending = client.start<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'cancelled', timeout: 0 });
+    const pending = client.start<WaitResult>('wait_for_messages', { roomName: 'cancelled', timeout: 0 });
     let answered = false;
     pending.result.then(
       () => {
@@ -168,9 +171,9 @@ describe('wait_for_messages over WebSocket', () => {
     expect(end).toEqual({ type: 'wait_end', requestId: start!.requestId });
     expect(rest).toEqual([]);
 
-    await client.call('send_message', { agentName: 'bob', roomName: 'cancelled', message: 'for the next call' });
+    await agents.of('bob').call('send_message', { roomName: 'cancelled', message: 'for the next call' });
     await sleep(300);
-    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'cancelled', timeout: 3 });
+    const next = await client.call<WaitResult>('wait_for_messages', { roomName: 'cancelled', timeout: 3 });
     expect(next.messages.map((m) => m.message)).toEqual(['for the next call']);
     // No response is sent for a cancelled call.
     expect(answered).toBe(false);
@@ -182,21 +185,21 @@ describe('wait_for_messages over WebSocket', () => {
 
     let settled = false;
     const waiting = client
-      .call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mentions', timeout: 10, mentionsOnly: true })
+      .call<WaitResult>('wait_for_messages', { roomName: 'mentions', timeout: 10, mentionsOnly: true })
       .finally(() => {
         settled = true;
       });
     await waitUntil(aliceWaiting, 5000, 'alice waiting');
-    await client.call('send_message', { agentName: 'bob', roomName: 'mentions', message: 'question for anyone' });
-    await client.call('send_message', { agentName: 'carol', roomName: 'mentions', message: 'over to you @bob' });
-    await client.call('send_message', { agentName: 'alice', roomName: 'mentions', message: 'note to myself @alice' });
+    await agents.of('bob').call('send_message', { roomName: 'mentions', message: 'question for anyone' });
+    await agents.of('carol').call('send_message', { roomName: 'mentions', message: 'over to you @bob' });
+    await agents.of('alice').call('send_message', { roomName: 'mentions', message: 'note to myself @alice' });
     await sleep(500);
     // Filtered on the client: the wait goes on, still declared on the server (D3), without another frame.
     expect(settled).toBe(false);
     expect(await aliceWaiting()).toBe(true);
     expect(proxy.clientFrames.map((frame) => frame.type)).toEqual(['wait_start']);
 
-    await client.call('send_message', { agentName: 'bob', roomName: 'mentions', message: 'your turn @alice' });
+    await agents.of('bob').call('send_message', { roomName: 'mentions', message: 'your turn @alice' });
     const result = await waiting;
     expect(result.messages.map((m) => m.message)).toEqual(['your turn @alice']);
     expect(result.messages[0]!.mentions).toEqual(['alice']);
@@ -210,18 +213,16 @@ describe('wait_for_messages over WebSocket', () => {
     expect(proxy.requests.some((r) => r.method === 'GET' && r.path.includes('/messages?'))).toBe(false);
 
     // The client cursor moved past them as well: the next wait, without mentionsOnly, does not return them.
-    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mentions', timeout: 1 });
+    const next = await client.call<WaitResult>('wait_for_messages', { roomName: 'mentions', timeout: 1 });
     expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
   });
 
   it('with mentionsOnly, times out with only messages that do not mention the agent and stores the read position past them', async () => {
     await setupRoom('mentions-timeout', ['alice', 'bob']);
-    setTimeout(() => void client.call('send_message', { agentName: 'bob', roomName: 'mentions-timeout', message: 'for anyone' }), 300);
+    setTimeout(() => void agents.of('bob').call('send_message', { roomName: 'mentions-timeout', message: 'for anyone' }), 300);
 
     const started = Date.now();
-    const result = await client.call<WaitResult>('wait_for_messages', {
-      agentName: 'alice',
-      roomName: 'mentions-timeout',
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'mentions-timeout',
       timeout: 2,
       mentionsOnly: true,
     });
@@ -235,7 +236,7 @@ describe('wait_for_messages over WebSocket', () => {
     expect((await membersOf(api, 'mentions-timeout')).alice!.lastReadSeq).toBe(stored.latestSeq);
 
     // Returned again neither by this process (client cursor) nor by another one (server read position).
-    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mentions-timeout', timeout: 1 });
+    const next = await client.call<WaitResult>('wait_for_messages', { roomName: 'mentions-timeout', timeout: 1 });
     expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
     const other = new CloudBackend({ apiUrl: proxy.url, token });
     try {
@@ -248,16 +249,14 @@ describe('wait_for_messages over WebSocket', () => {
 
   it('with mentionsOnly, returns only the mentions among the messages buffered since the last call and consumes the rest', async () => {
     await setupRoom('mentions-buffered', ['alice', 'bob']);
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'mentions-buffered', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'mentions-buffered', timeout: 1 });
     for (const message of ['before', 'first @alice', 'between', 'second @alice', 'after']) {
-      await client.call('send_message', { agentName: 'bob', roomName: 'mentions-buffered', message });
+      await agents.of('bob').call('send_message', { roomName: 'mentions-buffered', message });
     }
     await sleep(300);
 
     const started = Date.now();
-    const result = await client.call<WaitResult>('wait_for_messages', {
-      agentName: 'alice',
-      roomName: 'mentions-buffered',
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'mentions-buffered',
       timeout: 5,
       mentionsOnly: true,
     });
@@ -267,7 +266,7 @@ describe('wait_for_messages over WebSocket', () => {
     const stored = await api.getMessages('mentions-buffered', { since: 0 });
     expect((await membersOf(api, 'mentions-buffered')).alice!.lastReadSeq).toBe(stored.latestSeq);
 
-    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mentions-buffered', timeout: 1 });
+    const next = await client.call<WaitResult>('wait_for_messages', { roomName: 'mentions-buffered', timeout: 1 });
     expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
   });
 
@@ -275,9 +274,7 @@ describe('wait_for_messages over WebSocket', () => {
     await setupRoom('mentions-cancelled', ['alice', 'bob']);
     const member = async () => (await membersOf(api, 'mentions-cancelled')).alice!;
 
-    const pending = client.start<WaitResult>('wait_for_messages', {
-      agentName: 'alice',
-      roomName: 'mentions-cancelled',
+    const pending = client.start<WaitResult>('wait_for_messages', { roomName: 'mentions-cancelled',
       timeout: 0,
       mentionsOnly: true,
     });
@@ -291,7 +288,7 @@ describe('wait_for_messages over WebSocket', () => {
       },
     );
     await waitUntil(async () => (await member()).waiting === true, 5000, 'alice waiting');
-    await client.call('send_message', { agentName: 'bob', roomName: 'mentions-cancelled', message: 'for anyone' });
+    await agents.of('bob').call('send_message', { roomName: 'mentions-cancelled', message: 'for anyone' });
     await sleep(500);
 
     pending.cancel('tool call timed out');
@@ -304,8 +301,8 @@ describe('wait_for_messages over WebSocket', () => {
     // wait passed over.
     proxy.destroyWebSockets();
     await waitUntil(() => !backend().waits.hasOpenSocket('mentions-cancelled', 'alice'), 5000, 'socket closed');
-    await client.call('send_message', { agentName: 'bob', roomName: 'mentions-cancelled', message: 'now for @alice' });
-    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mentions-cancelled', timeout: 3 });
+    await agents.of('bob').call('send_message', { roomName: 'mentions-cancelled', message: 'now for @alice' });
+    const next = await client.call<WaitResult>('wait_for_messages', { roomName: 'mentions-cancelled', timeout: 3 });
     expect(next.messages.map((m) => m.message)).toEqual(['now for @alice']);
     expect(proxy.requests.filter((r) => r.method === 'UPGRADE').map((r) => r.path)).toEqual([
       '/rooms/mentions-cancelled/ws?agentName=alice&since=0',
@@ -321,9 +318,9 @@ describe('wait_for_messages over WebSocket', () => {
     const markReads = () =>
       proxy.requests.filter((r) => r.method === 'GET' && r.path.startsWith(`/rooms/${roomName}/messages?`)).map((r) => r.path);
 
-    const waiting = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 5, mentionsOnly: true });
+    const waiting = client.call<WaitResult>('wait_for_messages', { roomName, timeout: 5, mentionsOnly: true });
     await waitUntil(async () => (await member()).waiting === true, 5000, 'alice waiting');
-    await client.call('send_message', { agentName: 'bob', roomName, message: 'for anyone' });
+    await agents.of('bob').call('send_message', { roomName, message: 'for anyone' });
     await sleep(500);
     // Passed over on the first connection, which drops; the call connects again and waits out its timeout there.
     proxy.destroyWebSockets();
@@ -343,7 +340,7 @@ describe('wait_for_messages over WebSocket', () => {
     ]);
 
     // Returned again neither by this process (client cursor) nor by another one (server read position).
-    const next = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 1 });
+    const next = await client.call<WaitResult>('wait_for_messages', { roomName, timeout: 1 });
     expect(next).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
     const other = new CloudBackend({ apiUrl: proxy.url, token });
     try {
@@ -369,7 +366,7 @@ describe('wait_for_messages over WebSocket', () => {
           (error: unknown) => error,
         );
       await waitUntil(async () => (await member()).waiting === true, 5000, 'alice waiting');
-      await client.call('send_message', { agentName: 'bob', roomName, message: 'for anyone' });
+      await agents.of('bob').call('send_message', { roomName, message: 'for anyone' });
       await sleep(500);
       proxy.destroyWebSockets();
       await waitUntil(() => proxy.clientFrames.filter((frame) => frame.type === 'wait_start').length === 2, 5000, 'declared again');
@@ -408,7 +405,7 @@ describe('wait_for_messages over WebSocket', () => {
           (error: unknown) => error,
         );
       await waitUntil(async () => (await member()).waiting === true, 5000, 'alice waiting');
-      await client.call('send_message', { agentName: 'bob', roomName, message: 'for anyone' });
+      await agents.of('bob').call('send_message', { roomName, message: 'for anyone' });
       await sleep(500);
       // The connection drops, the WebSocket cannot be made again, and the long poll that follows is never answered.
       proxy.webSocketPolicy = 'reject';
@@ -449,7 +446,7 @@ describe('wait_for_messages over WebSocket', () => {
       (error: unknown) => error,
     );
     await waitUntil(async () => (await membersOf(api, roomName)).alice!.waiting === true, 5000, 'alice waiting');
-    const sent = await client.call<{ messageId: string }>('send_message', { agentName: 'bob', roomName, message: 'for anyone' });
+    const sent = await agents.of('bob').call('send_message', { roomName, message: 'for anyone' });
     await sleep(500);
     proxy.webSocketPolicy = 'reject';
     proxy.holdRequests(longPoll);
@@ -529,10 +526,10 @@ describe('wait_for_messages over WebSocket', () => {
     await setupRoom(roomName, ['alice', 'bob']);
     const member = async () => (await membersOf(api, roomName)).alice!;
 
-    const pending = client.start<WaitResult>('wait_for_messages', { agentName: 'alice', roomName, timeout: 0, mentionsOnly: true });
+    const pending = client.start<WaitResult>('wait_for_messages', { roomName, timeout: 0, mentionsOnly: true });
     pending.result.catch(() => undefined);
     await waitUntil(async () => (await member()).waiting === true, 5000, 'alice waiting');
-    await client.call('send_message', { agentName: 'bob', roomName, message: 'for anyone' });
+    await agents.of('bob').call('send_message', { roomName, message: 'for anyone' });
     await sleep(500);
 
     await client.registry.shutdown();
@@ -545,42 +542,42 @@ describe('wait_for_messages over WebSocket', () => {
 
   it('returns messages that arrived while no wait was running, then only new ones', async () => {
     await setupRoom('buffered', ['alice', 'bob']);
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'buffered', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'buffered', timeout: 1 });
 
-    await client.call('send_message', { agentName: 'bob', roomName: 'buffered', message: 'one' });
-    await client.call('send_message', { agentName: 'alice', roomName: 'buffered', message: 'own message' });
-    await client.call('send_message', { agentName: 'bob', roomName: 'buffered', message: 'two' });
+    await agents.of('bob').call('send_message', { roomName: 'buffered', message: 'one' });
+    await agents.of('alice').call('send_message', { roomName: 'buffered', message: 'own message' });
+    await agents.of('bob').call('send_message', { roomName: 'buffered', message: 'two' });
 
     const started = Date.now();
-    const first = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'buffered', timeout: 5 });
+    const first = await client.call<WaitResult>('wait_for_messages', { roomName: 'buffered', timeout: 5 });
     expect(Date.now() - started).toBeLessThan(1000);
     expect(first.messages.map((m) => m.message)).toEqual(['one', 'two']);
 
-    const second = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'buffered', timeout: 1 });
+    const second = await client.call<WaitResult>('wait_for_messages', { roomName: 'buffered', timeout: 1 });
     expect(second).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
   });
 
   it('does not lose a message that arrived before the agent replied (sending moves the server read position)', async () => {
     await setupRoom('reply', ['alice', 'bob']);
-    setTimeout(() => void client.call('send_message', { agentName: 'bob', roomName: 'reply', message: 'question 1' }), 200);
-    const first = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'reply', timeout: 5 });
+    setTimeout(() => void agents.of('bob').call('send_message', { roomName: 'reply', message: 'question 1' }), 200);
+    const first = await client.call<WaitResult>('wait_for_messages', { roomName: 'reply', timeout: 5 });
     expect(first.messages.map((m) => m.message)).toEqual(['question 1']);
 
-    await client.call('send_message', { agentName: 'bob', roomName: 'reply', message: 'question 2' });
-    await client.call('send_message', { agentName: 'alice', roomName: 'reply', message: 'answer 1' });
+    await agents.of('bob').call('send_message', { roomName: 'reply', message: 'question 2' });
+    await agents.of('alice').call('send_message', { roomName: 'reply', message: 'answer 1' });
 
-    const second = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'reply', timeout: 2 });
+    const second = await client.call<WaitResult>('wait_for_messages', { roomName: 'reply', timeout: 2 });
     expect(second.messages.map((m) => m.message)).toEqual(['question 2']);
   });
 
   it('reports the other agents already waiting when a wait begins (waiting frame)', async () => {
     await setupRoom('deadlock', ['alice', 'bob', 'carol']);
 
-    const alice = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'deadlock', timeout: 5 });
+    const alice = client.call<WaitResult>('wait_for_messages', { roomName: 'deadlock', timeout: 5 });
     await waitUntil(async () => (await membersOf(api, 'deadlock')).alice!.waiting === true, 5000, 'alice waiting');
-    const bob = client.call<WaitResult>('wait_for_messages', { agentName: 'bob', roomName: 'deadlock', timeout: 5 });
+    const bob = agents.of('bob').call<WaitResult>('wait_for_messages', { roomName: 'deadlock', timeout: 5 });
     await waitUntil(async () => (await membersOf(api, 'deadlock')).bob!.waiting === true, 5000, 'bob waiting');
-    await client.call('send_message', { agentName: 'carol', roomName: 'deadlock', message: 'wake up' });
+    await agents.of('carol').call('send_message', { roomName: 'deadlock', message: 'wake up' });
 
     const [aliceResult, bobResult] = await Promise.all([alice, bob]);
     expect(aliceResult.messages.map((m) => m.message)).toEqual(['wake up']);
@@ -594,8 +591,8 @@ describe('wait_for_messages over WebSocket', () => {
 
   it('returns messages sent before the agent first spoke in the room (read position from enter_room)', async () => {
     await setupRoom('first-reply', ['alice', 'bob']);
-    await client.call('send_message', { agentName: 'bob', roomName: 'first-reply', message: 'hello alice' });
-    await client.call('send_message', { agentName: 'alice', roomName: 'first-reply', message: 'hi bob' });
+    await agents.of('bob').call('send_message', { roomName: 'first-reply', message: 'hello alice' });
+    await agents.of('alice').call('send_message', { roomName: 'first-reply', message: 'hi bob' });
     // Entering and sending are one request each: the read position and its epoch came with the join response.
     expect(proxy.requests.map((r) => `${r.method} ${r.path}`)).toEqual([
       'POST /rooms',
@@ -605,7 +602,7 @@ describe('wait_for_messages over WebSocket', () => {
       'POST /rooms/first-reply/messages',
     ]);
 
-    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'first-reply', timeout: 3 });
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'first-reply', timeout: 3 });
     expect(result.messages.map((m) => m.message)).toEqual(['hello alice']);
     expect(result.timedOut).toBe(false);
   });
@@ -615,7 +612,7 @@ describe('wait_for_messages over WebSocket', () => {
     // A second MCP server process for alice: it has no read position of its own.
     const other = new CloudBackend({ apiUrl: proxy.url, token });
     try {
-      await client.call('send_message', { agentName: 'bob', roomName: 'entered-elsewhere', message: 'before alice spoke' });
+      await agents.of('bob').call('send_message', { roomName: 'entered-elsewhere', message: 'before alice spoke' });
       await other.messaging.sendMessage({ agentName: 'alice', roomName: 'entered-elsewhere', message: 'alice speaks' });
       await other.messaging.sendMessage({ agentName: 'alice', roomName: 'entered-elsewhere', message: 'alice again' });
       // Only the first send of that process looks the read position (and its epoch) up, with one GET /members.
@@ -634,9 +631,9 @@ describe('wait_for_messages over WebSocket', () => {
     await setupRoom('multi-a', ['alice', 'bob']);
     await setupRoom('multi-b', ['alice', 'bob']);
 
-    const inA = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'multi-a', timeout: 2 });
-    const inB = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'multi-b', timeout: 5 });
-    setTimeout(() => void client.call('send_message', { agentName: 'bob', roomName: 'multi-b', message: 'for b' }), 300);
+    const inA = client.call<WaitResult>('wait_for_messages', { roomName: 'multi-a', timeout: 2 });
+    const inB = client.call<WaitResult>('wait_for_messages', { roomName: 'multi-b', timeout: 5 });
+    setTimeout(() => void agents.of('bob').call('send_message', { roomName: 'multi-b', message: 'for b' }), 300);
 
     const [a, b] = await Promise.all([inA, inB]);
     expect(b.messages.map((m) => m.message)).toEqual(['for b']);
@@ -645,25 +642,25 @@ describe('wait_for_messages over WebSocket', () => {
 
   it('drops buffered messages after clear_room_messages', async () => {
     await setupRoom('cleared', ['alice', 'bob']);
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'cleared', timeout: 1 });
-    await client.call('send_message', { agentName: 'bob', roomName: 'cleared', message: 'old 1' });
-    await client.call('send_message', { agentName: 'bob', roomName: 'cleared', message: 'old 2' });
+    await client.call('wait_for_messages', { roomName: 'cleared', timeout: 1 });
+    await agents.of('bob').call('send_message', { roomName: 'cleared', message: 'old 1' });
+    await agents.of('bob').call('send_message', { roomName: 'cleared', message: 'old 2' });
 
     const cleared = await client.call('clear_room_messages', { roomName: 'cleared', confirm: true });
     expect(cleared).toEqual({ success: true, roomName: 'cleared', clearedCount: 2 });
 
-    const afterClear = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'cleared', timeout: 1 });
+    const afterClear = await client.call<WaitResult>('wait_for_messages', { roomName: 'cleared', timeout: 1 });
     expect(afterClear.messages).toEqual([]);
-    await client.call('send_message', { agentName: 'bob', roomName: 'cleared', message: 'new' });
-    const fresh = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'cleared', timeout: 2 });
+    await agents.of('bob').call('send_message', { roomName: 'cleared', message: 'new' });
+    const fresh = await client.call<WaitResult>('wait_for_messages', { roomName: 'cleared', timeout: 2 });
     expect(fresh.messages.map((m) => m.message)).toEqual(['new']);
   });
 
   it('keeps a message sent after clear_room_messages that arrived before the clear response', async () => {
     await setupRoom('clear-race', ['alice', 'bob']);
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'clear-race', timeout: 1 });
-    await client.call('send_message', { agentName: 'bob', roomName: 'clear-race', message: 'old 1' });
-    await client.call('send_message', { agentName: 'bob', roomName: 'clear-race', message: 'old 2' });
+    await client.call('wait_for_messages', { roomName: 'clear-race', timeout: 1 });
+    await agents.of('bob').call('send_message', { roomName: 'clear-race', message: 'old 1' });
+    await agents.of('bob').call('send_message', { roomName: 'clear-race', message: 'old 2' });
 
     // agora clears the room at once; its answer reaches the client 2 s later.
     proxy.delayResponses((r) => r.method === 'DELETE' && r.path.startsWith('/rooms/clear-race/messages'), 2000);
@@ -672,28 +669,28 @@ describe('wait_for_messages over WebSocket', () => {
       clearAnswered = true;
     });
     await waitUntil(async () => (await api.getMessages('clear-race', { since: 0 })).count === 0, 5000, 'room cleared');
-    await client.call('send_message', { agentName: 'bob', roomName: 'clear-race', message: 'after clear' });
+    await agents.of('bob').call('send_message', { roomName: 'clear-race', message: 'after clear' });
     // The message frame is pushed while agora handles the send, so alice's connection has buffered it by now.
     await sleep(300);
     expect(clearAnswered).toBe(false);
     expect(await clearing).toEqual({ success: true, roomName: 'clear-race', clearedCount: 2 });
 
     const started = Date.now();
-    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'clear-race', timeout: 3 });
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'clear-race', timeout: 3 });
     expect(result.messages.map((m) => m.message)).toEqual(['after clear']);
     expect(Date.now() - started).toBeLessThan(2000);
   });
 
   it('reconnects on the next call after the connection was cut, and delivers what was sent meanwhile', async () => {
     await setupRoom('cut', ['alice', 'bob']);
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'cut', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'cut', timeout: 1 });
     expect(backend().waits.hasOpenSocket('cut', 'alice')).toBe(true);
 
     proxy.destroyWebSockets();
     await waitUntil(() => !backend().waits.hasOpenSocket('cut', 'alice'), 5000, 'socket closed');
-    await client.call('send_message', { agentName: 'bob', roomName: 'cut', message: 'sent while disconnected' });
+    await agents.of('bob').call('send_message', { roomName: 'cut', message: 'sent while disconnected' });
 
-    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'cut', timeout: 3 });
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'cut', timeout: 3 });
     expect(result.messages.map((m) => m.message)).toEqual(['sent while disconnected']);
     expect(proxy.requests.filter((r) => r.method === 'UPGRADE')).toHaveLength(2);
     expect(backend().waits.hasOpenSocket('cut', 'alice')).toBe(true);
@@ -701,13 +698,13 @@ describe('wait_for_messages over WebSocket', () => {
 
   it('reconnects within a wait that loses its connection', async () => {
     await setupRoom('mid-wait', ['alice', 'bob']);
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'mid-wait', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'mid-wait', timeout: 1 });
 
-    const waiting = client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'mid-wait', timeout: 6 });
+    const waiting = client.call<WaitResult>('wait_for_messages', { roomName: 'mid-wait', timeout: 6 });
     await waitUntil(async () => (await membersOf(api, 'mid-wait')).alice!.waiting === true, 5000, 'alice waiting');
     proxy.destroyWebSockets();
     await sleep(300);
-    await client.call('send_message', { agentName: 'bob', roomName: 'mid-wait', message: 'after the cut' });
+    await agents.of('bob').call('send_message', { roomName: 'mid-wait', message: 'after the cut' });
 
     const result = await waiting;
     expect(result.messages.map((m) => m.message)).toEqual(['after the cut']);
@@ -729,7 +726,7 @@ describe('wait_for_messages over WebSocket', () => {
       const frozenAt = Date.now();
       await waitUntil(() => !backend.waits.hasOpenSocket('silent', 'alice'), 5000, 'silent connection dropped');
       expect(Date.now() - frozenAt).toBeLessThan(1500);
-      await client.call('send_message', { agentName: 'bob', roomName: 'silent', message: 'sent while silent' });
+      await agents.of('bob').call('send_message', { roomName: 'silent', message: 'sent while silent' });
 
       const connects = backend.waits.stats.webSocketConnects;
       const result = await backend.messaging.waitForMessages({ agentName: 'alice', roomName: 'silent', timeout: 3000 });
@@ -751,7 +748,7 @@ describe('wait_for_messages over WebSocket', () => {
       proxy.freezeWebSockets();
       const upgrades = proxy.countRequests('UPGRADE', '/rooms/no-ack/ws');
 
-      setTimeout(() => void client.call('send_message', { agentName: 'bob', roomName: 'no-ack', message: 'after the reconnect' }), 1500);
+      setTimeout(() => void agents.of('bob').call('send_message', { roomName: 'no-ack', message: 'after the reconnect' }), 1500);
       const started = Date.now();
       const result = await backend.messaging.waitForMessages({ agentName: 'alice', roomName: 'no-ack', timeout: 6000 });
       expect(result.messages.map((m) => m.message)).toEqual(['after the reconnect']);
@@ -765,11 +762,11 @@ describe('wait_for_messages over WebSocket', () => {
 
   it('ends at the timeout when the held connection stops answering', async () => {
     await setupRoom('stalled', ['alice']);
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'stalled', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'stalled', timeout: 1 });
     proxy.freezeWebSockets();
 
     const started = Date.now();
-    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'stalled', timeout: 2 });
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'stalled', timeout: 2 });
     const elapsed = Date.now() - started;
     expect(result).toEqual({ messages: [], hasNewMessages: false, timedOut: true });
     // The ack wait is cut at the deadline (plus a short grace), not at the 10 s ack timeout.
@@ -780,37 +777,59 @@ describe('wait_for_messages over WebSocket', () => {
 
   it('follows a room that was deleted and created again (new epoch, seq restarts)', async () => {
     await setupRoom('reborn', ['alice', 'bob']);
-    for (let i = 0; i < 3; i++) await client.call('send_message', { agentName: 'bob', roomName: 'reborn', message: `old ${i}` });
-    const old = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'reborn', timeout: 1 });
+    for (let i = 0; i < 3; i++) await agents.of('bob').call('send_message', { roomName: 'reborn', message: `old ${i}` });
+    const old = await client.call<WaitResult>('wait_for_messages', { roomName: 'reborn', timeout: 1 });
     expect(old.messages).toHaveLength(3);
 
     await api.deleteRoom('reborn');
     await waitUntil(() => !backend().waits.hasOpenSocket('reborn', 'alice'), 5000, 'socket closed by the server');
     await setupRoom('reborn', ['alice', 'bob']);
-    await client.call('send_message', { agentName: 'bob', roomName: 'reborn', message: 'first in the new room' });
+    await agents.of('bob').call('send_message', { roomName: 'reborn', message: 'first in the new room' });
 
-    const result = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'reborn', timeout: 3 });
+    const result = await client.call<WaitResult>('wait_for_messages', { roomName: 'reborn', timeout: 3 });
     expect(result.messages.map((m) => m.message)).toEqual(['first in the new room']);
   });
 
-  it('releases the connection when the agent leaves the room and when the server shuts down', async () => {
+  it('releases the connection when the agent leaves the room and when the server acting as it shuts down', async () => {
     await setupRoom('release', ['alice', 'bob']);
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'release', timeout: 1 });
-    await client.call('wait_for_messages', { agentName: 'bob', roomName: 'release', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'release', timeout: 1 });
+    await agents.of('bob').call('wait_for_messages', { roomName: 'release', timeout: 1 });
     expect((await membersOf(api, 'release')).alice!.connected).toBe(true);
 
     await client.call('leave_room', { agentName: 'alice', roomName: 'release' });
     await waitUntil(async () => (await membersOf(api, 'release')).alice!.connected === false, 5000, 'alice disconnected');
     expect((await membersOf(api, 'release')).bob!.connected).toBe(true);
 
+    // Shutting down one connection releases only its own WebSocket; another same-token connection is not dropped.
     await client.registry.shutdown();
+    expect((await membersOf(api, 'release')).bob!.connected).toBe(true);
+    await agents.of('bob').registry.shutdown();
     await waitUntil(async () => (await membersOf(api, 'release')).bob!.connected === false, 5000, 'bob disconnected');
+  });
+
+  it('does not leave a socket whose handshake completes after the shutdown cleanup grace', async () => {
+    await setupRoom('late-socket', ['alice']);
+    const backendRef = backend();
+    const connectsBefore = backendRef.waits.stats.webSocketConnects;
+    // Hold the WebSocket handshake past shutdown's cleanup grace (WAIT_CLEANUP_GRACE_MS = 2000 ms).
+    proxy.webSocketDelayMs = 2500;
+
+    const waiting = client.call<WaitResult>('wait_for_messages', { roomName: 'late-socket', timeout: 0 });
+    waiting.catch(() => undefined);
+    await waitUntil(() => proxy.requests.some((r) => r.method === 'UPGRADE'), 5000, 'upgrade sent');
+    await client.registry.shutdown();
+
+    // The delayed handshake completes after shutdown returned; the aborted wait must not install its socket.
+    await waitUntil(() => backendRef.waits.stats.webSocketConnects > connectsBefore, 8000, 'delayed handshake completed');
+    expect(backendRef.waits.hasOpenSocket('late-socket', 'alice')).toBe(false);
+    await waiting.catch(() => undefined);
   });
 });
 
 describe('wait_for_messages after agora restarts (server-side disconnect)', () => {
   let agora: AgoraInstance;
   let client: McpTestClient;
+  let agents: Awaited<ReturnType<typeof enterAgents>>;
   let restartToken: string;
 
   beforeAll(async () => {
@@ -828,24 +847,23 @@ describe('wait_for_messages after agora restarts (server-side disconnect)', () =
     const backend = getCloudBackend({ AGENT_COMM_API_URL: agora.url, AGENT_COMM_TOKEN: restartToken })!;
     const api = new CloudApiClient({ apiUrl: agora.url, token: restartToken });
     await client.call('create_room', { roomName: 'restart' });
-    await client.call('enter_room', { agentName: 'alice', roomName: 'restart' });
-    await client.call('enter_room', { agentName: 'bob', roomName: 'restart' });
+    agents = await enterAgents(client, 'restart', ['alice', 'bob']);
 
-    await client.call('wait_for_messages', { agentName: 'alice', roomName: 'restart', timeout: 1 });
+    await client.call('wait_for_messages', { roomName: 'restart', timeout: 1 });
     const connectsBefore = backend.waits.stats.webSocketConnects;
     expect(backend.waits.hasOpenSocket('restart', 'alice')).toBe(true);
 
     await agora.restart();
     await waitUntil(() => !backend.waits.hasOpenSocket('restart', 'alice'), 15000, 'socket closed by the restart');
-    await client.call('send_message', { agentName: 'bob', roomName: 'restart', message: 'after restart' });
+    await agents.of('bob').call('send_message', { roomName: 'restart', message: 'after restart' });
 
-    const backlog = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'restart', timeout: 5 });
+    const backlog = await client.call<WaitResult>('wait_for_messages', { roomName: 'restart', timeout: 5 });
     expect(backlog.messages.map((m) => m.message)).toEqual(['after restart']);
     expect(backend.waits.stats.webSocketConnects).toBe(connectsBefore + 1);
     expect(backend.waits.stats.longPollRequests).toBe(0);
 
-    setTimeout(() => void client.call('send_message', { agentName: 'bob', roomName: 'restart', message: 'live again' }), 300);
-    const live = await client.call<WaitResult>('wait_for_messages', { agentName: 'alice', roomName: 'restart', timeout: 5 });
+    setTimeout(() => void agents.of('bob').call('send_message', { roomName: 'restart', message: 'live again' }), 300);
+    const live = await client.call<WaitResult>('wait_for_messages', { roomName: 'restart', timeout: 5 });
     expect(live.messages.map((m) => m.message)).toEqual(['live again']);
     expect(backend.waits.stats.webSocketConnects).toBe(connectsBefore + 1);
     expect((await api.listMembers('restart')).members.find((m) => m.agentName === 'alice')!.connected).toBe(true);

@@ -5,16 +5,10 @@ import { LockService } from '../services/LockService';
 import { MessagingAdapter } from '../adapters/MessagingAdapter';
 import { RoomsAdapter } from '../adapters/RoomsAdapter';
 import { ManagementAdapter } from '../adapters/ManagementAdapter';
-import { allTools, cloudTools, handleDownloadAttachment, handleSendMessage, handleWaitForMessages, toolHandlers } from '../tools/index';
-import { AppError, WaitCancelledError } from '../errors/index';
+import { allTools, cloudTools, handleDownloadAttachment, toolHandlers } from '../tools/index';
+import { AppError } from '../errors/index';
 import { getCloudBackend, type CloudBackend, type OperatingMode } from '../cloud/index';
-import { linkAbortSignals, settledOrAborted } from '../utils/abort';
-
-/**
- * How long shutdown() gives the waits it ends to finish (wait_end, the read position of what a mentionsOnly wait passed
- * over, the waiting-agents entry) before it closes the connections and returns.
- */
-const SHUTDOWN_GRACE_MS = 2000;
+import { RoomIdentity } from './RoomIdentity';
 
 // Type guard for tool names
 function isValidToolName(name: string): name is keyof typeof toolHandlers {
@@ -26,10 +20,10 @@ export class ToolRegistry {
   private messagingAdapter: MessagingAdapter;
   private roomsAdapter: RoomsAdapter;
   private managementAdapter: ManagementAdapter;
+  // The names enter_room selected for this MCP instance, per room (MCP-facing; the adapters keep taking explicit names)
+  private readonly identity: RoomIdentity;
   // Cloud mode when AGENT_COMM_TOKEN is set (docs/cloud-architecture.md §5.1)
   private readonly cloud: CloudBackend | null = getCloudBackend();
-  // wait_for_messages calls in progress; shutdown() ends them (a wait without a time limit never ends on its own)
-  private readonly waits = new Set<{ abort: (reason: unknown) => void; settled: Promise<unknown> }>();
   
   constructor(dataDir?: string) {
     this.lockService = new LockService(dataDir);
@@ -41,6 +35,7 @@ export class ToolRegistry {
     this.messagingAdapter.setRoomsAdapter(this.roomsAdapter);
     this.managementAdapter.setRoomsAdapter(this.roomsAdapter);
     this.managementAdapter.setMessageAdapter(this.messagingAdapter);
+    this.identity = new RoomIdentity(this.roomsAdapter, this.messagingAdapter);
   }
   
   async registerAll(server: Server): Promise<void> {
@@ -90,15 +85,24 @@ export class ToolRegistry {
           switch (name) {
             case 'agent_communication_list_rooms':
             case 'agent_communication_create_room':
-            case 'agent_communication_enter_room':
-            case 'agent_communication_leave_room':
             case 'agent_communication_list_room_users':
               result = await handler(args, this.roomsAdapter);
               break;
+
+            case 'agent_communication_enter_room':
+              // Remembers the agent name for this room in this MCP instance after the entry succeeds
+              result = await this.identity.enterRoom(args);
+              break;
+
+            case 'agent_communication_leave_room':
+              // Leaving the name this instance selected clears the room's binding and ends its waits
+              result = await this.identity.leaveRoom(args);
+              break;
               
             case 'agent_communication_send_message':
-              // A cancelled call stops uploading its attachments (and does not send the message after them)
-              result = await handleSendMessage(args, this.messagingAdapter, extra.signal);
+              // Acts as the name enter_room selected for the room (explicit agentName is rejected); a cancelled call
+              // stops uploading its attachments (and does not send the message after them)
+              result = await this.identity.sendMessage(args, extra.signal);
               break;
               
             case 'agent_communication_get_messages':
@@ -110,8 +114,9 @@ export class ToolRegistry {
               break;
               
             case 'agent_communication_wait_for_messages':
-              // Ends early when the client cancels the request (notifications/cancelled) or the server shuts down
-              result = await this.waitForMessages(args, extra.signal);
+              // Acts as the name enter_room selected for the room; the identity layer owns the call so a switch,
+              // a selected-name leave or shutdown can cancel it. The MCP client's cancellation also ends it.
+              result = await this.identity.waitForMessages(args, extra.signal);
               break;
               
             case 'agent_communication_get_status':
@@ -170,26 +175,11 @@ export class ToolRegistry {
   }
   
   async shutdown(): Promise<void> {
-    // End the waits in progress. A cancelled wait returns nothing and consumes nothing: what arrived stays unread.
-    const waits = [...this.waits];
-    for (const wait of waits) wait.abort(new WaitCancelledError('the server is shutting down'));
-    // The waits end first, while their connections are still open: wait_end, and the read position of what a
-    // mentionsOnly wait passed over. AbortSignal.timeout does not keep the process alive once the waits are done.
-    await settledOrAborted(Promise.all(waits.map((wait) => wait.settled)), AbortSignal.timeout(SHUTDOWN_GRACE_MS));
-    // Cloud mode keeps a WebSocket per room x agent for the process lifetime; close them.
-    await this.cloud?.close();
-  }
-  
-  private async waitForMessages(args: unknown, requestSignal: AbortSignal): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const link = linkAbortSignals(requestSignal);
-    const result = handleWaitForMessages(args, this.messagingAdapter, link.signal);
-    const wait = { abort: link.abort, settled: result.catch(() => undefined) };
-    this.waits.add(wait);
-    try {
-      return await result;
-    } finally {
-      this.waits.delete(wait);
-      link.dispose();
-    }
+    // End this instance's waits, then close only the cloud connections it owns: another same-token MCP server
+    // instance in this process keeps its own WebSockets and waits. The waits end first, while their connections are
+    // still open (wait_end, and the read position of what a mentionsOnly wait passed over).
+    const owned = this.identity.ownedIdentities();
+    await this.identity.shutdown();
+    await this.cloud?.closeOwned(owned);
   }
 }

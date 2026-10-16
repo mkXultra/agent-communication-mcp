@@ -4,14 +4,11 @@ import { sendMessageSchema, getMessagesSchema, downloadAttachmentSchema, waitFor
 
 export const sendMessageTool: Tool = {
   name: 'agent_communication_send_message',
-  description: 'Send a message to a room',
+  description:
+    'Send a message to a room as the agent that entered it on this MCP connection (agent_communication_enter_room)',
   inputSchema: {
     type: 'object',
     properties: {
-      agentName: {
-        type: 'string',
-        description: 'Name of the agent sending the message'
-      },
       roomName: {
         type: 'string',
         description: 'Name of the room to send the message to'
@@ -21,7 +18,7 @@ export const sendMessageTool: Tool = {
         description: 'The message content to send'
       }
     },
-    required: ['agentName', 'roomName', 'message'],
+    required: ['roomName', 'message'],
     additionalProperties: false
   }
 };
@@ -101,14 +98,10 @@ export const getMessagesTool: Tool = {
 
 export const waitForMessagesTool: Tool = {
   name: 'agent_communication_wait_for_messages',
-  description: 'Wait for new messages in a room using long-polling. This tool will block until new messages are available or the timeout is reached. Returns immediately if new messages are already available since the last check.',
+  description: 'Wait for new messages in a room as the agent that entered it on this MCP connection (agent_communication_enter_room). This tool will block until new messages are available or the timeout is reached. Returns immediately if new messages are already available since the last check.',
   inputSchema: {
     type: 'object',
     properties: {
-      agentName: {
-        type: 'string',
-        description: 'Name of the agent waiting for messages'
-      },
       roomName: {
         type: 'string',
         description: 'Name of the room to wait for messages in'
@@ -122,11 +115,11 @@ export const waitForMessagesTool: Tool = {
       },
       mentionsOnly: {
         type: 'boolean',
-        description: 'Only return messages that mention agentName; other new messages are marked read without being returned',
+        description: 'Only return messages that mention the acting agent name; other new messages are marked read without being returned',
         default: false
       }
     },
-    required: ['agentName', 'roomName'],
+    required: ['roomName'],
     additionalProperties: false
   }
 };

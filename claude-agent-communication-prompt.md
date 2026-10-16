@@ -15,7 +15,8 @@ All tools are prefixed with `mcp__chat__agent_communication_`
 - **list_room_users**: See who's currently in a room
 
 ### Messaging
-- **send_message**: Send messages to a room (supports @mentions)
+- **send_message**: Send messages to a room as the agent that entered it on this connection (supports @mentions). It takes no `agentName`: `enter_room` selects the acting name per room and connection.
+- **wait_for_messages**: Wait for new messages in a room as the agent that entered it on this connection. It also takes no `agentName`; `mentionsOnly` and `timeout: 0` work as before.
 - **get_messages**: Retrieve message history from a room
 
 ### Management
@@ -26,6 +27,7 @@ All tools are prefixed with `mcp__chat__agent_communication_`
 
 ### 1. Identity and Room Selection
 - Choose a consistent agent name that represents your role (e.g., "code-analyzer", "test-runner", "doc-writer")
+- `enter_room` is the only operation that selects your acting name. The name is remembered for that room on this MCP connection only; `send_message` and `wait_for_messages` then act as it without taking `agentName`. Each room can have its own name on the same connection, and another agent name in the same room needs a separate connection. Entering a different name switches the room (the old name is left and its waits end); entering the same name again is idempotent. Leaving the selected name clears it, so enter the room again before sending or waiting
 - Create or join rooms based on:
   - Topic: "frontend-dev", "api-design", "bug-fixes"
   - Team: "team-alpha", "backend-team"
@@ -62,7 +64,6 @@ users = mcp__chat__agent_communication_list_room_users(roomName="code-review")
 
 # Step 4: Send introduction if appropriate
 mcp__chat__agent_communication_send_message(
-    agentName="code-reviewer-claude",
     roomName="code-review",
     message="Hello team! I'm here to help with code reviews. @coordinator please assign me any PRs that need review."
 )
@@ -89,7 +90,6 @@ Next: @test-runner please verify all edge cases
 #### Include metadata for tracking:
 ```python
 mcp__chat__agent_communication_send_message(
-    agentName="my-agent",
     roomName="dev-team",
     message="Deployment completed successfully",
     metadata={
@@ -158,7 +158,9 @@ Use descriptive, hierarchical names:
 
 Common errors and solutions:
 - `ROOM_NOT_FOUND`: Check room name spelling, list rooms first
-- `AGENT_NOT_IN_ROOM`: Must enter room before sending messages
+- `ROOM_IDENTITY_REQUIRED`: This connection has not entered the room; call `enter_room` with the room and your agent name first
+- `AGENT_NAME_NOT_ALLOWED`: `send_message` and `wait_for_messages` no longer take `agentName`; remove it and use `enter_room` to select the acting name
+- `AGENT_NOT_IN_ROOM`: The selected name is no longer a member of the room
 - `AGENT_ALREADY_IN_ROOM`: Already joined, can proceed with messaging
 
 ### 8. Best Practices Summary
@@ -190,7 +192,6 @@ mcp__chat__agent_communication_enter_room(
 
 # 3. Coordinate with others
 mcp__chat__agent_communication_send_message(
-    agentName="claude-developer",
     roomName="refactor-auth-module",
     message="Starting refactor of auth module. Plan: 1) Extract interfaces 2) Implement new flow 3) Update tests. @qa-team please prepare test scenarios."
 )
@@ -204,7 +205,6 @@ messages = mcp__chat__agent_communication_get_messages(
 
 # 5. Report completion
 mcp__chat__agent_communication_send_message(
-    agentName="claude-developer",
     roomName="refactor-auth-module",
     message="✅ Refactoring complete! All tests passing. @coordinator ready for review."
 )
