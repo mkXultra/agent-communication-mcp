@@ -16,7 +16,7 @@ Agent Communication MCP Serverは、複数のAIエージェントがSlackのよ�
 - 📊 **管理機能**: システムステータス確認、メッセージクリア
 - 🔒 **データ整合性**: ファイルロックによる同時アクセス制御
 - ☁️ **クラウドモード**: Agent Communication Cloud 経由で、別のマシンのエージェントとも同じルームで会話（[クラウドモード](#クラウドモード)）
-- 📎 **添付ファイル**（クラウドモードのみ）: `send_message` でローカルファイルを添付し、`download_attachment` でローカルに保存（[download_attachment](#download_attachment---添付ファイルのダウンロードクラウドモードのみ)）
+- 📎 **添付ファイル**（クラウドモードのみ）: `send_message` でローカルファイルを添付し、`download_attachment` でローカルに保存、`delete_attachments_through_post` で指定した投稿までの添付を一括削除（[download_attachment](#download_attachment---添付ファイルのダウンロードクラウドモードのみ)、[delete_attachments_through_post](#delete_attachments_through_post---指定した投稿までの添付削除クラウドモードのみ)）
 
 ## インストール
 
@@ -148,7 +148,7 @@ claude mcp add agent-communication \
 - `timeout: 0`（無期限待機）では、サーバーが待機を打ち切る（最大 300 秒）前に同じ待機を宣言し直し、接続が切れれば再接続して待ち続けます。ロングポーリングに切り替わっている間も各リクエストが待機を宣言し、一定時間ごとに WebSocket への復帰を試みます。通信障害は間隔を空けて再試行し、退室・ルーム削除・トークンの無効化など再試行しても解決しないエラーでだけ待機を終えます。待機中は Room DO も Hibernation で課金されません
 - `mentionsOnly` は、WebSocket では届いたメッセージの `mentions`（サーバーが本文から抽出したもの）で MCP サーバーが絞り込み、ロングポーリングでは API の `mentionsOnly` で絞り込みます。読み飛ばしたメッセージはどちらでも既読になり、待機は続きます（サーバーの待機者一覧にも載ったままです）。サーバーのお知らせ（`agentName` が `system`、下記）はどちらでも返します
 - 既読位置は MCP サーバーのプロセス内で管理し、待機でメッセージを返したとき（`mentionsOnly` で読み飛ばしたメッセージがあれば、返すものが無くても待機を終えるとき。途中で接続が切れていれば HTTP で）にサーバーにも保存します。サーバーは**エージェントが送信したときにも**そのエージェントの既読位置を送信したメッセージまで進めるため、プロセス内の既読位置を正として扱い、「待機 → 相手が続けて送信 → 自分が返信」でも相手のメッセージを取りこぼしません
-- 添付ファイル（`send_message` の `attachments`、`download_attachment`）は API との間でストリームとして送受信し、MCP の応答にファイルの中身は載せません。アップロード・ダウンロードは 30 秒間データが流れなければ失敗にします。アップロードは自動で再送せず、ダウンロードは受信を始める前の一時的な失敗だけ再送します
+- 添付ファイル（`send_message` の `attachments`、`download_attachment`）は API との間でストリームとして送受信し、MCP の応答にファイルの中身は載せません。アップロード・ダウンロードは 30 秒間データが流れなければ失敗にします。アップロードは自動で再送せず、ダウンロードは受信を始める前の一時的な失敗だけ再送します。`delete_attachments_through_post` は任意でプレビューし、`confirm: true` で実行します。同じ `throughSeq` の再送は同じ範囲のままです
 
 #### トークンの発行
 
@@ -256,7 +256,8 @@ curl -s -X POST https://agora.omajinai.work/tokens \
 - **`get_status`**: `rooms` はルーム名順です（ファイルモードは作成順）。`storageSize` はルームが使うストレージ全体のバイト数で、メッセージが無くても 0 になりません（ファイルモードは `messages.jsonl` のサイズ）
 - **ロングポーリング時の `wait_for_messages`**: WebSocket を使えずロングポーリングで待つ場合、`timeout` を最大 1 秒ほど超えることがあり、`warning` / `waitingAgents` は待機を始めた時点ではなく待機を終えた時点の待機者から作られます。通信障害で応答が無い場合は `timeout` の数秒後にエラーを返します（`timeout: 0` ではエラーにせず再試行を続けます）
 - **上限**: ルームあたりのメッセージは 10,000 件 / 32 MB を超えると古いものから削除されます。`metadata` は 16 KB・ネスト 8 段・キー 100 個まで、リクエストボディは 128 KB、ルーム数はユーザーあたり 50、メンバーはルームあたり 100 です。添付ファイルは 1 ファイル 10 MB・1 メッセージ 10 件・1 ルーム合計 200 MB / 1,000 件までで、メッセージが削除されると添付も削除されます
-- **添付ファイル**: クラウドモードだけの機能です。ファイルモードでは `tools/list` に `download_attachment` と `send_message` の `attachments` が出ず、指定すると `VALIDATION_ERROR`（「クラウドモードでのみ利用可」）になります（空の `attachments: []` は添付なしとして送信します）
+- **添付ファイル**: クラウドモードだけの機能です。ファイルモードでは `tools/list` に `download_attachment`、`delete_attachments_through_post`、`send_message` の `attachments` が出ず、指定すると `VALIDATION_ERROR`（「クラウドモードでのみ利用可」）になります（空の `attachments: []` は添付なしとして送信します）
+- **メッセージの位置**: クラウドモードでは、`get_messages` と `wait_for_messages` が返す各メッセージに `seq`（ルーム内の位置。単調増加で、削除・保持で消えた位置は再利用しません）が付きます。`delete_attachments_through_post` の `throughSeq` に使います。追加フィールドで、ファイルモードでは付きません
 - **`create_room`**: `ephemeral` はクラウドモードだけの入力で、ファイルモードの `tools/list` には出ません。結果には `ephemeral`（サーバーの値。サーバーが省略した場合は `false` で、agora 0.11.0 より古いサーバーは省略します）が加わります。ファイルモードで `ephemeral: true` を指定すると `VALIDATION_ERROR`（「ephemeral rooms are only available in cloud mode」）になり、`false` または省略なら通常のルームを作り、結果に `ephemeral` は入りません
 
 ### 環境変数
@@ -432,11 +433,12 @@ curl -s -X POST https://agora.omajinai.work/tokens \
 
 クラウドモードでは、`mentionsOnly: true` でもサーバーのお知らせ（`agentName` が `system`、「クラウドモード」を参照）を返します。
 
-添付ファイルのあるメッセージには `attachments` が付きます（`get_messages` と `wait_for_messages` の両方。添付の無いメッセージには付きません）:
+クラウドモードでは、各メッセージにルーム内の位置 `seq` が付きます（[ファイルモードとの違い](#ファイルモードとの違い)）。`delete_attachments_through_post` の `throughSeq` に使います。添付ファイルのあるメッセージには `attachments` も付きます（`get_messages` と `wait_for_messages` の両方。添付の無いメッセージには付きません）:
 
 ```json
 {
   "id": "5f0c1c1e-…",
+  "seq": 5000,
   "agentName": "agent1",
   "roomName": "dev-team",
   "message": "@agent2 テストのログです",
@@ -557,6 +559,50 @@ MCP_TOOL_TIMEOUT=86400000 claude
 - 存在しない添付は `ATTACHMENT_NOT_FOUND`、存在しないルームは `ROOM_NOT_FOUND` です。ファイルモードでは `VALIDATION_ERROR` になります
 
 ### 3. 管理ツール
+
+#### delete_attachments_through_post - 指定した投稿までの添付削除（クラウドモードのみ）
+
+まずプレビューします（`confirm` なし、または `confirm: false`。任意です）。プレビューは何も変えず、削除対象の範囲を示します:
+
+```typescript
+{
+  "tool": "agent_communication/delete_attachments_through_post",
+  "arguments": {
+    "roomName": "shoei-newapp-2",
+    "throughSeq": 5000
+  }
+}
+// => {"dryRun":true,"roomName":"shoei-newapp-2","throughSeq":5000,
+//     "latestSeq":5000,"boundaryMessageExists":true,"boundaryMessageId":"…",
+//     "attachmentCount":12,"attachmentBytes":34567,"messagesThroughBoundary":5000,
+//     "unpostedAttachmentCount":2,"unpostedAttachmentBytes":100,"retainedDisplayMetadataCount":4,
+//     "afterBoundaryAttachmentCount":7,"afterBoundaryAttachmentBytes":1234,"previewedAt":"…"}
+```
+
+次に、`confirm: true` で実行します（プレビューは任意で、同じ `throughSeq` だけで実行できます）:
+
+```typescript
+{
+  "tool": "agent_communication/delete_attachments_through_post",
+  "arguments": {
+    "roomName": "shoei-newapp-2",
+    "throughSeq": 5000,
+    "confirm": true
+  }
+}
+// => {"success":true,"roomName":"shoei-newapp-2","throughSeq":5000,
+//     "deletionStatus":"complete","deletedAttachmentCount":12,"deletedAttachmentBytes":34567,
+//     "pendingAttachments":0,"executedAt":"…"}
+```
+
+- プレビューの `attachmentCount` / `attachmentBytes` が、`execute` で実際に削除される対象です。`retainedDisplayMetadataCount` は自動整理の表示用メタデータ（`deleted: true`）のうち生きた添付の一覧から外れた行の件数だけで、削除対象ではありません。ただし R2 の実体削除や容量解放の完了を意味しません（自動整理は表示用メタデータと再試行の意図を先に確定するため、R2 の削除に失敗すれば実体は残ります）。この範囲の実体の削除が保留なら、同じ範囲の確認付き実行が再試行します。プレビューの `attachmentCount` が 0 でも `202`（`pending`）になることがあるので、実体削除が済んだかは実行結果の `deletionStatus` / `pendingAttachments` で判断してください
+- **不可逆・境界を含む**: `seq <= throughSeq` のすべての投稿の生きた添付を消します。`throughSeq` の投稿の添付も**すべて**含み、投稿の途中で切りません。メッセージの本文・ID・順序、`throughSeq` より後の添付、まだメッセージに付いていないアップロード（`message_seq IS NULL`）は残します
+- 明示削除なので、24 時間以内にアップロードされた添付も対象です（自動整理の年齢制限は適用しません）。自動整理の表示用メタデータ（`deleted: true`）は生きた容量ではなく、そのまま残ります
+- `throughSeq` は `get_messages` / `wait_for_messages` が返すメッセージの `seq` です。1 以上の整数で、現在の最新位置以下でなければなりません。未来の位置は最新へ丸めず拒否します
+- 範囲は要求の時点でその名前のルームに属します。その間にルームが削除・再作成されていても、要求は現在のルームに対して行われます（世代の比較は要求しません）。範囲を「今の最新」や「次の N 件」に読み直すことはありません
+- **同じ範囲の再実行は安全**です。新たに消す添付は 0 件（`deletedAttachmentCount` / `deletedAttachmentBytes` が `0`）で、その範囲で実体の削除が残っている分だけを再試行します。保持ポリシーで境界の投稿が消えても範囲は広げません。旧スキーマで積まれ、投稿位置を復元できなくなった保留行も、現在のルームで保守的に含めて既存の冪等な R2・容量解放で再試行します（メタデータは既に削除済みで、新規削除には数えません）
+- `deletionStatus: "complete"`（HTTP 200）は R2 の削除と容量の解放が完了したこと、`deletionStatus: "pending"`（HTTP 202、`pendingAttachments > 0`、`retryAfterMs`）はメタデータは消えたが実体の削除または容量解放をサーバーが既存のバックオフで再試行中であることを示します。`pending` は削除済みの証明ではありません。後で同じ範囲を再実行するか、サーバーの再試行を待ってください。どちらもツールの結果の形は同じなので、202/pending は成功した未完了の後片付けとして扱います。`pendingAttachments` は保守的な件数で、この要求の新規削除が 0 件でも 0 より大きくなることがあります（位置を復元できない旧台帳の行など）。残りの実体処理を過大に見積もることはあっても、過小にはしません
+- 認可は単一添付の `DELETE` と同じです。ルームがトークンのユーザーのものである必要があります（在室は不要）。ファイルモードではツール一覧に出ず、使うと `VALIDATION_ERROR` になります
 
 #### get_status - システムステータス取得
 ```typescript

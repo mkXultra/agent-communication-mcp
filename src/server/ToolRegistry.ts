@@ -5,7 +5,7 @@ import { LockService } from '../services/LockService';
 import { MessagingAdapter } from '../adapters/MessagingAdapter';
 import { RoomsAdapter } from '../adapters/RoomsAdapter';
 import { ManagementAdapter } from '../adapters/ManagementAdapter';
-import { allTools, cloudTools, handleDownloadAttachment, toolHandlers } from '../tools/index';
+import { allTools, cloudTools, handleDeleteAttachmentsThroughPost, handleDownloadAttachment, toolHandlers } from '../tools/index';
 import { AppError } from '../errors/index';
 import { getCloudBackend, type CloudBackend, type OperatingMode } from '../cloud/index';
 import { RoomIdentity } from './RoomIdentity';
@@ -113,6 +113,10 @@ export class ToolRegistry {
               result = await handleDownloadAttachment(args, this.messagingAdapter, extra.signal);
               break;
               
+            case 'agent_communication_delete_attachments_through_post':
+              result = await handleDeleteAttachmentsThroughPost(args, this.messagingAdapter);
+              break;
+
             case 'agent_communication_wait_for_messages':
               // Acts as the name enter_room selected for the room; the identity layer owns the call so a switch,
               // a selected-name leave or shutdown can cancel it. The MCP client's cancellation also ends it.

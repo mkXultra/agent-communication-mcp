@@ -130,7 +130,9 @@ describe('wait_for_messages: the same results in file mode and cloud mode', () =
     expect(cloud.bob.messages.map((m) => m.message)).toEqual(['question for anyone', 'and one for @bob']);
     expect(cloud.bob.waitingAgents).toEqual(['alice']);
     expect(cloud.bob.warning).toBe('Potential deadlock detected: 1 other agent(s) are also waiting for messages');
-    expect(cloud.alice[0]!.messages).toEqual([{ agentName: 'bob', roomName: 'parity-mentions', message: 'answered, @alice', mentions: ['alice'] }]);
+    expect(cloud.alice[0]!.messages).toEqual([
+      { agentName: 'bob', roomName: 'parity-mentions', message: 'answered, @alice', mentions: ['alice'] },
+    ]);
     expect(cloud.alice[0]).toMatchObject({ hasNewMessages: true, timedOut: false });
     expect(cloud.alice[0]!.warning).toBeUndefined();
     expect(cloud.alice[1]).toEqual({ messages: [], hasNewMessages: false, timedOut: true });

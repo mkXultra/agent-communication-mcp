@@ -1,6 +1,12 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { sendMessageSchema, getMessagesSchema, downloadAttachmentSchema, waitForMessagesInputSchema } from '../schemas/index.js';
+import {
+  sendMessageSchema,
+  getMessagesSchema,
+  downloadAttachmentSchema,
+  waitForMessagesInputSchema,
+  deleteAttachmentsThroughPostSchema,
+} from '../schemas/index.js';
 
 export const sendMessageTool: Tool = {
   name: 'agent_communication_send_message',
@@ -61,6 +67,53 @@ export const downloadAttachmentTool: Tool = {
       }
     },
     required: ['roomName', 'attachmentId', 'savePath'],
+    additionalProperties: false
+  }
+};
+
+// Cloud mode only: preview or execute deleting every attachment on posts up to an inclusive position.
+// It is one tool because the preview and the confirmed execution share the inclusive `throughSeq` range.
+export const deleteAttachmentsThroughPostTool: Tool = {
+  name: 'agent_communication_delete_attachments_through_post',
+  description:
+    'Preview or execute deleting all attachments on posts up to and including a post position (throughSeq), in a room ' +
+    "of this token's user. Without confirm (the default) it only previews: nothing changes, and it returns the " +
+    'throughSeq boundary, file count and total bytes, and what will be kept. In the preview, attachmentCount and ' +
+    'attachmentBytes are exactly what an execute will delete; retainedDisplayMetadataCount only counts ' +
+    'automatic-retention display rows, which are no longer in the live attachment list and so are not a deletion ' +
+    'target. It does not prove the R2 object is gone or that quota was released: automatic retention records the ' +
+    'display row and the cleanup intent before deleting R2, so cleanup for the range can still be pending. A ' +
+    'preview with attachmentCount 0 can therefore still lead to a 202/pending execute; use that result\'s ' +
+    'deletionStatus and pendingAttachments to decide whether physical deletion has finished. Execute with ' +
+    'confirm: true; the deletion is irreversible, includes every attachment ' +
+    'uploaded within 24 hours, and keeps message bodies, IDs, order, later attachments and unposted uploads. A ' +
+    'confirmed execution works directly without a prior preview and targets the room as it currently exists. Repeating ' +
+    'the same throughSeq is safe (no new deletion; pending physical cleanup is retried). pendingAttachments counts ' +
+    'conservatively and can be ' +
+    'greater than 0 even when no row was newly deleted (cleanup left by an older schema whose post position cannot be ' +
+    'proven); it can overstate but never understate the remaining physical work. Cloud mode only.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      roomName: {
+        type: 'string',
+        description: 'Name of the room whose attachments are deleted',
+        pattern: '^[a-zA-Z0-9-_]+$'
+      },
+      throughSeq: {
+        type: 'integer',
+        minimum: 1,
+        description:
+          'Inclusive post position: the seq of a message returned by get_messages or wait_for_messages. All attachments on the post at this position are included'
+      },
+      confirm: {
+        type: 'boolean',
+        description:
+          'false (default) previews without changing anything; true executes the deletion',
+        default: false
+      }
+    },
+    required: ['roomName', 'throughSeq'],
     additionalProperties: false
   }
 };
@@ -160,6 +213,22 @@ export async function handleDownloadAttachment(
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   const validatedArgs = downloadAttachmentSchema.parse(args);
   const result = await messagingAdapter.downloadAttachment(validatedArgs, signal);
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify(result)
+    }]
+  };
+}
+
+export async function handleDeleteAttachmentsThroughPost(
+  args: any,
+  messagingAdapter: any
+): Promise<{ content: Array<{ type: string; text: string }> }> {
+  const { roomName, throughSeq, confirm } = deleteAttachmentsThroughPostSchema.parse(args);
+  const result = confirm
+    ? await messagingAdapter.deleteAttachmentsThroughPost({ roomName, throughSeq })
+    : await messagingAdapter.previewAttachmentDeletion({ roomName, throughSeq });
   return {
     content: [{
       type: 'text',

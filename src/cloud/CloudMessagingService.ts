@@ -21,8 +21,13 @@ import { CloudApiClient } from './CloudApiClient.js';
 import { CloudRoomsService } from './CloudRoomsService.js';
 import { CloudWaitService } from './CloudWaitService.js';
 import { passesMentionsOnly, toToolMessage, type WaitForMessagesResult } from './mappers.js';
-import type { ApiMessage, ApiMessageList } from './types.js';
-import { downloadParamsValidationError, isValidName, roomNameValidationError } from './validation.js';
+import type { ApiAttachmentPurgePreview, ApiAttachmentPurgeResult, ApiMessage, ApiMessageList } from './types.js';
+import {
+  attachmentBoundaryValidationError,
+  downloadParamsValidationError,
+  isValidName,
+  roomNameValidationError,
+} from './validation.js';
 
 export interface DownloadAttachmentResult {
   /** Absolute path of the saved file. */
@@ -98,6 +103,36 @@ export class CloudMessagingService {
       roomName: result.roomName,
       mentions: result.mentions,
     };
+  }
+
+  /**
+   * Preview deleting every attachment on posts up to and including `throughSeq` (the inclusive post position). It does
+   * not change anything; a confirmed execution is optional and needs no value from the preview.
+   */
+  async previewAttachmentDeletion(params: {
+    roomName: string;
+    throughSeq: number;
+  }): Promise<ApiAttachmentPurgePreview> {
+    const { roomName, throughSeq } = params;
+    if (!isValidName(roomName)) throw new RoomNotFoundError(String(roomName));
+    const invalid = attachmentBoundaryValidationError(throughSeq);
+    if (invalid) throw invalid;
+    return this.api.previewAttachmentPurge(roomName, throughSeq);
+  }
+
+  /**
+   * Execute the range deletion for the inclusive `throughSeq` boundary in the room as it currently exists. A 202 result
+   * is a success with physical cleanup still pending; repeating the call is safe and retries only that range.
+   */
+  async deleteAttachmentsThroughPost(params: {
+    roomName: string;
+    throughSeq: number;
+  }): Promise<ApiAttachmentPurgeResult> {
+    const { roomName, throughSeq } = params;
+    if (!isValidName(roomName)) throw new RoomNotFoundError(String(roomName));
+    const invalid = attachmentBoundaryValidationError(throughSeq);
+    if (invalid) throw invalid;
+    return this.api.executeAttachmentPurge(roomName, { throughSeq });
   }
 
   /**

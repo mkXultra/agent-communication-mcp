@@ -45,6 +45,7 @@ interface ToolAttachment {
 
 interface ToolMessage {
   id: string;
+  seq: number;
   agentName: string;
   roomName: string;
   message: string;
@@ -159,7 +160,7 @@ describe('file attachments in cloud mode', () => {
     try {
       const response = await transport.simulateRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
       const tools = (response.result as { tools: Array<{ name: string; inputSchema: any }> }).tools;
-      expect(tools).toHaveLength(11);
+      expect(tools).toHaveLength(12);
       const download = tools.find((tool) => tool.name === 'agent_communication_download_attachment')!;
       expect(download.inputSchema.required).toEqual(['roomName', 'attachmentId', 'savePath']);
       const send = tools.find((tool) => tool.name === 'agent_communication_send_message')!;
@@ -191,6 +192,7 @@ describe('file attachments in cloud mode', () => {
     expect(messages).toEqual([
       {
         id: sent.messageId,
+        seq: expect.any(Number),
         agentName: 'alice',
         roomName: 'files',
         message: 'results for @bob',
@@ -259,7 +261,7 @@ describe('file attachments in cloud mode', () => {
     await setupRoom(client, 'plain', ['alice']);
     await client.call('send_message', { roomName: 'plain', message: 'no files', attachments: [] });
     const { messages } = await client.call<{ messages: ToolMessage[] }>('get_messages', { roomName: 'plain' });
-    expect(Object.keys(messages[0]!)).toEqual(['id', 'agentName', 'roomName', 'message', 'timestamp', 'mentions']);
+    expect(Object.keys(messages[0]!)).toEqual(['id', 'seq', 'agentName', 'roomName', 'message', 'timestamp', 'mentions']);
     expect(proxy.countRequests('POST', '/rooms/plain/attachments')).toBe(0);
   });
 

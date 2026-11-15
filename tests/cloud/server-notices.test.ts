@@ -46,6 +46,7 @@ function queryOf(path: string): URLSearchParams {
 function toolMessageOf(notice: ApiMessage): ToolMessage {
   return {
     id: notice.id,
+    seq: notice.seq,
     agentName: 'system',
     roomName: notice.roomName,
     message: notice.message,

@@ -1,6 +1,7 @@
 // File attachments are a cloud mode feature (docs/cloud-architecture.md §3.9). In file mode send_message refuses
-// `attachments` (an empty list attaches nothing) and download_attachment is refused, both with VALIDATION_ERROR,
-// and tools/list keeps the ten tools, without either (and without the server notices cloud mode describes).
+// `attachments` (an empty list attaches nothing), download_attachment and delete_attachments_through_post are refused,
+// all with VALIDATION_ERROR, and tools/list keeps the ten tools, without any of them (and without the server notices
+// cloud mode describes).
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'fs';
@@ -15,6 +16,8 @@ import { LockService } from '../../../src/services/LockService.js';
 import { MemoryTransport } from '../../helpers/MemoryTransport.js';
 
 const CLOUD_ONLY = 'Attachments are only available in cloud mode (AGENT_COMM_TOKEN is not set)';
+const CLOUD_ONLY_DELETION =
+  'Deleting attachments through a post is only available in cloud mode (AGENT_COMM_TOKEN is not set)';
 
 describe('attachments in file mode', () => {
   let dataDir: string;
@@ -58,6 +61,7 @@ describe('attachments in file mode', () => {
     const tools = response.result.tools as Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>;
     expect(tools).toHaveLength(10);
     expect(tools.map((tool) => tool.name)).not.toContain('agent_communication_download_attachment');
+    expect(tools.map((tool) => tool.name)).not.toContain('agent_communication_delete_attachments_through_post');
     const send = tools.find((tool) => tool.name === 'agent_communication_send_message')!;
     expect(Object.keys(send.inputSchema.properties)).toEqual(['roomName', 'message']);
   });
@@ -97,6 +101,27 @@ describe('attachments in file mode', () => {
     expect(messages).toHaveLength(1);
     expect(messages[0]).not.toHaveProperty('attachments');
     expect(messages[0].message).toBe('no files');
+  });
+
+  it('refuses delete_attachments_through_post for preview and execution', async () => {
+    const preview = { roomName: 'files', throughSeq: 1 };
+    for (const args of [preview, { ...preview, confirm: true }]) {
+      const { error } = await call('delete_attachments_through_post', args);
+      expect(error.code).toBe(ErrorCode.InvalidParams);
+      expect(error.message).toBe(
+        `MCP error ${ErrorCode.InvalidParams}: Validation failed for field 'throughSeq': ${CLOUD_ONLY_DELETION}`,
+      );
+    }
+
+    const adapter = new MessagingAdapter(new LockService(dataDir));
+    const refusedPreview = await adapter.previewAttachmentDeletion(preview).catch((e: unknown) => e);
+    expect(refusedPreview).toBeInstanceOf(AppError);
+    expect(refusedPreview).toMatchObject({ code: 'VALIDATION_ERROR', statusCode: 400 });
+    const refusedExecute = await adapter
+      .deleteAttachmentsThroughPost(preview)
+      .catch((e: unknown) => e);
+    expect(refusedExecute).toBeInstanceOf(AppError);
+    expect(refusedExecute).toMatchObject({ code: 'VALIDATION_ERROR', statusCode: 400 });
   });
 
   it('refuses download_attachment and writes nothing', async () => {

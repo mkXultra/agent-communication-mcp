@@ -227,8 +227,12 @@ R2 の削除に失敗した key の再試行台帳（→ §3.9）。行を消し
 | `next_attempt_at` | INTEGER | 次回の再試行時刻（指数バックオフ） |
 | `attachment_id` | TEXT | 個別削除の再試行対象。v11 の移行では旧 key の末尾から復元 |
 | `message_id` | TEXT | 親メッセージの個別削除で残っている処理を拾うための ID。親のない添付や復元不能な旧行は NULL |
+| `message_seq` | INTEGER | 添付先メッセージの `seq`（Room DO スキーマ v15）。投稿の位置を上限にした一括削除の再実行で、同じ範囲の保留中の削除を拾う |
+| `position_unknown` | INTEGER | v15 の移行で、投稿位置を `messages` から復元できなかった旧行に付ける印（1）。一括削除の再実行は範囲の内外を断定できないため保守的に再試行し、`pendingAttachments` に数える |
 
 Room DO の v11 で `attachment_id` / `message_id` と検索用インデックスを追加する。削除前に ID を写し、本文やファイル名・内容は台帳に残さない。個別 DELETE はメタデータを同期トランザクションで削除し、Alarm を設定してから R2 削除を待つ。R2 とグローバル容量の解放が済めば `200`、残れば `202`。既存の全削除・保持ポリシーによる削除は非同期のまま。
+
+v15 で `message_seq` を足す（既存の行は親メッセージが残っていれば `messages` から埋める）。親が既に無い、または旧 `message_id` が無いために位置を復元できなかった行には `position_unknown = 1` を付ける（移行後に積まれる未添付の行には付けない）。投稿の位置を上限にした一括削除は、プレビューが返した `throughSeq` を確認付きの実行にそのまま渡す（プレビューは任意で、公開の世代・トークンは要求しない）。実行は `throughSeq` 以下の生きた添付を既存の `#purgeAttachmentsCore` で削除し、同じ同期区間で範囲内の `attachment_purges` を集めてから `#purgeObjects` で実体を消す。`position_unknown` の行は同じ世代の台帳（`r2_key` の内部 `epoch`）なら範囲の内外を断定できないため保守的に含めて再試行し、`pendingAttachments` に数える（生きた添付の選択は広げない）。再実行は 0 件の新規削除で、範囲内の保留中の実体削除だけを再試行する。要求は今の名前のルームを解決し（削除・同名で作り直されていても、その時点のルームが対象）、`throughSeq` を今の最新へ読み直さない。境界の投稿が保持で消えても `throughSeq` は固定の上限のまま。プレビューの `retainedDisplayMetadataCount` は範囲内の表示用メタデータ（生きた添付の一覧から外れた行）の件数で、生きた容量にも削除対象にも数えないが、R2 の実体削除や容量解放の完了を意味しない。実体の削除が保留なら確認付き実行が同じ範囲で再試行し、完了は `deletionStatus` / `pendingAttachments` で判断する。
 
 #### テーブル: `schema_meta`
 
@@ -566,7 +570,7 @@ workers.dev の URL は推測・漏洩しやすく、401 を返すだけのリ�
   - **アラート**（→ §9 `ATTACHMENT_ALERT_BYTES`）: 総バイト数がしきい値（既定 5 GB）を越えたとき、Quota DO が `ALERT_WEBHOOK_URL`（secret）へ POST する。同じしきい値で何度も鳴らさないよう、越えたしきい値を記録し、さらに `ATTACHMENT_ALERT_STEP_BYTES`（既定 1 GB）増えるごとに再通知する。減って戻ったら記録を消す。Webhook の形式は `ALERT_WEBHOOK_FORMAT`（`json`: `{text, content, event, totalBytes, limit}`、Slack / Discord 互換。`plain`: 本文だけ、ntfy 向け）。URL 未設定なら構造化ログ `attachment_quota_alert` だけを出す。送信は `ctx.waitUntil` で行い、失敗してもアップロードは成功させる
   - **メール通知**（Webhook と併用可）: `ALERT_EMAIL_TO`（var）が設定されていれば Cloudflare Email Sending の binding（`send_email`、名前 `EMAIL`）で同じ内容を送る。差出人は `ALERT_EMAIL_FROM`（既定 `alerts@omajinai.work`。Email Sending を有効化したドメインであること）。**宛先は Email Routing の検証済み Destination address にする**（Workers Free では検証済み宛先へのみ無料で送れる。任意の宛先は Workers Paid が必要）。ローカル / テストでは binding をモックせず、`FAULT_INJECTION=1` のときだけ送信内容を記録する経路で検証する
 - Web UI（§3.7）は送信欄にファイル選択、メッセージにダウンロードリンク（`fetch` + Bearer → blob）
-- MCP 側（§5）は `send_message` に `attachments: [ローカルパス]` を足し、内部でアップロードしてから送信する。`download_attachment(roomName, attachmentId, savePath)` を追加。既存 10 ツールの入出力は変えない（`attachments` は任意の追加フィールド）
+- MCP 側（§5）は `send_message` に `attachments: [ローカルパス]` を足し、内部でアップロードしてから送信する。`download_attachment(roomName, attachmentId, savePath)` と `delete_attachments_through_post(roomName, throughSeq[, confirm])`（クラウドモードのみ。任意のプレビューと、`throughSeq` だけの確認付き実行）を追加。既存ツールの入力は変えず、`get_messages` / `wait_for_messages` の出力に位置 `seq` を足す（`attachments` と同じ任意の追加フィールド）
 
 ### 3.10 公開統計（→ D17）
 

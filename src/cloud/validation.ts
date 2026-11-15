@@ -104,6 +104,17 @@ export function downloadParamsValidationError(attachmentId: unknown, savePath: u
   return null;
 }
 
+/** The inclusive post position of the attachment range deletion (agora validates it again; never clamped here). */
+export function attachmentBoundaryValidationError(throughSeq: unknown): ValidationError | null {
+  if (typeof throughSeq !== 'number' || !Number.isSafeInteger(throughSeq)) {
+    return new ValidationError('throughSeq', 'Through post position must be a safe integer');
+  }
+  if (throughSeq < 1) {
+    return new ValidationError('throughSeq', 'Through post position must be >= 1');
+  }
+  return null;
+}
+
 /** Same checks and messages as RoomService.validateDescription. */
 export function descriptionValidationError(description: unknown): ValidationError | null {
   if (description === undefined) return null;

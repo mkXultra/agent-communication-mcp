@@ -15,6 +15,8 @@ export interface Room {
 
 export interface Message {
   id: string;
+  // ルーム内の位置（クラウドモードのみ。添付の一括削除の throughSeq に使う）
+  seq?: number;
   roomName: string;
   agentName: string;
   message: string;

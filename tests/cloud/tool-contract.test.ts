@@ -137,11 +137,13 @@ describe('tool outputs in cloud mode', () => {
     await client.call('send_message', { roomName: 'mentions-contract', message: 'for anyone' });
     const sent = await client.call('send_message', { roomName: 'mentions-contract', message: 'hi @alice and @carol' });
     const result = await alice.call('wait_for_messages', { roomName: 'mentions-contract', timeout: 3, mentionsOnly: true });
-    // The file-mode output shape: the messages whose `mentions` name the agent, without seq or clientMessageId.
+    // The file-mode output shape plus the additive cloud `seq`: the messages whose `mentions` name the agent,
+    // without clientMessageId.
     expect(result).toEqual({
       messages: [
         {
           id: sent.messageId,
+          seq: expect.any(Number),
           agentName: 'bob',
           roomName: 'mentions-contract',
           message: 'hi @alice and @carol',
@@ -238,6 +240,7 @@ describe('tool outputs in cloud mode', () => {
     expect(result.messages).toEqual([
       {
         id: sent.messageId,
+        seq: expect.any(Number),
         agentName: 'alice',
         roomName: 'shape',
         message: 'hi @bob and @carol',

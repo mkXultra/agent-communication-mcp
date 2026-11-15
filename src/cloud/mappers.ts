@@ -17,12 +17,14 @@ export function passesMentionsOnly(message: ApiMessage, agentName: string): bool
 }
 
 /**
- * The message shape the file mode returns (no `seq` / `clientMessageId`), with `attachments` (§3.9) when the message
- * has any; like the other optional fields, it is left out otherwise.
+ * The message shape the file mode returns, plus `seq` (the room position, which the attachment range deletion needs;
+ * additive and cloud-only) and `attachments` (§3.9) when the message has any; like the other optional fields,
+ * `attachments` is left out otherwise.
  */
 export function toToolMessage(message: ApiMessage): Message {
   return {
     id: message.id,
+    seq: message.seq,
     agentName: message.agentName,
     roomName: message.roomName,
     message: message.message,

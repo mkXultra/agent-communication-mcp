@@ -1064,6 +1064,132 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /rooms/{roomName}/attachments/purge/preview:
+    post:
+      tags: [messages]
+      operationId: previewAttachmentDeletion
+      summary: 指定した投稿までの添付の一括削除プレビュー（非破壊）
+      description: |
+        `throughSeq` 以下のすべての投稿の添付を一括削除する操作のプレビュー。**状態を変えない**
+        （メッセージ・添付・再試行台帳・R2・容量のどれにも触らない）。
+
+        同じトークンの所有者のルームで使える（在室や送信者名は不要。単一添付の `DELETE` と同じ）。
+        `throughSeq` には `Message.seq`（取得した投稿の位置）を渡す。
+
+        - 範囲は `throughSeq` を含む（同じ投稿の添付もすべて対象。投稿の途中で切らない）。
+        - `throughSeq` 以下の添付は、24 時間以内にアップロードされたものも対象にする
+          （明示削除なので自動整理の年齢制限を課さない）。
+        - 未添付（`message_seq IS NULL`）は対象外（既存の 1 時間の孤児掃除が扱う）。
+        - 自動整理の表示用メタデータ（`deleted: true`）は生きた容量に数えない。その件数
+          （`retainedDisplayMetadataCount`）は実体の削除や容量解放の完了を意味しない。`attachmentCount` が
+          0 でも、この範囲の実体の削除が保留なら確認付き実行は `202`（`pending`）を返す。
+        - メッセージの本文・ID・順序・`throughSeq` より後の添付は削除しない。
+        - `throughSeq` は 1 以上かつ現在の最新位置以下。未来の位置は最新へ丸めず 400 `VALIDATION_ERROR`
+          （`details.reason = 'future_boundary'`）。範囲内の欠番（保持・個別削除）は有効な位置として扱う。
+        - プレビューは任意（非破壊の確認用）。確認付き実行（`executeAttachmentDeletion`）は `throughSeq` だけで
+          実行でき、プレビューの世代・トークン・事前の呼び出しを要求しない。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [throughSeq]
+              properties:
+                throughSeq:
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                  description: 削除対象の上限（この seq 以下の投稿の添付をすべて対象にする。安全な整数）
+      responses:
+        '200':
+          description: プレビュー（状態は変わっていない）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttachmentPurgePreview' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /rooms/{roomName}/attachments/purge/execute:
+    post:
+      tags: [messages]
+      operationId: executeAttachmentDeletion
+      summary: 指定した投稿までの添付の一括削除（不可逆・上限を含む）
+      description: |
+        `throughSeq` を渡し、`confirm=true` で実行する（プレビューは任意で、事前の呼び出しは要らない）。
+        `throughSeq` 以下のすべての投稿の添付を削除する（**境界の投稿の添付もすべて含み、投稿の途中で切らない**）。
+
+        - **不可逆**: 実体を削除する。メッセージの本文・ID・順序、`throughSeq` より後の添付、未添付のアップロード
+          （`message_seq IS NULL`）は残す。24 時間以内の添付も明示削除の対象になる。
+        - **固定の範囲**: 実行は `throughSeq` を再解釈しない（今の最新へ読み直さない）。ルームは要求のたびに
+          今の名前で解決する（削除・同名で作り直された場合は、その時点のルームが対象になる）。
+          `throughSeq` が現在の最新より未来なら、プレビューと同じく最新へ丸めず 400
+          （`details.reason = 'future_boundary'`）。`throughSeq` の投稿が保持・個別削除で既に無くても、固定した
+          `throughSeq` がそのまま上限になる（広げない）。
+        - **再実行**: 同じ `throughSeq` をもう一度実行しても安全。新たに消す添付が無ければ
+          `deletedAttachmentCount = 0` を返し、その範囲で実体の削除が残っている分（`attachment_purges`）だけを
+          再試行する。再送で「今の最新」へ範囲を読み直すことはない。
+        - **位置が復元できない旧台帳の行**: v15 の移行前に台帳へ積まれ、親メッセージが既に無い（または旧
+          `message_id` が無い）ために投稿位置を `messages` から復元できなかった行は、同じ世代なら範囲の内外を
+          断定できない。実行はこれらを保守的に範囲へ含めて実体の削除を再試行し、`pendingAttachments` に数える
+          （生きた添付を選ぶ範囲は広げない。メタデータは既に削除済みなので `deletedAttachmentCount` は増えない）。
+          残っているのに完了と偽ることはない。
+        - **同時の変更**: 実行の前に別の削除で消えた添付は飛ばす（別の添付で埋めない）。実行の後に投稿された
+          添付は、その投稿の `seq` が `throughSeq` より大きいので対象外。
+        - **結果**: メタデータの削除・部屋の容量カウンタ・再試行台帳への記録を同じ同期区間で行い、
+          コミット後にユーザーの添付総量を戻して R2 の実体を消す。`200` / `deletionStatus: complete` は
+          R2 削除とグローバル容量の解放が完了したことを示す。`202` / `deletionStatus: pending` は
+          実体の削除または容量解放が残っており、既存の Alarm が 1 分から倍々・最大 1 時間の間隔で再試行する
+          （回数では諦めない）。`202` は「削除済み」の証明ではない。
+        - 選択した生きた添付は、個別 `DELETE` と同じくメッセージの添付一覧から消える。自動整理の表示用
+          メタデータ（`deleted: true`）は既存の挙動のまま残る（生きた容量には数えない）。
+      parameters:
+        - $ref: '#/components/parameters/RoomName'
+        - name: confirm
+          in: query
+          required: true
+          schema: { type: boolean, const: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [throughSeq]
+              properties:
+                throughSeq:
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                  description: 削除の上限（この seq 以下の投稿の添付をすべて対象にする。安全な整数。プレビューで確認した同じ値を渡せる）
+      responses:
+        '200':
+          description: 範囲内の R2 削除と容量解放が完了（新たな削除が 0 件の再実行も含む）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttachmentPurgeResult' }
+        '202':
+          description: メタデータは削除済み。固定した範囲の R2 削除または容量解放を再試行中
+          headers:
+            Retry-After:
+              description: 同じ範囲を再実行するまでの目安（秒）
+              schema: { type: integer, minimum: 1 }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttachmentPurgeResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/RoomNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
   /rooms/{roomName}/attachments/{attachmentId}:
     get:
       tags: [messages]
@@ -1603,6 +1729,108 @@ components:
         name: { type: string }
         size: { type: integer }
         contentType: { type: string }
+
+    AttachmentPurgePreview:
+      type: object
+      required: [dryRun, roomName, throughSeq, latestSeq, boundaryMessageExists, attachmentCount, attachmentBytes, messagesThroughBoundary, unpostedAttachmentCount, unpostedAttachmentBytes, retainedDisplayMetadataCount, afterBoundaryAttachmentCount, afterBoundaryAttachmentBytes, previewedAt]
+      properties:
+        dryRun:
+          type: boolean
+          const: true
+          description: 状態を変えないプレビューであることの印
+        roomName: { type: string }
+        throughSeq:
+          type: integer
+          minimum: 1
+          description: 固定した上限（この seq 以下。境界の投稿の添付もすべて含む）
+        latestSeq:
+          type: integer
+          minimum: 1
+          description: プレビュー時点の最新の位置
+        oldestSeq:
+          type: integer
+          minimum: 1
+          description: 現存する最も古いメッセージの seq（1 件も無ければ省略）
+        boundaryMessageExists:
+          type: boolean
+          description: '`throughSeq` の投稿がまだ存在するか（保持・個別削除で消えていても `throughSeq` は有効な上限）'
+        boundaryMessageId:
+          type: string
+          format: uuid
+          description: '`boundaryMessageExists` が true のときの投稿 ID'
+        attachmentCount:
+          type: integer
+          minimum: 0
+          description: '`throughSeq` 以下で削除対象になる生きた添付の件数'
+        attachmentBytes:
+          type: integer
+          minimum: 0
+          description: '`throughSeq` 以下で削除対象になる生きた添付のバイト数'
+        firstAttachmentSeq:
+          type: integer
+          minimum: 1
+          description: 対象の添付がある最も古い投稿の seq（対象が 0 件なら省略）
+        lastAttachmentSeq:
+          type: integer
+          minimum: 1
+          description: 対象の添付がある最も新しい投稿の seq（対象が 0 件なら省略）
+        messagesThroughBoundary:
+          type: integer
+          minimum: 0
+          description: '`throughSeq` 以下に残っているメッセージの件数（本文・ID・順序は削除しない）'
+        unpostedAttachmentCount:
+          type: integer
+          minimum: 0
+          description: 削除対象外の未添付アップロード（`message_seq IS NULL`）の件数
+        unpostedAttachmentBytes:
+          type: integer
+          minimum: 0
+          description: 削除対象外の未添付アップロードのバイト数
+        retainedDisplayMetadataCount:
+          type: integer
+          minimum: 0
+          description: '`throughSeq` 以下の自動整理の表示用メタデータ（`deleted: true`）の件数。生きた添付の一覧から外れた後に残る表示用の行で、生きた容量にもプレビューの `attachmentCount` / `attachmentBytes` にも数えない。ただし R2 の実体削除や容量解放の完了を意味しない（自動整理は表示用メタデータと再試行の意図を先に確定するため、R2 の削除に失敗すれば実体は残る）。この範囲の実体の削除が保留なら、確認付き実行が同じ範囲で再試行し、完了は `deletionStatus` / `pendingAttachments` で判断する。実行結果の `deletedAttachmentCount`（この要求で新たに消した生きた添付）とは別の量'
+        afterBoundaryAttachmentCount:
+          type: integer
+          minimum: 0
+          description: '`throughSeq` より後の生きた添付（削除しない）の件数'
+        afterBoundaryAttachmentBytes:
+          type: integer
+          minimum: 0
+          description: '`throughSeq` より後の生きた添付（削除しない）のバイト数'
+        previewedAt: { type: string, format: date-time }
+
+    AttachmentPurgeResult:
+      type: object
+      required: [success, roomName, throughSeq, deletionStatus, deletedAttachmentCount, deletedAttachmentBytes, pendingAttachments, executedAt]
+      properties:
+        success: { type: boolean, const: true }
+        roomName: { type: string }
+        throughSeq:
+          type: integer
+          minimum: 1
+          description: 実行で固定した上限（この seq 以下。境界の投稿の添付もすべて含む）
+        deletionStatus:
+          type: string
+          enum: [complete, pending]
+          description: '`complete` = R2 削除と容量解放が完了。`pending` = 既存の再試行台帳と Alarm が続きを担う'
+        deletedAttachmentCount:
+          type: integer
+          minimum: 0
+          description: この要求で新たに消した生きた添付の件数（同じ範囲の再実行では 0）
+        deletedAttachmentBytes:
+          type: integer
+          minimum: 0
+          description: この要求で新たに消した生きた添付のバイト数
+        pendingAttachments:
+          type: integer
+          minimum: 0
+          description: '固定した範囲で実体の削除または容量解放がまだ終わっていない件数（`complete` なら 0）。位置が復元できない移行前の保留行も保守的に含む'
+        retryAfterMs:
+          type: integer
+          minimum: 1
+          description: 次に同じ範囲を再実行するまでの目安（ミリ秒）。`pending` のときだけ返す
+        executedAt: { type: string, format: date-time }
 
     SendMessageResult:
       type: object

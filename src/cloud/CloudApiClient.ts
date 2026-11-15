@@ -8,6 +8,8 @@ import { CloudTransportError, parseApiErrorBody, toAppError, type ApiErrorContex
 import { cloudFetch } from './http.js';
 import type {
   ApiAgentProfile,
+  ApiAttachmentPurgePreview,
+  ApiAttachmentPurgeResult,
   ApiClearMessagesResult,
   ApiCreateRoomResult,
   ApiErrorBody,
@@ -55,6 +57,8 @@ export interface CloudRequestOptions {
   timeoutMs?: number;
   /** Abandons the request (and any retry) when it aborts. */
   signal?: AbortSignal;
+  /** Called with the final successful response's status and `Retry-After` header (e.g. a 202 pending purge). */
+  onResponse?: (response: { status: number; retryAfter: string | null }) => void;
 }
 
 /** Per-call overrides for requests made on behalf of a wait with a deadline. */
@@ -297,6 +301,48 @@ export class CloudApiClient {
   }
 
   /**
+   * POST /rooms/{roomName}/attachments/purge/preview: a non-mutating preview of deleting every attachment on posts up
+   * to and including `throughSeq`. It is idempotent, so a transient failure is retried.
+   */
+  previewAttachmentPurge(roomName: string, throughSeq: number): Promise<ApiAttachmentPurgePreview> {
+    return this.request<ApiAttachmentPurgePreview>('POST', `${this.roomPath(roomName)}/attachments/purge/preview`, {
+      body: { throughSeq },
+      context: { roomName, operation: 'preview attachment deletion' },
+      retry: true,
+    });
+  }
+
+  /**
+   * POST /rooms/{roomName}/attachments/purge/execute?confirm=true with the inclusive `throughSeq` boundary. 202 is a
+   * successful result with physical cleanup still pending. Replaying the same range is safe, so a transient failure
+   * is retried with the same body (never re-read against the current latest post). The `Retry-After` header of a 202
+   * is folded into `retryAfterMs` when the body does not carry it. The request resolves the room as it currently
+   * exists; no preview or generation value is required.
+   */
+  async executeAttachmentPurge(
+    roomName: string,
+    scope: { throughSeq: number },
+  ): Promise<ApiAttachmentPurgeResult> {
+    let retryAfter: string | null = null;
+    const result = await this.request<ApiAttachmentPurgeResult>(
+      'POST',
+      `${this.roomPath(roomName)}/attachments/purge/execute`,
+      {
+        query: { confirm: true },
+        body: scope,
+        context: { roomName, operation: 'delete attachments through a post' },
+        retry: true,
+        onResponse: (response) => {
+          retryAfter = response.retryAfter;
+        },
+      },
+    );
+    if (result.retryAfterMs !== undefined || retryAfter === null) return result;
+    const seconds = Number(retryAfter);
+    return Number.isFinite(seconds) && seconds >= 0 ? { ...result, retryAfterMs: seconds * 1000 } : result;
+  }
+
+  /**
    * GET /rooms/{roomName}/attachments/{attachmentId}; `save` reads the body while the download is guarded (it is
    * abandoned when no bytes arrive for the request timeout). Resent after a transient failure until `save` starts.
    */
@@ -432,6 +478,7 @@ export class CloudApiClient {
       }
 
       if (status >= 200 && status < 300) {
+        options.onResponse?.({ status, retryAfter });
         if (!text) return {} as T;
         return parseJson<T>(text, method, path);
       }

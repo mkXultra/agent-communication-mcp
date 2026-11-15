@@ -112,8 +112,9 @@ describe('Real MCP Server E2E Tests', () => {
       expect(response.result).toBeDefined();
       
       const tools = response.result!.tools;
-      // Cloud mode (vitest project `cloud-compat`) also lists download_attachment: file attachments need the cloud API.
-      expect(tools).toHaveLength(toolRegistry.mode === 'cloud' ? 11 : 10);
+      // Cloud mode (vitest project `cloud-compat`) also lists download_attachment and
+      // delete_attachments_through_post: attachments need the cloud API.
+      expect(tools).toHaveLength(toolRegistry.mode === 'cloud' ? 12 : 10);
 
       const expectedTools = [
         'agent_communication_list_rooms',
@@ -129,6 +130,7 @@ describe('Real MCP Server E2E Tests', () => {
       ];
       if (toolRegistry.mode === 'cloud') {
         expectedTools.push('agent_communication_download_attachment');
+        expectedTools.push('agent_communication_delete_attachments_through_post');
       }
 
       const toolNames = tools.map((tool: any) => tool.name);

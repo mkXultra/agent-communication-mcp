@@ -83,6 +83,7 @@ export const getMessagesOutputSchema = z.object({
   roomName: z.string(),
   messages: z.array(z.object({
     id: z.string(),
+    seq: z.number().int().optional(),
     agentName: z.string(),
     roomName: z.string(),
     message: z.string(),
@@ -122,6 +123,7 @@ export const publicWaitForMessagesInputSchema = z.object({
 export const waitForMessagesOutputSchema = z.object({
   messages: z.array(z.object({
     id: z.string(),
+    seq: z.number().int().optional(),
     agentName: z.string(),
     roomName: z.string(),
     message: z.string(),
@@ -150,10 +152,63 @@ export const downloadAttachmentOutputSchema = z.object({
   contentType: z.string(),
 });
 
+// delete_attachments_through_post ツール（クラウドモードのみ）
+// throughSeq は get_messages / wait_for_messages が返すメッセージの seq（ルーム内の位置）。
+// confirm なし（既定）は状態を変えないプレビュー、confirm: true で実行する（プレビューは任意）。
+// 実行は roomName + throughSeq だけで行い、リクエスト時の現在の同名ルームを対象にする。
+export const deleteAttachmentsThroughPostInputSchema = z.object({
+  roomName: roomNameSchema,
+  throughSeq: z
+    .number()
+    .refine(Number.isSafeInteger, 'Through post position must be a safe integer')
+    .refine((value) => value >= 1, 'Through post position must be >= 1'),
+  confirm: z.boolean().optional().default(false),
+});
+
+const attachmentPurgePreviewOutputSchema = z.object({
+  dryRun: z.literal(true),
+  roomName: z.string(),
+  throughSeq: z.number().int(),
+  latestSeq: z.number().int(),
+  oldestSeq: z.number().int().optional(),
+  boundaryMessageExists: z.boolean(),
+  boundaryMessageId: z.string().optional(),
+  attachmentCount: z.number().int(),
+  attachmentBytes: z.number().int(),
+  firstAttachmentSeq: z.number().int().optional(),
+  lastAttachmentSeq: z.number().int().optional(),
+  messagesThroughBoundary: z.number().int(),
+  unpostedAttachmentCount: z.number().int(),
+  unpostedAttachmentBytes: z.number().int(),
+  // Display-only rows from automatic retention; not live storage and not what an execute deletes.
+  retainedDisplayMetadataCount: z.number().int(),
+  afterBoundaryAttachmentCount: z.number().int(),
+  afterBoundaryAttachmentBytes: z.number().int(),
+  previewedAt: z.string(),
+});
+
+const attachmentPurgeResultOutputSchema = z.object({
+  success: z.literal(true),
+  roomName: z.string(),
+  throughSeq: z.number().int(),
+  deletionStatus: z.enum(['complete', 'pending']),
+  deletedAttachmentCount: z.number().int(),
+  deletedAttachmentBytes: z.number().int(),
+  pendingAttachments: z.number().int(),
+  retryAfterMs: z.number().int().optional(),
+  executedAt: z.string(),
+});
+
+export const deleteAttachmentsThroughPostOutputSchema = z.union([
+  attachmentPurgePreviewOutputSchema,
+  attachmentPurgeResultOutputSchema,
+]);
+
 // エイリアスを追加（後方互換性のため）
 export const sendMessageSchema = sendMessageInputSchema;
 export const getMessagesSchema = getMessagesInputSchema;
 export const downloadAttachmentSchema = downloadAttachmentInputSchema;
+export const deleteAttachmentsThroughPostSchema = deleteAttachmentsThroughPostInputSchema;
 
 // 型定義をエクスポート（実装済み機能のみ）
 export type SendMessageInput = z.infer<typeof sendMessageInputSchema>;
@@ -165,3 +220,5 @@ export type PublicWaitForMessagesInput = z.infer<typeof publicWaitForMessagesInp
 export type WaitForMessagesOutput = z.infer<typeof waitForMessagesOutputSchema>;
 export type DownloadAttachmentInput = z.infer<typeof downloadAttachmentInputSchema>;
 export type DownloadAttachmentOutput = z.infer<typeof downloadAttachmentOutputSchema>;
+export type DeleteAttachmentsThroughPostInput = z.infer<typeof deleteAttachmentsThroughPostInputSchema>;
+export type DeleteAttachmentsThroughPostOutput = z.infer<typeof deleteAttachmentsThroughPostOutputSchema>;

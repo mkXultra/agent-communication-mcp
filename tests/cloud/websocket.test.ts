@@ -115,7 +115,7 @@ describe('wait_for_messages over WebSocket', () => {
     expect(released.hasNewMessages).toBe(true);
     expect(released.timedOut).toBe(false);
     expect(released.messages.map((m) => m.message)).toEqual(['ping @alice']);
-    expect(Object.keys(released.messages[0]!).sort()).toEqual(['agentName', 'id', 'mentions', 'message', 'roomName', 'timestamp']);
+    expect(Object.keys(released.messages[0]!).sort()).toEqual(['agentName', 'id', 'mentions', 'message', 'roomName', 'seq', 'timestamp']);
 
     const types = proxy.clientFrames.map((frame) => frame.type);
     expect(types).toEqual(['wait_start', 'wait_end', 'read']);

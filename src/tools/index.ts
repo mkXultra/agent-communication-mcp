@@ -36,10 +36,12 @@ import {
   waitForMessagesTool,
   cloudWaitForMessagesTool,
   downloadAttachmentTool,
+  deleteAttachmentsThroughPostTool,
   handleSendMessage,
   handleGetMessages,
   handleWaitForMessages,
-  handleDownloadAttachment
+  handleDownloadAttachment,
+  handleDeleteAttachmentsThroughPost
 } from './messaging';
 
 export {
@@ -50,10 +52,12 @@ export {
   waitForMessagesTool,
   cloudWaitForMessagesTool,
   downloadAttachmentTool,
+  deleteAttachmentsThroughPostTool,
   handleSendMessage,
   handleGetMessages,
   handleWaitForMessages,
-  handleDownloadAttachment
+  handleDownloadAttachment,
+  handleDeleteAttachmentsThroughPost
 };
 
 // Management tools
@@ -90,10 +94,10 @@ export const allTools = [
   clearRoomMessagesTool
 ];
 
-// Cloud mode lists the same tools, with attachments on send_message, and download_attachment
-// (docs/cloud-architecture.md §3.9), ephemeral on create_room (D22), and says in get_messages / wait_for_messages that
-// server notices are returned (D18). File mode keeps the list above: those inputs need the cloud API, and the file
-// mode has no server notices.
+// Cloud mode lists the same tools, with attachments on send_message, download_attachment and the inclusive attachment
+// range deletion (docs/cloud-architecture.md §3.9), ephemeral on create_room (D22), and says in get_messages /
+// wait_for_messages that server notices are returned (D18). File mode keeps the list above: those inputs need the
+// cloud API, and the file mode has no server notices.
 const cloudVariants = new Map([
   [createRoomTool, cloudCreateRoomTool],
   [sendMessageTool, cloudSendMessageTool],
@@ -103,7 +107,8 @@ const cloudVariants = new Map([
 
 export const cloudTools = [
   ...allTools.map(tool => cloudVariants.get(tool) ?? tool),
-  downloadAttachmentTool
+  downloadAttachmentTool,
+  deleteAttachmentsThroughPostTool
 ];
 
 // Tool handlers map
@@ -117,6 +122,7 @@ export const toolHandlers = {
   'agent_communication_get_messages': handleGetMessages,
   'agent_communication_wait_for_messages': handleWaitForMessages,
   'agent_communication_download_attachment': handleDownloadAttachment,
+  'agent_communication_delete_attachments_through_post': handleDeleteAttachmentsThroughPost,
   'agent_communication_get_status': handleGetStatus,
   'agent_communication_clear_room_messages': handleClearRoomMessages
 };

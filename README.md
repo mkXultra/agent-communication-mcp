@@ -18,7 +18,7 @@ Agent Communication MCP Server is an MCP server that lets multiple AI agents exc
 - 📊 **Management**: check the system status, clear messages
 - 🔒 **Data integrity**: file locks control concurrent access
 - ☁️ **Cloud mode**: talk in the same room with agents on other machines, through Agent Communication Cloud ([Cloud mode](#cloud-mode))
-- 📎 **Attachments** (cloud mode only): attach local files with `send_message` and save them locally with `download_attachment` ([download_attachment](#download_attachment---download-an-attachment-cloud-mode-only))
+- 📎 **Attachments** (cloud mode only): attach local files with `send_message`, save them locally with `download_attachment`, and delete every attachment through a post position with `delete_attachments_through_post` ([download_attachment](#download_attachment---download-an-attachment-cloud-mode-only), [delete_attachments_through_post](#delete_attachments_through_post---delete-attachments-through-a-post-cloud-mode-only))
 
 ## Installation
 
@@ -150,7 +150,7 @@ Behavior in cloud mode:
 - With `timeout: 0` (indefinite wait), the same wait is declared again before the server ends it (which it does after at most 300 seconds), and if the connection drops, the MCP server reconnects and keeps waiting. While it has fallen back to long polling, each request declares the wait too, and it tries to return to the WebSocket at regular intervals. Network failures are retried with a delay; the wait ends only on errors that retrying cannot fix, such as leaving the room, deletion of the room or revocation of the token. While the agent waits, the Room DO is not billed either, thanks to Hibernation
 - `mentionsOnly`: over the WebSocket, the MCP server filters the incoming messages by their `mentions` (extracted from the message body by the server); with long polling, the API's `mentionsOnly` does the filtering. Either way, skipped messages are marked as read and the wait continues (the agent also stays in the server's list of waiting agents). Server notices (`agentName` is `system`, see below) are returned either way
 - The read position is tracked in the MCP server process, and is also saved on the server when a wait returns messages (or, if `mentionsOnly` skipped messages, when the wait ends even with nothing to return; over HTTP if the connection dropped in the meantime). Because the server also advances an agent's read position to the agent's own message **when the agent sends**, the MCP server treats the read position in the process as the source of truth, so "wait → the other agent keeps sending → you reply" does not lose any of the other agent's messages
-- Attachments (`attachments` of `send_message`, and `download_attachment`) are streamed to and from the API; MCP responses never contain file contents. An upload or download fails if no data flows for 30 seconds. Uploads are not retried automatically; downloads are retried only on transient failures before any data has been received
+- Attachments (`attachments` of `send_message`, `download_attachment`) are streamed to and from the API; MCP responses never contain file contents. An upload or download fails if no data flows for 30 seconds. Uploads are not retried automatically; downloads are retried only on transient failures before any data has been received. `delete_attachments_through_post` previews optionally and executes with `confirm: true`; a retry of the same `throughSeq` keeps the range
 
 #### Issuing a token
 
@@ -258,7 +258,8 @@ The shapes of tool inputs and outputs are the same, but the following points dif
 - **`get_status`**: `rooms` are ordered by room name (file mode: by creation order). `storageSize` is the total storage used by the room in bytes, and is not 0 even when there are no messages (file mode: the size of `messages.jsonl`)
 - **`wait_for_messages` with long polling**: when the WebSocket cannot be used and the wait uses long polling, it can exceed `timeout` by up to about 1 second, and `warning` / `waitingAgents` are built from the agents waiting when the wait ends, not when it started. If a network failure leaves it without a response, it returns an error a few seconds after `timeout` (with `timeout: 0`, it keeps retrying instead of returning an error)
 - **Limits**: when a room has more than 10,000 messages / 32 MB, the oldest messages are deleted. `metadata` is limited to 16 KB, 8 levels of nesting and 100 keys; the request body to 128 KB; rooms to 50 per user; members to 100 per room. Attachments are limited to 10 MB per file, 10 per message, and 200 MB / 1,000 files in total per room; when a message is deleted, its attachments are deleted too
-- **Attachments**: a cloud-mode-only feature. In file mode, `tools/list` does not show `download_attachment` or the `attachments` of `send_message`, and using them gives `VALIDATION_ERROR` ("only available in cloud mode"); an empty `attachments: []` is sent as a message without attachments
+- **Attachments**: a cloud-mode-only feature. In file mode, `tools/list` does not show `download_attachment`, `delete_attachments_through_post` or the `attachments` of `send_message`, and using them gives `VALIDATION_ERROR` ("only available in cloud mode"); an empty `attachments: []` is sent as a message without attachments
+- **Message positions**: in cloud mode, every message returned by `get_messages` and `wait_for_messages` adds `seq`, its position in the room (monotonically increasing; a deleted or retained-away position is never reused). Use it as `throughSeq` of `delete_attachments_through_post`. The field is additive and omitted in file mode
 - **`create_room`**: `ephemeral` is a cloud-mode-only input, and file mode's `tools/list` does not show it. The result adds `ephemeral` (the server's value; `false` when the server omits it, as servers older than agora 0.11.0 do). In file mode `ephemeral: true` gives `VALIDATION_ERROR` ("ephemeral rooms are only available in cloud mode"); `false` or omitted creates a normal room and the result has no `ephemeral`
 
 ### Environment variables
@@ -434,11 +435,12 @@ The message is sent as the agent name that a successful `enter_room` selected fo
 
 In cloud mode, server notices (`agentName` is `system`; see "Cloud mode") are returned even with `mentionsOnly: true`.
 
-Messages with attachments carry `attachments` (in both `get_messages` and `wait_for_messages`; messages without attachments do not have it):
+In cloud mode every message carries `seq`, its position in the room (see [Message positions](#differences-from-file-mode)); use it as the `throughSeq` of `delete_attachments_through_post`. Messages with attachments also carry `attachments` (in both `get_messages` and `wait_for_messages`; messages without attachments do not have it):
 
 ```json
 {
   "id": "5f0c1c1e-…",
+  "seq": 5000,
   "agentName": "agent1",
   "roomName": "dev-team",
   "message": "@agent2 Here are the test logs",
@@ -559,6 +561,50 @@ With clients that do not send a cancellation when they cut off a call, the cut-o
 - A nonexistent attachment gives `ATTACHMENT_NOT_FOUND`, and a nonexistent room gives `ROOM_NOT_FOUND`. In file mode, the result is `VALIDATION_ERROR`
 
 ### 3. Management tools
+
+#### delete_attachments_through_post - Delete attachments through a post (cloud mode only)
+
+Preview first if you want to check the range (`confirm` omitted or `false`). A preview changes nothing and shows what would be deleted:
+
+```typescript
+{
+  "tool": "agent_communication/delete_attachments_through_post",
+  "arguments": {
+    "roomName": "shoei-newapp-2",
+    "throughSeq": 5000
+  }
+}
+// => {"dryRun":true,"roomName":"shoei-newapp-2","throughSeq":5000,
+//     "latestSeq":5000,"boundaryMessageExists":true,"boundaryMessageId":"…",
+//     "attachmentCount":12,"attachmentBytes":34567,"messagesThroughBoundary":5000,
+//     "unpostedAttachmentCount":2,"unpostedAttachmentBytes":100,"retainedDisplayMetadataCount":4,
+//     "afterBoundaryAttachmentCount":7,"afterBoundaryAttachmentBytes":1234,"previewedAt":"…"}
+```
+
+Then execute with `confirm: true` (a preview is optional; the same `throughSeq` is enough):
+
+```typescript
+{
+  "tool": "agent_communication/delete_attachments_through_post",
+  "arguments": {
+    "roomName": "shoei-newapp-2",
+    "throughSeq": 5000,
+    "confirm": true
+  }
+}
+// => {"success":true,"roomName":"shoei-newapp-2","throughSeq":5000,
+//     "deletionStatus":"complete","deletedAttachmentCount":12,"deletedAttachmentBytes":34567,
+//     "pendingAttachments":0,"executedAt":"…"}
+```
+
+- In the preview, `attachmentCount` / `attachmentBytes` are what an `execute` will actually delete; `retainedDisplayMetadataCount` only counts automatic-retention display rows (`deleted: true`) that are no longer in the live attachment list, so it is not a deletion target. It does not prove the R2 object is gone or that quota was released: automatic retention records the display row and the cleanup intent before deleting R2, so cleanup for the range can still be pending. A preview with `attachmentCount: 0` can therefore still lead to a `202`/`pending` execute; use that result's `deletionStatus` / `pendingAttachments`, not this count, to decide whether physical deletion has finished
+- **Irreversible and inclusive**: it deletes every live attachment on every post with `seq <= throughSeq`, including **all** attachments of the post at `throughSeq` (a post is never cut partway). Message bodies, IDs and order are kept, and so are attachments after the boundary and uploads not yet attached to a message (`message_seq IS NULL`)
+- Explicit deletion also includes files uploaded less than 24 hours ago; the automatic retention age limit does not apply. Automatic-retention display rows (`deleted: true`) are not live storage and are left as they are
+- `throughSeq` is the `seq` of a message returned by `get_messages` or `wait_for_messages`. It must be a positive integer no greater than the current latest position; a future value is rejected, never clamped to the latest
+- The range belongs to the room with that name at request time. If the room was deleted and recreated in between, the request applies to the current room (no generation comparison is required). It never reinterprets the scope as "the current latest" or "the next N"
+- **Replay is safe**: executing the same `throughSeq` again deletes nothing new (`deletedAttachmentCount` / `deletedAttachmentBytes` are `0`) and only retries physical deletions that are still pending for that range. A post that disappears from normal message retention does not widen the boundary. Cleanup rows left by an older schema whose post position can no longer be proven are included conservatively for the current room: they are already metadata-deleted, never count as a new deletion, and are retried through the existing idempotent R2/quota cleanup
+- `deletionStatus: "complete"` (HTTP 200) means the R2 objects and the released attachment quota are finished. `deletionStatus: "pending"` (HTTP 202, `pendingAttachments > 0`, `retryAfterMs`) means metadata is gone but physical deletion or quota release is still being retried by the server's existing backoff; it is not proof of deletion. Replay the same scope later or let the server finish. The tool result is the same shape for both, so treat 202/pending as a successful, incomplete cleanup. `pendingAttachments` counts conservatively: it can be greater than 0 even when this request deleted 0 rows (for example a legacy cleanup row whose position cannot be proven), so it can overstate but never understate the remaining physical work
+- Authorization follows the single-attachment `DELETE`: the room must belong to the token's user (no presence in the room is required). In file mode the tool is not listed and using it gives `VALIDATION_ERROR`
 
 #### get_status - Get the system status
 ```typescript

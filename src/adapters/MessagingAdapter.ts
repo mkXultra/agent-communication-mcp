@@ -4,9 +4,12 @@ import { Message } from '../types/index.js';
 import type { IMessagingAPI } from '../features/messaging/index.js';
 import { getDataDirectory } from '../utils/dataDir.js';
 import { getCloudBackend, type CloudBackend, type DownloadAttachmentResult } from '../cloud/index.js';
+import type { ApiAttachmentPurgePreview, ApiAttachmentPurgeResult } from '../cloud/types.js';
 
 // File attachments are stored by the cloud API (docs/cloud-architecture.md §3.9); file mode has no place for them
 const CLOUD_ONLY_ATTACHMENTS = 'Attachments are only available in cloud mode (AGENT_COMM_TOKEN is not set)';
+const CLOUD_ONLY_ATTACHMENT_DELETION =
+  'Deleting attachments through a post is only available in cloud mode (AGENT_COMM_TOKEN is not set)';
 
 export class MessagingAdapter {
   private api?: IMessagingAPI;
@@ -121,6 +124,28 @@ export class MessagingAdapter {
     return this.cloud.messaging.downloadAttachment(params, signal);
   }
   
+  /** Preview an inclusive attachment range deletion (cloud mode only; nothing is changed). */
+  async previewAttachmentDeletion(params: {
+    roomName: string;
+    throughSeq: number;
+  }): Promise<ApiAttachmentPurgePreview> {
+    if (!this.cloud) {
+      throw new ValidationError('throughSeq', CLOUD_ONLY_ATTACHMENT_DELETION);
+    }
+    return this.cloud.messaging.previewAttachmentDeletion(params);
+  }
+
+  /** Execute the inclusive attachment range deletion (cloud mode only; irreversible). */
+  async deleteAttachmentsThroughPost(params: {
+    roomName: string;
+    throughSeq: number;
+  }): Promise<ApiAttachmentPurgeResult> {
+    if (!this.cloud) {
+      throw new ValidationError('throughSeq', CLOUD_ONLY_ATTACHMENT_DELETION);
+    }
+    return this.cloud.messaging.deleteAttachmentsThroughPost(params);
+  }
+
   clearRoomCache(roomName: string): void {
     if (!this.api) {
       // If not initialized, no cache to clear

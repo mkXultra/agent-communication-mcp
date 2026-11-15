@@ -162,6 +162,61 @@ export interface ApiClearMessagesResult {
   clearedCount: number;
 }
 
+/** docs/api.yaml `AttachmentPurgePreview`: a non-mutating preview of an inclusive attachment range deletion. */
+export interface ApiAttachmentPurgePreview {
+  dryRun: true;
+  roomName: string;
+  /** Fixed inclusive upper post position (attachments of that post are all included). */
+  throughSeq: number;
+  latestSeq: number;
+  oldestSeq?: number;
+  boundaryMessageExists: boolean;
+  boundaryMessageId?: string;
+  /** Live attachments at or before `throughSeq` (the deletion targets). */
+  attachmentCount: number;
+  attachmentBytes: number;
+  firstAttachmentSeq?: number;
+  lastAttachmentSeq?: number;
+  messagesThroughBoundary: number;
+  /** Unposted uploads (`message_seq IS NULL`), which are not targets. */
+  unpostedAttachmentCount: number;
+  unpostedAttachmentBytes: number;
+  /**
+   * Automatic-retention display rows (`deleted: true`) at or before `throughSeq`. These are no longer in the live
+   * attachment list, so they are not live storage and are neither targets nor part of the preview's
+   * `attachmentCount` / `attachmentBytes`. This count does not prove that the R2 object is gone or that quota was
+   * released: automatic retention records the display row and the cleanup intent before deleting R2, so cleanup for
+   * the range can still be pending. A confirmed execute of the same range retries it; the execute result's
+   * `deletionStatus` / `pendingAttachments` report whether that physical work has finished. It is a different
+   * quantity from the execute result's `deletedAttachmentCount` (the live attachments newly deleted by that request).
+   */
+  retainedDisplayMetadataCount: number;
+  /** Live attachments after the boundary, which are kept. */
+  afterBoundaryAttachmentCount: number;
+  afterBoundaryAttachmentBytes: number;
+  previewedAt: string;
+}
+
+/** docs/api.yaml `AttachmentPurgeResult`: the 200 (complete) or 202 (physical cleanup pending) execute response. */
+export interface ApiAttachmentPurgeResult {
+  success: true;
+  roomName: string;
+  throughSeq: number;
+  deletionStatus: 'complete' | 'pending';
+  /** Newly deleted attachment rows in this request (0 on a replay of a completed range). */
+  deletedAttachmentCount: number;
+  deletedAttachmentBytes: number;
+  /**
+   * Physical deletions or quota releases still pending for the fixed scope (`0` when complete). Counted
+   * conservatively: it may include same-generation cleanup rows from an older schema whose post position cannot be
+   * proven, so it can exceed the rows newly deleted by this request but never understates remaining work.
+   */
+  pendingAttachments: number;
+  /** Suggested delay before retrying the same range (milliseconds); present while pending. */
+  retryAfterMs?: number;
+  executedAt: string;
+}
+
 export interface ApiRoomStatus {
   roomName: string;
   epoch?: string;

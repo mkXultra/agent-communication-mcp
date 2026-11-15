@@ -97,7 +97,7 @@ describe('wait_for_messages without a time limit (timeout 0)', () => {
     const result = await waiting;
     expect(result).toEqual({
       messages: [
-        { id: sent.messageId, agentName: 'bob', roomName, message: 'after several declarations', timestamp: sent.timestamp, mentions: [] },
+        { id: sent.messageId, seq: expect.any(Number), agentName: 'bob', roomName, message: 'after several declarations', timestamp: sent.timestamp, mentions: [] },
       ],
       hasNewMessages: true,
       timedOut: false,
